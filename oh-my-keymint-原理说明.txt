@@ -1,0 +1,79 @@
+Oh My Keymint 工作原理说明
+==============================
+
+一、整体架构
+-----------
+
+OMK 有两种后端模式（由 config.toml 中的 backend 字段控制）：
+
+二、模式一：OMK 模式（完全替换）
+---------------------------------
+
+在 src/main.rs 中，OMK 直接将自己注册为系统的 keystore 服务，
+完全接管 Android Keystore：
+
+1. 注册 keystore3 服务（替换系统原版）
+2. 注册 android.security.authorization 授权服务
+3. 注册 android.security.maintenance 维护服务
+
+此模式下，OMK 自己实现所有 AIDL 接口，密钥生成、存储、
+签名、认证全由自己完成，不依赖系统 TEE/Keymaster HAL。
+
+三、模式二：Injector 模式（拦截代理，默认模式）
+-------------------------------------------------
+
+这是更灵活的模式，由两个进程协作：
+
+3.1 OMK 守护进程（src/main.rs）
+  - 注册为 omk、omk_authorization、omk_maintenance 等自定义服务
+  - 准备好自己的密钥存储、密码学实现
+
+3.2 Injector 进程（injector/src/main.rs）
+
+  Step 1 — 注入（injector/src/inject.rs）
+  - 使用 ptrace attach 到 keystore2 进程
+  - 在目标进程中远程调用 socket()、bind()、recvmsg() 等 libc 函数
+  - 通过 Unix domain socket + SCM_RIGHTS 将自身 .so 文件描述符传给目标进程
+  - 远程调用 android_dlopen_ext() 加载该 .so 到 keystore2 地址空间
+  - 调用 .so 中的 entry() 函数启动 hook
+
+  Step 2 — Hook binder ioctl（injector/src/hook/）
+  - entry() 调用 hook::init_hook()，用 PLT/GOT hook 替换 ioctl 函数指针
+  - 此后 keystore2 进程内所有 binder 通信都经过 new_ioctl()
+
+  Step 3 — 拦截与路由（injector/src/hook/intercept.rs）
+  - 解析 BINDER_WRITE_READ ioctl 中的 binder 命令
+  - 根据调用者包名（通过 scoop 配置白名单）决定路由
+  - 在 keystore2 的 binder 线程中直接解析 parcel，决定是转发给
+    系统 keystore 还是转发给 OMK 服务
+
+  Step 4 — 转发（injector/src/forward.rs）
+  - 对白名单内的应用，将请求转发给 OMK 的 omk 服务
+  - 对白名单外的应用，保持原样转发给系统 keystore
+
+四、密码学核心
+--------------
+
+- ta/          — TA 风格的密码学实现，包括密钥生成、认证签名、RKP 等
+- boringssl/   — 基于 BoringSSL 的底层密码学原语（AES、RSA、EC、HMAC）
+- common/      — 共享的 keyblob 格式、tag 定义和 crypto trait
+
+五、平台伪装
+------------
+
+plat/ 目录伪造以下信息，让检测应用以为设备是"正常"的 verified boot 状态：
+  - 设备信息（品牌、型号、序列号）
+  - vbmeta 状态
+  - 安全补丁级别
+  - 设备锁定状态
+
+六、总结
+--------
+
+OMK 本质上是一个密钥仓库欺骗器：
+
+- 要么完全替换系统 keystore（OMK 模式）
+- 要么注入到 keystore2 进程中拦截特定应用的 binder 调用（Injector 模式）
+
+对白名单应用返回伪造的密钥和认证信息，同时保持与 AOSP 行为一致，
+使检测工具难以识别异常。
