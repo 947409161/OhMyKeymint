@@ -22,7 +22,7 @@ use kmr_ta::device::{
 use kmr_wire::keymint;
 use log::{debug, error, info, warn};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::reader::Reader;
 use x509_cert::der as x509_der;
 use x509_cert::Certificate;
 
@@ -90,11 +90,11 @@ impl KeyBox {
                     _ => {}
                 },
                 Ok(Event::Text(e)) => {
-                    if let Ok(text) = e.unescape() {
+                    if let Ok(text) = e.decode() {
                         if in_private_key {
-                            current_private_key_pem = text.to_string();
+                            current_private_key_pem = text.into_owned();
                         } else if in_certificate {
-                            current_cert_pems.push(text.to_string());
+                            current_cert_pems.push(text.into_owned());
                         }
                     }
                 }
@@ -243,7 +243,7 @@ impl KeyBox {
                 .map(|certificate| certificate.encoded_certificate)
                 .collect(),
         };
-        let (key, inferred_algo) = infer_algorithm_and_import(&entry.key_der)?;
+        let (_key, inferred_algo) = infer_algorithm_and_import(&entry.key_der)?;
         if inferred_algo != algorithm {
             warn!(
                 "keybox update: algorithm mismatch (expected {:?}, inferred {:?})",
@@ -949,3 +949,4 @@ mod tests {
             "EC key should be inferred from key material, not XML tag"
         );
     }
+}
