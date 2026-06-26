@@ -173,13 +173,13 @@ fn try_create_rsa_private_key(
     let mut p_minus_1 = ossl!(openssl::bn::BigNum::new())?;
     ossl!(p_minus_1.checked_sub(&p, &one))?;
     let mut dmp1 = ossl!(openssl::bn::BigNum::new())?;
-    ossl!(dmp1.checked_rem(&d, &p_minus_1))?;
+    ossl!(dmp1.checked_rem(&d, &p_minus_1, &mut bn_ctx))?;
 
     // dmq1 = d mod (q-1)
     let mut q_minus_1 = ossl!(openssl::bn::BigNum::new())?;
     ossl!(q_minus_1.checked_sub(&q, &one))?;
     let mut dmq1 = ossl!(openssl::bn::BigNum::new())?;
-    ossl!(dmq1.checked_rem(&d, &q_minus_1))?;
+    ossl!(dmq1.checked_rem(&d, &q_minus_1, &mut bn_ctx))?;
 
     // iqmp = q^(-1) mod p
     let mut iqmp = ossl!(openssl::bn::BigNum::new())?;
