@@ -159,7 +159,12 @@ impl KeyBox {
             })
             .collect();
 
-        validate_chain_matches_key(&key, &chain, algorithm)?;
+        if let Err(err) = validate_chain_matches_key(&key, &chain, algorithm) {
+            warn!(
+                "{} keybox entry: chain does not match private key ({err:#}); using anyway",
+                algorithm_label(algorithm)
+            );
+        }
 
         Ok(KeyEntry {
             algorithm,
@@ -355,7 +360,12 @@ fn build_info_from_entry(entry: ParsedKeyEntry, algorithm: SigningAlgorithm) -> 
             encoded_certificate,
         })
         .collect();
-    validate_chain_matches_key(&key, &chain, algorithm)?;
+    if let Err(err) = validate_chain_matches_key(&key, &chain, algorithm) {
+        warn!(
+            "{} keybox update: chain does not match private key ({err:#}); using anyway",
+            algorithm_label(algorithm)
+        );
+    }
     Ok(CertSignAlgoInfo {
         key,
         key_der: entry.key_der,
