@@ -23,6 +23,7 @@ log = "^0.4"
 anyhow = "1.0.102"
 thiserror = "2.0.18"
 nix = { version = "0.31.2", features = ["mman"] }
+pkcs1 = { version = "0.7.5", features = ["alloc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = "0.10.76"

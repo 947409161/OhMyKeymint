@@ -133,6 +133,64 @@ impl crypto::Rsa for BoringRsa {
     }
 }
 
+/// Try to create an RSA private key from PKCS#1 DER bytes.
+///
+/// Falls back to rebuilding the key from individual components with corrected CRT values when
+/// BoringSSL's `RSA_parse` rejects the DER (e.g., due to stale/invalid CRT parameters from
+/// third-party keybox material that older BoringSSL tolerated).
+fn try_create_rsa_private_key(
+    der: &[u8],
+) -> Result<openssl::rsa::Rsa<openssl::pkey::Private>, Error> {
+    if let Ok(rsa) = openssl::rsa::Rsa::private_key_from_der(der) {
+        return Ok(rsa);
+    }
+
+    log::warn!("BoringSSL rejected RSA DER; rebuilding from components with corrected CRT");
+
+    let parsed = pkcs1::RsaPrivateKey::try_from(der)
+        .map_err(|_| km_err!(InvalidArgument, "failed to parse RSA PKCS#1 DER for CRT repair"))?;
+
+    let n = ossl!(openssl::bn::BigNum::from_slice(
+        parsed.modulus.as_bytes()
+    ))?;
+    let e = ossl!(openssl::bn::BigNum::from_slice(
+        parsed.public_exponent.as_bytes()
+    ))?;
+    let d = ossl!(openssl::bn::BigNum::from_slice(
+        parsed.private_exponent.as_bytes()
+    ))?;
+    let p = ossl!(openssl::bn::BigNum::from_slice(
+        parsed.prime1.as_bytes()
+    ))?;
+    let q = ossl!(openssl::bn::BigNum::from_slice(
+        parsed.prime2.as_bytes()
+    ))?;
+
+    let one = ossl!(openssl::bn::BigNum::from_u32(1))?;
+    let mut bn_ctx = ossl!(openssl::bn::BigNumContext::new())?;
+
+    // dmp1 = d mod (p-1)
+    let mut p_minus_1 = ossl!(openssl::bn::BigNum::new())?;
+    ossl!(p_minus_1.checked_sub(&p, &one))?;
+    let mut dmp1 = ossl!(openssl::bn::BigNum::new())?;
+    ossl!(dmp1.checked_rem(&d, &p_minus_1))?;
+
+    // dmq1 = d mod (q-1)
+    let mut q_minus_1 = ossl!(openssl::bn::BigNum::new())?;
+    ossl!(q_minus_1.checked_sub(&q, &one))?;
+    let mut dmq1 = ossl!(openssl::bn::BigNum::new())?;
+    ossl!(dmq1.checked_rem(&d, &q_minus_1))?;
+
+    // iqmp = q^(-1) mod p
+    let mut iqmp = ossl!(openssl::bn::BigNum::new())?;
+    ossl!(iqmp.mod_inverse(&q, &p, &mut bn_ctx))?;
+
+    let builder = ossl!(openssl::rsa::RsaPrivateKeyBuilder::new(n, e, d))?;
+    let builder = ossl!(builder.set_factors(p, q))?;
+    let builder = ossl!(builder.set_crt_params(dmp1, dmq1, iqmp))?;
+    Ok(builder.build())
+}
+
 /// RSA decryption operation based on BoringSSL.
 pub struct BoringRsaDecryptOperation {
     key: crypto::rsa::Key,
@@ -152,7 +210,7 @@ impl crypto::AccumulatingOperation for BoringRsaDecryptOperation {
     }
 
     fn finish(mut self: Box<Self>) -> Result<Vec<u8>, Error> {
-        let rsa_key = ossl!(openssl::rsa::Rsa::private_key_from_der(&self.key.0))?;
+        let rsa_key = try_create_rsa_private_key(&self.key.0)?;
         let priv_key = ossl!(openssl::pkey::PKey::from_rsa(rsa_key))?;
         let mut decrypter = ossl!(openssl::encrypt::Decrypter::new(&priv_key))?;
 
@@ -239,7 +297,7 @@ impl BoringRsaDigestSignOperation {
         digest: MessageDigest,
         padding: openssl::rsa::Padding,
     ) -> Result<Self, Error> {
-        let rsa_key = ossl!(openssl::rsa::Rsa::private_key_from_der(&key.0))?;
+        let rsa_key = try_create_rsa_private_key(&key.0)?;
         let pkey = ossl!(openssl::pkey::PKey::from_rsa(rsa_key))?;
 
         // Safety: all raw pointers are non-`nullptr` (and valid and non-aliasing) if returned
@@ -333,7 +391,7 @@ pub struct BoringRsaUndigestSignOperation {
 
 impl BoringRsaUndigestSignOperation {
     fn new(key: crypto::rsa::Key, mode: SignMode) -> Result<Self, Error> {
-        let rsa_key = ossl!(openssl::rsa::Rsa::private_key_from_der(&key.0))?;
+        let rsa_key = try_create_rsa_private_key(&key.0)?;
         let (left_pad, max_size) = match mode {
             SignMode::NoPadding => (true, rsa_key.size() as usize),
             SignMode::Pkcs1_1_5Padding(Digest::None) => (
