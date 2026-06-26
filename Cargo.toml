@@ -61,13 +61,6 @@ strip = true        # Strip symbols from binary*
 debug = 0           # Disable debug info
 incremental = true
 
-[features]
-default = ["hal_v4"]
-hal_v5 = ["hal_v4"]
-hal_v4 = ["hal_v3"]
-hal_v3 = ["hal_v2"]
-hal_v2 = []
-
 [workspace]
 members = [
   "boringssl",
