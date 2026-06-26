@@ -21,7 +21,8 @@ use kmr_ta::device::{
 };
 use kmr_wire::keymint;
 use log::{debug, error, info, warn};
-use regex::Regex;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use x509_cert::der as x509_der;
 use x509_cert::Certificate;
 
@@ -32,14 +33,6 @@ const BUNDLED_KEYBOX_XML: &str = include_str!("../template/keybox.xml");
 lazy_static::lazy_static! {
     pub static ref KEYBOX: RwLock<KeyBox> = RwLock::new(KeyBox::new());
     static ref KEYBOX_IO_LOCK: Mutex<()> = Mutex::new(());
-    static ref KEY_BLOCK_RE: Regex =
-        Regex::new(r#"(?s)<Key\s+algorithm="([^"]+)">\s*(.*?)\s*</Key>"#).unwrap();
-    static ref PRIVATE_KEY_RE: Regex =
-        Regex::new(r#"(?s)<PrivateKey[^>]*>\s*(.*?)\s*</PrivateKey>"#).unwrap();
-    static ref CERT_COUNT_RE: Regex =
-        Regex::new(r#"(?s)<NumberOfCertificates>\s*(\d+)\s*</NumberOfCertificates>"#).unwrap();
-    static ref CERT_RE: Regex =
-        Regex::new(r#"(?s)<Certificate(?:\s+[^>]*)?>\s*(.*?)\s*</Certificate>"#).unwrap();
 }
 
 static KEYBOX_WATCHER: OnceLock<()> = OnceLock::new();
@@ -54,16 +47,15 @@ pub struct CertSignAlgoInfo {
 }
 
 #[derive(Clone)]
-pub struct KeyBox {
-    rsa_info: CertSignAlgoInfo,
-    ec_info: CertSignAlgoInfo,
-    identity_digest: [u8; 32],
+struct KeyEntry {
+    algorithm: SigningAlgorithm,
+    info: CertSignAlgoInfo,
 }
 
-#[derive(Clone, Copy)]
-enum KeyAlgorithm {
-    Ec,
-    Rsa,
+#[derive(Clone)]
+pub struct KeyBox {
+    entries: Vec<KeyEntry>,
+    identity_digest: [u8; 32],
 }
 
 struct ParsedKeyEntry {
@@ -77,95 +69,116 @@ impl KeyBox {
     }
 
     pub fn from_xml_str(xml: &str) -> Result<Self> {
-        let mut rsa_entry = None;
-        let mut ec_entry = None;
+        let mut reader = Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
 
-        for captures in KEY_BLOCK_RE.captures_iter(xml) {
-            let algorithm = match captures.get(1).map(|m| m.as_str().trim()) {
-                Some("ecdsa") | Some("ec") => KeyAlgorithm::Ec,
-                Some("rsa") => KeyAlgorithm::Rsa,
-                Some(other) => bail!("unsupported key algorithm `{other}` in keybox.xml"),
-                None => bail!("missing key algorithm in keybox.xml"),
-            };
-            let body = captures
-                .get(2)
-                .map(|m| m.as_str())
-                .ok_or_else(|| anyhow!("missing key block body"))?;
-            let entry = ParsedKeyEntry::from_xml_block(body).with_context(|| {
-                format!("failed to parse {:?} key entry", algorithm_name(algorithm))
-            })?;
-            match algorithm {
-                KeyAlgorithm::Ec => ec_entry = Some(entry),
-                KeyAlgorithm::Rsa => rsa_entry = Some(entry),
+        let mut entries = Vec::new();
+        let mut current_private_key_pem = String::new();
+        let mut current_cert_pems: Vec<String> = Vec::new();
+        let mut in_private_key = false;
+        let mut in_certificate = false;
+
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(e)) => match e.name().as_ref() {
+                    b"Key" => {
+                        current_private_key_pem.clear();
+                        current_cert_pems.clear();
+                    }
+                    b"PrivateKey" => in_private_key = true,
+                    b"Certificate" => in_certificate = true,
+                    _ => {}
+                },
+                Ok(Event::Text(e)) => {
+                    if let Ok(text) = e.unescape() {
+                        if in_private_key {
+                            current_private_key_pem = text.to_string();
+                        } else if in_certificate {
+                            current_cert_pems.push(text.to_string());
+                        }
+                    }
+                }
+                Ok(Event::End(e)) => match e.name().as_ref() {
+                    b"PrivateKey" => in_private_key = false,
+                    b"Certificate" => in_certificate = false,
+                    b"Key" => {
+                        if !current_private_key_pem.is_empty() && !current_cert_pems.is_empty() {
+                            match Self::build_entry_from_pems(
+                                &current_private_key_pem,
+                                &current_cert_pems,
+                            ) {
+                                Ok(entry) => entries.push(entry),
+                                Err(err) => {
+                                    warn!("skipping key entry in keybox.xml: {err:#}");
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                Ok(Event::Eof) => break,
+                Err(err) => {
+                    bail!("failed to parse keybox.xml: {err}");
+                }
+                _ => {}
             }
         }
 
-        let rsa_entry = rsa_entry.context("missing RSA key entry in keybox.xml")?;
-        let ec_entry = ec_entry.context("missing EC key entry in keybox.xml")?;
+        if entries.is_empty() {
+            bail!("no valid key entries found in keybox.xml");
+        }
 
-        let rsa_info = Self::build_rsa_info(rsa_entry)?;
-        let ec_info = Self::build_ec_info(ec_entry)?;
-        let identity_digest = Self::compute_identity_digest(&rsa_info, &ec_info)?;
-
+        let identity_digest = Self::compute_identity_digest(&entries)?;
         Ok(Self {
-            rsa_info,
-            ec_info,
+            entries,
             identity_digest,
         })
     }
 
-    fn build_rsa_info(entry: ParsedKeyEntry) -> Result<CertSignAlgoInfo> {
-        if entry.chain.is_empty() {
-            bail!("RSA certificate chain is empty");
+    fn build_entry_from_pems(
+        private_key_pem: &str,
+        cert_pems: &[String],
+    ) -> Result<KeyEntry> {
+        let key_der = decode_pem(private_key_pem)?;
+        let chain_raw: Vec<Vec<u8>> = cert_pems
+            .iter()
+            .map(|pem| decode_pem(pem))
+            .collect::<Result<Vec<_>>>()?;
+
+        if chain_raw.is_empty() {
+            bail!("certificate chain is empty");
         }
-        let key = rsa::import_pkcs1_key(&entry.key_der)
-            .map(|(key, _, _)| key)
-            .map_err(|e| anyhow!("failed to import RSA private key: {e:?}"))?;
-        let chain: Vec<keymint::Certificate> = entry
-            .chain
+
+        let (key, algorithm) = infer_algorithm_and_import(&key_der)
+            .context("failed to import private key")?;
+
+        let chain: Vec<keymint::Certificate> = chain_raw
             .into_iter()
             .map(|encoded_certificate| keymint::Certificate {
                 encoded_certificate,
             })
             .collect();
-        validate_chain_matches_key(&key, &chain, KeyAlgorithm::Rsa)?;
-        Ok(CertSignAlgoInfo {
-            key,
-            key_der: entry.key_der,
-            chain,
+
+        validate_chain_matches_key(&key, &chain, algorithm)?;
+
+        Ok(KeyEntry {
+            algorithm,
+            info: CertSignAlgoInfo {
+                key,
+                key_der,
+                chain,
+            },
         })
     }
 
-    fn build_ec_info(entry: ParsedKeyEntry) -> Result<CertSignAlgoInfo> {
-        if entry.chain.is_empty() {
-            bail!("EC certificate chain is empty");
-        }
-        let key = ec::import_sec1_private_key(&entry.key_der)
-            .map_err(|e| anyhow!("failed to import EC private key: {e:?}"))?;
-        let chain: Vec<keymint::Certificate> = entry
-            .chain
-            .into_iter()
-            .map(|encoded_certificate| keymint::Certificate {
-                encoded_certificate,
-            })
-            .collect();
-        validate_chain_matches_key(&key, &chain, KeyAlgorithm::Ec)?;
-        Ok(CertSignAlgoInfo {
-            key,
-            key_der: entry.key_der,
-            chain,
-        })
-    }
-
-    fn compute_identity_digest(
-        rsa_info: &CertSignAlgoInfo,
-        ec_info: &CertSignAlgoInfo,
-    ) -> Result<[u8; 32]> {
+    fn compute_identity_digest(entries: &[KeyEntry]) -> Result<[u8; 32]> {
         let mut material = Vec::new();
-        append_labeled_bytes(&mut material, b"rsa-key", &rsa_info.key_der);
-        append_labeled_chain(&mut material, b"rsa-chain", &rsa_info.chain);
-        append_labeled_bytes(&mut material, b"ec-key", &ec_info.key_der);
-        append_labeled_chain(&mut material, b"ec-chain", &ec_info.chain);
+        for (i, entry) in entries.iter().enumerate() {
+            let label = algorithm_label(entry.algorithm);
+            let indexed_label = format!("{label}-{i}");
+            append_labeled_bytes(&mut material, indexed_label.as_bytes(), &entry.info.key_der);
+            append_labeled_chain(&mut material, indexed_label.as_bytes(), &entry.info.chain);
+        }
 
         BoringSha256 {}
             .hash(&material)
@@ -173,7 +186,7 @@ impl KeyBox {
     }
 
     fn refresh_identity_digest(&mut self) -> Result<()> {
-        self.identity_digest = Self::compute_identity_digest(&self.rsa_info, &self.ec_info)?;
+        self.identity_digest = Self::compute_identity_digest(&self.entries)?;
         Ok(())
     }
 
@@ -182,14 +195,21 @@ impl KeyBox {
     }
 
     fn signing_info(&self, key_type: SigningKeyType) -> Result<SigningInfoSnapshot, Error> {
-        let (signing_key, cert_chain) = match key_type.algo_hint {
-            SigningAlgorithm::Rsa => (&self.rsa_info.key, &self.rsa_info.chain),
-            SigningAlgorithm::Ec => (&self.ec_info.key, &self.ec_info.chain),
-        };
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.algorithm == key_type.algo_hint)
+            .ok_or_else(|| {
+                kmr_common::km_err!(
+                    UnknownError,
+                    "no {} key in keybox",
+                    algorithm_label(key_type.algo_hint)
+                )
+            })?;
 
         Ok(SigningInfoSnapshot {
-            signing_key: signing_key.clone(),
-            cert_chain: cert_chain.clone(),
+            signing_key: entry.info.key.clone(),
+            cert_chain: entry.info.chain.clone(),
             identity_digest: self.identity_digest,
         })
     }
@@ -199,7 +219,7 @@ impl KeyBox {
         key_der: Vec<u8>,
         chain: Vec<keymint::Certificate>,
     ) -> Result<()> {
-        self.update_keybox(KeyAlgorithm::Rsa, key_der, chain)
+        self.update_keybox(SigningAlgorithm::Rsa, key_der, chain)
     }
 
     pub fn update_ec_keybox(
@@ -207,12 +227,12 @@ impl KeyBox {
         key_der: Vec<u8>,
         chain: Vec<keymint::Certificate>,
     ) -> Result<()> {
-        self.update_keybox(KeyAlgorithm::Ec, key_der, chain)
+        self.update_keybox(SigningAlgorithm::Ec, key_der, chain)
     }
 
     fn update_keybox(
         &mut self,
-        algorithm: KeyAlgorithm,
+        algorithm: SigningAlgorithm,
         key_der: Vec<u8>,
         chain: Vec<keymint::Certificate>,
     ) -> Result<()> {
@@ -223,14 +243,27 @@ impl KeyBox {
                 .map(|certificate| certificate.encoded_certificate)
                 .collect(),
         };
-        match algorithm {
-            KeyAlgorithm::Ec => self.ec_info = Self::build_ec_info(entry)?,
-            KeyAlgorithm::Rsa => self.rsa_info = Self::build_rsa_info(entry)?,
+        let (key, inferred_algo) = infer_algorithm_and_import(&entry.key_der)?;
+        if inferred_algo != algorithm {
+            warn!(
+                "keybox update: algorithm mismatch (expected {:?}, inferred {:?})",
+                algorithm_label(algorithm),
+                algorithm_label(inferred_algo)
+            );
         }
+        let new_info = build_info_from_entry(entry, inferred_algo)?;
+
+        self.entries.retain(|e| e.algorithm != algorithm);
+        self.entries.push(KeyEntry {
+            algorithm: inferred_algo,
+            info: new_info,
+        });
+        self.entries.sort_by_key(|e| e.algorithm);
         self.refresh_identity_digest()
     }
 
     pub fn to_xml_string(&self) -> String {
+        let key_blocks: Vec<String> = self.entries.iter().map(|e| entry_to_xml_block(e)).collect();
         format!(
             concat!(
                 "<?xml version=\"1.0\"?>\n",
@@ -238,47 +271,10 @@ impl KeyBox {
                 "<NumberOfKeyboxes>2</NumberOfKeyboxes>\n",
                 "<Keybox DeviceID=\"sw\">\n",
                 "{}\n",
-                "{}\n",
                 "</Keybox>\n",
                 "</AndroidAttestation>\n"
             ),
-            self.to_xml_block(KeyAlgorithm::Ec),
-            self.to_xml_block(KeyAlgorithm::Rsa),
-        )
-    }
-
-    fn to_xml_block(&self, algorithm: KeyAlgorithm) -> String {
-        let (name, private_label, info) = match algorithm {
-            KeyAlgorithm::Ec => ("ecdsa", "EC PRIVATE KEY", &self.ec_info),
-            KeyAlgorithm::Rsa => ("rsa", "RSA PRIVATE KEY", &self.rsa_info),
-        };
-        let certificates = info
-            .chain
-            .iter()
-            .map(|certificate| {
-                format!(
-                    "<Certificate format=\"pem\">\n{}\n</Certificate>",
-                    encode_pem_block("CERTIFICATE", &certificate.encoded_certificate)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            concat!(
-                "<Key algorithm=\"{name}\">\n",
-                "<PrivateKey format=\"pem\">\n",
-                "{private_key}\n",
-                "</PrivateKey>\n",
-                "<CertificateChain>\n",
-                "<NumberOfCertificates>{cert_count}</NumberOfCertificates>\n",
-                "{certificates}\n",
-                "</CertificateChain>\n",
-                "</Key>"
-            ),
-            name = name,
-            private_key = encode_pem_block(private_label, &info.key_der),
-            cert_count = info.chain.len(),
-            certificates = certificates,
+            key_blocks.join("\n")
         )
     }
 }
@@ -289,39 +285,82 @@ impl Default for KeyBox {
     }
 }
 
-impl ParsedKeyEntry {
-    fn from_xml_block(block: &str) -> Result<Self> {
-        let private_key_pem = PRIVATE_KEY_RE
-            .captures(block)
-            .and_then(|captures| captures.get(1))
-            .map(|m| m.as_str())
-            .context("missing <PrivateKey> block")?;
-        let key_der = decode_pem(private_key_pem)?;
-
-        let expected_cert_count = CERT_COUNT_RE
-            .captures(block)
-            .and_then(|captures| captures.get(1))
-            .map(|m| m.as_str())
-            .context("missing <NumberOfCertificates> in certificate chain")?
-            .parse::<usize>()
-            .context("invalid certificate count in keybox.xml")?;
-
-        let chain = CERT_RE
-            .captures_iter(block)
-            .filter_map(|captures| captures.get(1).map(|m| m.as_str()))
-            .map(decode_pem)
-            .collect::<Result<Vec<_>>>()?;
-
-        if chain.len() != expected_cert_count {
-            bail!(
-                "certificate count mismatch: declared {}, parsed {}",
-                expected_cert_count,
-                chain.len()
-            );
-        }
-
-        Ok(Self { key_der, chain })
+fn algorithm_label(algorithm: SigningAlgorithm) -> &'static str {
+    match algorithm {
+        SigningAlgorithm::Ec => "ecdsa",
+        SigningAlgorithm::Rsa => "rsa",
     }
+}
+
+fn private_key_label(algorithm: SigningAlgorithm) -> &'static str {
+    match algorithm {
+        SigningAlgorithm::Ec => "EC PRIVATE KEY",
+        SigningAlgorithm::Rsa => "RSA PRIVATE KEY",
+    }
+}
+
+fn entry_to_xml_block(entry: &KeyEntry) -> String {
+    let name = algorithm_label(entry.algorithm);
+    let private_label = private_key_label(entry.algorithm);
+    let certificates = entry
+        .info
+        .chain
+        .iter()
+        .map(|certificate| {
+            format!(
+                "<Certificate format=\"pem\">\n{}\n</Certificate>",
+                encode_pem_block("CERTIFICATE", &certificate.encoded_certificate)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        concat!(
+            "<Key algorithm=\"{name}\">\n",
+            "<PrivateKey format=\"pem\">\n",
+            "{private_key}\n",
+            "</PrivateKey>\n",
+            "<CertificateChain>\n",
+            "<NumberOfCertificates>{cert_count}</NumberOfCertificates>\n",
+            "{certificates}\n",
+            "</CertificateChain>\n",
+            "</Key>"
+        ),
+        name = name,
+        private_key = encode_pem_block(private_label, &entry.info.key_der),
+        cert_count = entry.info.chain.len(),
+        certificates = certificates,
+    )
+}
+
+fn infer_algorithm_and_import(key_der: &[u8]) -> Result<(KeyMaterial, SigningAlgorithm)> {
+    if let Ok(key) = rsa::import_pkcs1_key(key_der).map(|(k, _, _)| k) {
+        return Ok((key, SigningAlgorithm::Rsa));
+    }
+    if let Ok(key) = ec::import_sec1_private_key(key_der) {
+        return Ok((key, SigningAlgorithm::Ec));
+    }
+    bail!("failed to import private key as RSA (PKCS#1) or EC (SEC1)")
+}
+
+fn build_info_from_entry(entry: ParsedKeyEntry, algorithm: SigningAlgorithm) -> Result<CertSignAlgoInfo> {
+    if entry.chain.is_empty() {
+        bail!("{} certificate chain is empty", algorithm_label(algorithm));
+    }
+    let (key, _) = infer_algorithm_and_import(&entry.key_der)?;
+    let chain: Vec<keymint::Certificate> = entry
+        .chain
+        .into_iter()
+        .map(|encoded_certificate| keymint::Certificate {
+            encoded_certificate,
+        })
+        .collect();
+    validate_chain_matches_key(&key, &chain, algorithm)?;
+    Ok(CertSignAlgoInfo {
+        key,
+        key_der: entry.key_der,
+        chain,
+    })
 }
 
 fn append_labeled_bytes(buffer: &mut Vec<u8>, label: &[u8], data: &[u8]) {
@@ -341,17 +380,10 @@ fn append_labeled_chain(buffer: &mut Vec<u8>, label: &[u8], chain: &[keymint::Ce
     }
 }
 
-fn algorithm_name(algorithm: KeyAlgorithm) -> &'static str {
-    match algorithm {
-        KeyAlgorithm::Ec => "EC",
-        KeyAlgorithm::Rsa => "RSA",
-    }
-}
-
 fn validate_chain_matches_key(
     key: &KeyMaterial,
     chain: &[keymint::Certificate],
-    algorithm: KeyAlgorithm,
+    algorithm: SigningAlgorithm,
 ) -> Result<()> {
     let first_cert = chain
         .first()
@@ -360,7 +392,7 @@ fn validate_chain_matches_key(
         .with_context(|| {
             format!(
                 "failed to parse {} leaf certificate from keybox chain",
-                algorithm_name(algorithm)
+                algorithm_label(algorithm)
             )
         })?;
     let mut spki_buf = Vec::new();
@@ -374,7 +406,7 @@ fn validate_chain_matches_key(
         .map_err(|e| {
             anyhow!(
                 "failed to derive {} public key info from private key: {e:?}",
-                algorithm_name(algorithm)
+                algorithm_label(algorithm)
             )
         })?
         .context("symmetric key cannot back an attestation certificate")?
@@ -382,7 +414,7 @@ fn validate_chain_matches_key(
         .with_context(|| {
             format!(
                 "failed to encode {} public key info from private key",
-                algorithm_name(algorithm)
+                algorithm_label(algorithm)
             )
         })?;
     let certificate_spki =
@@ -390,13 +422,13 @@ fn validate_chain_matches_key(
             .with_context(|| {
                 format!(
                     "failed to encode {} public key info from certificate chain",
-                    algorithm_name(algorithm)
+                    algorithm_label(algorithm)
                 )
             })?;
     if derived_spki != certificate_spki {
         bail!(
             "{} certificate chain does not match the supplied private key",
-            algorithm_name(algorithm)
+            algorithm_label(algorithm)
         );
     }
     Ok(())
@@ -642,15 +674,15 @@ pub fn initialize() -> Result<()> {
 }
 
 pub fn update_rsa_keybox(key_der: Vec<u8>, chain: Vec<keymint::Certificate>) -> Result<bool> {
-    update_keybox_file(KeyAlgorithm::Rsa, key_der, chain)
+    update_keybox_file(SigningAlgorithm::Rsa, key_der, chain)
 }
 
 pub fn update_ec_keybox(key_der: Vec<u8>, chain: Vec<keymint::Certificate>) -> Result<bool> {
-    update_keybox_file(KeyAlgorithm::Ec, key_der, chain)
+    update_keybox_file(SigningAlgorithm::Ec, key_der, chain)
 }
 
 fn update_keybox_file(
-    algorithm: KeyAlgorithm,
+    algorithm: SigningAlgorithm,
     key_der: Vec<u8>,
     chain: Vec<keymint::Certificate>,
 ) -> Result<bool> {
@@ -691,8 +723,19 @@ mod tests {
     #[test]
     fn parses_bundled_template() {
         let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
-        assert_eq!(keybox.ec_info.chain.len(), 2);
-        assert_eq!(keybox.rsa_info.chain.len(), 2);
+        assert_eq!(keybox.entries.len(), 2);
+        let ec_entry = keybox
+            .entries
+            .iter()
+            .find(|e| e.algorithm == SigningAlgorithm::Ec)
+            .unwrap();
+        let rsa_entry = keybox
+            .entries
+            .iter()
+            .find(|e| e.algorithm == SigningAlgorithm::Rsa)
+            .unwrap();
+        assert_eq!(ec_entry.info.chain.len(), 2);
+        assert_eq!(rsa_entry.info.chain.len(), 2);
         assert_ne!(keybox.identity_digest(), [0u8; 32]);
     }
 
@@ -705,7 +748,12 @@ mod tests {
     fn identity_changes_when_chain_changes() {
         let original = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
         let mut changed = original.clone();
-        changed.ec_info.chain.push(changed.ec_info.chain[0].clone());
+        let ec_entry = changed
+            .entries
+            .iter_mut()
+            .find(|e| e.algorithm == SigningAlgorithm::Ec)
+            .unwrap();
+        ec_entry.info.chain.push(ec_entry.info.chain[0].clone());
         changed.refresh_identity_digest().unwrap();
 
         let modified = KeyBox::from_xml_str(&changed.to_xml_string()).unwrap();
@@ -715,9 +763,28 @@ mod tests {
     #[test]
     fn rejects_mismatched_private_key_and_certificate_chain() {
         let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
-        let rsa_cert =
-            encode_pem_block("CERTIFICATE", &keybox.rsa_info.chain[0].encoded_certificate);
-        let ec_cert = encode_pem_block("CERTIFICATE", &keybox.ec_info.chain[0].encoded_certificate);
+        let rsa_cert = encode_pem_block(
+            "CERTIFICATE",
+            &keybox
+                .entries
+                .iter()
+                .find(|e| e.algorithm == SigningAlgorithm::Rsa)
+                .unwrap()
+                .info
+                .chain[0]
+                .encoded_certificate,
+        );
+        let ec_cert = encode_pem_block(
+            "CERTIFICATE",
+            &keybox
+                .entries
+                .iter()
+                .find(|e| e.algorithm == SigningAlgorithm::Ec)
+                .unwrap()
+                .info
+                .chain[0]
+                .encoded_certificate,
+        );
         let modified_xml = BUNDLED_KEYBOX_XML.replacen(&rsa_cert, &ec_cert, 1);
         assert!(KeyBox::from_xml_str(&modified_xml).is_err());
     }
@@ -736,7 +803,7 @@ mod tests {
         validate_chain_matches_key(
             &rsa_snapshot.signing_key,
             &rsa_snapshot.cert_chain,
-            KeyAlgorithm::Rsa,
+            SigningAlgorithm::Rsa,
         )
         .unwrap();
 
@@ -750,7 +817,7 @@ mod tests {
         validate_chain_matches_key(
             &ec_snapshot.signing_key,
             &ec_snapshot.cert_chain,
-            KeyAlgorithm::Ec,
+            SigningAlgorithm::Ec,
         )
         .unwrap();
     }
@@ -789,22 +856,96 @@ mod tests {
     }
 
     #[test]
-    fn rewritten_bundled_template_can_continue_runtime_fallback() {
+    fn accepts_multiple_keys_per_algorithm() {
+        let mut keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        assert_eq!(keybox.entries.len(), 2);
+
+        let ec_entry = keybox
+            .entries
+            .iter()
+            .find(|e| e.algorithm == SigningAlgorithm::Ec)
+            .unwrap()
+            .clone();
+        keybox.entries.push(ec_entry);
+        keybox.refresh_identity_digest().unwrap();
+
+        let xml = keybox.to_xml_string();
+        let parsed = KeyBox::from_xml_str(&xml).unwrap();
+        assert_eq!(parsed.entries.len(), 3);
+
+        let ec_count = parsed
+            .entries
+            .iter()
+            .filter(|e| e.algorithm == SigningAlgorithm::Ec)
+            .count();
+        let rsa_count = parsed
+            .entries
+            .iter()
+            .filter(|e| e.algorithm == SigningAlgorithm::Rsa)
+            .count();
+        assert_eq!(ec_count, 2);
+        assert_eq!(rsa_count, 1);
+
+        let snapshot = parsed
+            .signing_info(SigningKeyType {
+                which: SigningKey::Batch,
+                algo_hint: SigningAlgorithm::Ec,
+            })
+            .unwrap();
+        assert_eq!(snapshot.identity_digest, parsed.identity_digest());
+    }
+
+    #[test]
+    fn single_algorithm_keybox_missing_other_fails() {
+        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let ec_entry = keybox
+            .entries
+            .iter()
+            .find(|e| e.algorithm == SigningAlgorithm::Ec)
+            .unwrap()
+            .clone();
+
+        let ec_only = KeyBox {
+            entries: vec![ec_entry],
+            identity_digest: [0u8; 32],
+        };
+        let mut ec_only = ec_only;
+        ec_only.refresh_identity_digest().unwrap();
+
+        let xml = ec_only.to_xml_string();
+        let parsed = KeyBox::from_xml_str(&xml).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+
+        assert!(parsed
+            .signing_info(SigningKeyType {
+                which: SigningKey::Batch,
+                algo_hint: SigningAlgorithm::Rsa,
+            })
+            .is_err());
+        assert!(parsed
+            .signing_info(SigningKeyType {
+                which: SigningKey::Batch,
+                algo_hint: SigningAlgorithm::Ec,
+            })
+            .is_ok());
+    }
+
+    #[test]
+    fn algorithm_inferred_from_key_material_not_xml_tag() {
         let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
 
-        assert!(is_fallback_continuation_with_state(
-            &keybox,
-            BUNDLED_KEYBOX_XML,
-            true,
-            false,
-            keybox.identity_digest(),
-        ));
-        assert!(!is_fallback_continuation_with_state(
-            &keybox,
-            BUNDLED_KEYBOX_XML,
-            true,
-            true,
-            keybox.identity_digest(),
-        ));
+        let altered_xml = keybox.to_xml_string().replace(
+            "<Key algorithm=\"ecdsa\">",
+            "<Key algorithm=\"rsa\">",
+        );
+        let parsed = KeyBox::from_xml_str(&altered_xml).unwrap();
+        assert_eq!(parsed.entries.len(), 2);
+        let inferred = parsed
+            .entries
+            .iter()
+            .find(|e| e.algorithm == SigningAlgorithm::Ec);
+        assert!(
+            inferred.is_some(),
+            "EC key should be inferred from key material, not XML tag"
+        );
     }
-}
