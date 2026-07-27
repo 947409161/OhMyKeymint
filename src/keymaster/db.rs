@@ -1185,9 +1185,8 @@ impl KeystoreDB {
                 return Ok(());
             };
             if !leaf_cert
-                .tbs_certificate
-                .extensions
-                .as_ref()
+                .tbs_certificate()
+                .extensions()
                 .is_some_and(|extensions| {
                     extensions
                         .iter()
@@ -1210,7 +1209,8 @@ impl KeystoreDB {
             let Ok(first_chain_cert) = Certificate::from_der(first_chain_cert) else {
                 return Ok(());
             };
-            if leaf_cert.tbs_certificate.issuer != first_chain_cert.tbs_certificate.subject {
+            if leaf_cert.tbs_certificate().issuer() != first_chain_cert.tbs_certificate().subject()
+            {
                 return Ok(());
             }
 
