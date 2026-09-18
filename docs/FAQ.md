@@ -37,9 +37,9 @@ The supported production range is:
 - `arm64-v8a` devices; and
 - Linux kernels 4.14 through 6.18, plus newer LTS kernels.
 
-Android 11 and older are not supported. An installer may run on another
-version or architecture, but that does not make it an officially supported
-setup.
+Android 11 and older are not supported. The installer aborts instead of
+continuing on an unsupported Android version or architecture, so OMK cannot be
+installed on one.
 
 ### Does OMK add StrongBox to a phone that does not have it?
 
@@ -70,6 +70,9 @@ source.
 
 Install the current release over the existing installation in the root manager,
 then reboot. The update keeps the active settings, keybox, and stored OMK keys.
+One exception: the WebUI activity log is deleted, because an entry written by
+an earlier version can name an action this version no longer accepts and the
+log stores its history as a closed set.
 
 ### Is downgrading safe?
 
@@ -178,12 +181,14 @@ The **Security Level** row is read from the active Keybox certificate and shows
 either level.
 Continue to manage those settings through the documented active files.
 
-**Spoof PIF fingerprint** is the other network-backed action. PIF uses only the
-documented Pixel profile feed described below. The **ADB Disabler** controls
-developer options, USB debugging, and OEM unlock independently. Its four
-settings are persisted under OMK's data directory and replayed by the module at
-boot; disabling its master switch stops future replay but does not restore
-properties already changed during the current boot.
+**Sync security patch** and the Home page's keybox revocation check are the
+only network-backed actions. **Soter spoofing** is not network-backed: it only
+records a local setting and renames a bundled payload at boot, as described
+below. The **ADB Disabler** controls developer options, USB debugging, and OEM
+unlock independently. Its four settings are persisted under OMK's data
+directory and replayed by the module at boot; disabling its master switch stops
+future replay but does not restore properties already changed during the
+current boot.
 
 ### What happens when the WebUI saves the app list?
 
@@ -289,39 +294,35 @@ A successful WebUI save follows the injector hot-reload path and needs no
 keymint restart. Close and reopen the selected app when you need a clean
 routing boundary.
 
-### What does Spoof PIF fingerprint change?
+### What does Soter spoofing change?
 
-It stores a validated Pixel profile at
-`/data/misc/keystore/omk/data/pif_fingerprint.json`. The selected profile is
-downloaded through OMK's native HTTPS client, validated, and expanded into
-matching Android Build fields. OMK's own Zygisk payload reads that profile
-when the target process starts through the Zygisk Next loader. Zygisk Next must
-be installed and active by the user; OMK does not bundle, install, or implement
-that loader.
+It targets Tencent device attestation (Soter). OMK builds and bundles a
+vendored Zygisk payload (`ajfkdk/D-soter`) that the loader maps into
+`com.tencent.soter.soterserver`. The payload hooks `ioctl(BINDER_WRITE_READ)`
+and forges healthy Soter AIDL transaction replies, so a device whose TEE or
+Soter is broken, for example after a bootloader unlock, stops failing Soter
+attestation. It runs only in that Soter service; it does not change global
+system properties, OMK's attested device identity, the security-patch setting,
+or the `Build` values that other apps see.
 
-OMK applies these fields while starting `com.google.android.gms.unstable` and
-`com.android.vending`, including their named `:...` child processes. During
-pre-app specialization the payload installs available PLT hooks. On AArch64 it
-also attempts a process-wide bionic callback hook only after validating the
-wrapper semantics, memory mappings, and BTI/MTE permissions. If that validation
-fails, libc remains unchanged, the reason is logged, and the available PLT and
-Java paths continue. After specialization the payload updates Java `Build`
-fields and records a property probe. It ends both
-process families after a successful change so a new
-process can read the file. This action does not change global system
-properties, OMK's attested device identity, or the security-patch
-synchronization setting.
-Installing or updating OMK's Zygisk payload, or enabling Zygisk Next for the
-first time, still requires a device reboot. Turning the WebUI switch off
-removes the profile and refreshes the same process families so their next
-instances return to the device's original values.
+The payload has no configuration file and no runtime switch: once the loader
+maps it, it hooks unconditionally. The WebUI switch therefore only records the
+requested state in
+`/data/misc/keystore/omk/data/soter_spoof.conf`, a single `0` or `1` line, and
+**the change takes effect on the next reboot**. On boot, the module's
+`post-fs-data.sh` runs as root before the Zygisk loader maps payloads, and
+applies the saved state by renaming the packaged payload between
+`zygisk/arm64-v8a.so` and `zygisk/arm64-v8a.so.disabled`. The loader only picks
+up `*.so`, so the disabled name hides it and `1` restores it. A missing or
+malformed state file leaves the payload enabled, which is the state a fresh
+install ships in, and the setting is permanent across module upgrades. The
+WebUI shows the current state and reminds you to reboot while a change is still
+pending.
 
-A general Play Integrity checker application is not one of the target
-processes. Its own `Build.FINGERPRINT` display can therefore remain the device
-value even when the Google Play services and Play Store processes receive the
-selected profile. Check the `OhMyKeymint-PIF` log entries for the target process
-and hook status when diagnosing the integration; a payload or Zygisk Next change
-also requires a reboot before new app processes can load it.
+A Zygisk loader is required. Zygisk Next or the built-in Zygisk loader must
+already be installed and enabled by the user; OMK does not bundle, install, or
+implement that loader. OMK does build and bundle the D-soter payload itself,
+and only for `arm64-v8a` devices.
 
 If you changed `vb_key` or `vb_hash` from `"random"` back to `"auto"`, a full
 reboot is required. The automatic value cannot return until the next boot.
@@ -482,8 +483,12 @@ routed and unrouted comparison from the same app and build.
 
 They may be testing different systems. Key attestation, Play Integrity,
 Tencent Soter, app-specific root detection, and a displayed `sdkVersion` are
-not the same thing. Soter in particular is a separate framework and is not
-provided by OMK.
+not the same thing. Soter in particular is a separate framework and OMK's
+keybox and routing do not affect it. OMK's **Soter spoofing** switch only
+changes the replies that the Soter service returns on a device whose own TEE or
+Soter is broken, for example after a bootloader unlock, so its result is
+separate from any KeyMint or Play Integrity result. That switch needs a Zygisk
+loader, and a change to it takes effect on the next reboot.
 
 Compare the exact test names instead of treating every "locked", "tampered",
 or "secure" label as the same result. Use OMK's routing and keymint logs to

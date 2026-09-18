@@ -33,11 +33,11 @@ pub mod keymaster;
 pub mod keymint;
 pub mod logging;
 pub mod macros;
-pub mod pif_spoof;
 pub mod plat;
 pub mod proto;
 pub mod security_patch;
 pub mod selinux;
+pub mod soter_spoof;
 pub mod utils;
 pub mod watchdog;
 pub mod webui_activity;
@@ -466,54 +466,43 @@ fn handle_webui_security_bulletin_command() -> Option<Result<String, String>> {
     )
 }
 
-fn handle_webui_pif_command() -> Option<Result<String, String>> {
+fn handle_webui_soter_spoof_command() -> Option<Result<String, String>> {
     let mut args = std::env::args();
     let _program = args.next();
     let command = args.next()?;
 
     match command.as_str() {
-        "--webui-get-pif-fingerprint-state" => {
+        "--webui-get-soter-spoof" => {
             if args.next().is_some() {
                 return Some(Err(
-                    "--webui-get-pif-fingerprint-state does not accept arguments".to_string(),
+                    "--webui-get-soter-spoof does not accept arguments".to_string()
                 ));
             }
-            prepare_android_storage();
-            Some(pif_spoof::fingerprint_state().map_err(|error| format!("{error:#}")))
+            Some(soter_spoof::state().map_err(|error| format!("{error:#}")))
         }
-        "--webui-list-pif-devices" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-list-pif-devices does not accept arguments".to_string()
-                ));
-            }
-            Some(pif_spoof::list_devices().map_err(|error| format!("{error:#}")))
-        }
-        "--webui-apply-pif-fingerprint" => {
-            let product = match args.next() {
-                Some(product) => product,
+        "--webui-set-soter-spoof" => {
+            let value = match args.next() {
+                Some(value) => value,
                 None => {
                     return Some(Err(
-                        "--webui-apply-pif-fingerprint requires exactly one product".to_string(),
+                        "--webui-set-soter-spoof requires exactly one value: 0 or 1".to_string(),
                     ))
                 }
             };
             if args.next().is_some() {
                 return Some(Err(
-                    "--webui-apply-pif-fingerprint accepts exactly one product".to_string(),
+                    "--webui-set-soter-spoof accepts exactly one value: 0 or 1".to_string(),
                 ));
             }
+            let settings = match soter_spoof::Settings::from_tokens(&[value]) {
+                Ok(settings) => settings,
+                Err(error) => return Some(Err(format!("{error:#}"))),
+            };
+            // WebUI helpers run as short-lived root commands, before the normal
+            // daemon startup path.  Ensure the shared OMK data directory exists
+            // and has the expected ownership before persisting the setting.
             prepare_android_storage();
-            Some(pif_spoof::apply_fingerprint(&product).map_err(|error| format!("{error:#}")))
-        }
-        "--webui-disable-pif-fingerprint" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-disable-pif-fingerprint does not accept arguments".to_string(),
-                ));
-            }
-            prepare_android_storage();
-            Some(pif_spoof::disable_fingerprint().map_err(|error| format!("{error:#}")))
+            Some(soter_spoof::apply(settings).map_err(|error| format!("{error:#}")))
         }
         _ => None,
     }
@@ -621,7 +610,7 @@ fn main() {
         return;
     }
 
-    if let Some(result) = handle_webui_pif_command() {
+    if let Some(result) = handle_webui_soter_spoof_command() {
         match result {
             Ok(output) => println!("{output}"),
             Err(error) => {

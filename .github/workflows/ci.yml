@@ -181,7 +181,7 @@ jobs:
         BORINGSSL_BUILD_DIR: ${{ github.workspace }}/boringssl/build
       run: |
         unset RUSTFLAGS
-        python build.py --${{ matrix.build-type }}
+        python build.py --ndk-root "$ANDROID_SDK_ROOT/ndk/29.0.14206865" --${{ matrix.build-type }}
         name=`ls target/OhMyKeymint-* | awk -F '(/|.zip)' '{print $2}'` && echo "releaseName=$name" >> $GITHUB_OUTPUT
         unzip target/OhMyKeymint-*.zip -d module-${{ matrix.build-type }}
 

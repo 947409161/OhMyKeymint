@@ -12,7 +12,8 @@ In theory, this would make it harder for detectors to identify behavior inconsis
 
 ## Install and configure
 
-**Android 12 or above required.**
+**Android 12 or above required. arm64-v8a devices only**; the installer aborts
+on other architectures.
 
 1. Install this module.
 
@@ -62,9 +63,9 @@ comma-separated TOML form remains accepted.
 
 The module includes a WebUI for choosing the exact packages in `scoop`,
 installing a local keybox, managing the Android security patch level, and
-applying a Pixel PIF fingerprint through OMK's own Zygisk payload. It also
-provides an ADB Disabler with independent controls for developer options, USB
-debugging, and OEM unlocking:
+toggling Soter spoofing through the bundled Zygisk payload. It also provides an
+ADB Disabler with independent controls for developer options, USB debugging,
+and OEM unlocking:
 
 - In KernelSU, open Oh My Keymint from the module list and select its WebUI.
 - In Magisk, open an installed KSUWebUIStandalone or WebUI X host and select
@@ -102,28 +103,31 @@ so other processes can observe the synchronized or restored values. A failed
 operation is reported, property writes are rolled back when a later step fails,
 and a snapshot needed for another restore attempt is retained.
 
-**Spoof PIF fingerprint** downloads the current Pixel device catalog and the
-selected profile from the `bot` branch of `KOWX712/PlayIntegrityFix`. That feed
-is generated daily from Google's Android preview pages, Android Flash Tool
-metadata, and Pixel security bulletin. The native helper validates the
-catalog, the four profile fields, and the complete fingerprint structure. It
-then derives the matching Build fields and atomically stores the active profile
-at `/data/misc/keystore/omk/data/pif_fingerprint.json`. OMK's own Zygisk
-payload applies these values inside newly started
-`com.google.android.gms.unstable` and `com.android.vending` processes (including
-their named `:...` child processes) through the Zygisk Next loader. During
-pre-app specialization it installs available PLT hooks and, on AArch64, tries a
-process-wide bionic callback hook only after validating the wrapper semantics,
-memory mappings, and BTI/MTE permissions. A rejected callback hook leaves libc
-unchanged, records the reason, and continues with the available PLT and Java
-paths. Java `Build` fields and a property probe are updated after
-specialization.
-Zygisk Next must already be
-installed and enabled by the user; OMK does not bundle, install, or implement
-that loader. The selected values are process-local, are not global Android
-properties, and do not change OMK's `[device]` identity. Disabling the action
-removes the OMK profile and restarts the affected processes so their next
-instances use the original values.
+**Soter spoofing** targets Tencent device attestation (Soter). OMK builds and
+bundles the vendored `ajfkdk/D-soter` Zygisk payload, which the loader maps into
+`com.tencent.soter.soterserver` and which hooks `ioctl(BINDER_WRITE_READ)`,
+forging healthy Soter AIDL transaction replies (transaction codes 1 through 13).
+A device whose TEE or Soter is broken, for example after a bootloader unlock,
+therefore stops failing Soter attestation. The payload's upstream commit and
+licenses are listed in [Third-Party Software](docs/THIRD_PARTY.md).
+
+The payload has no configuration file and no runtime switch: once the loader
+maps it, it hooks unconditionally. The switch therefore records the requested
+state and the change takes effect on the next reboot. It writes a single line
+containing `0` or `1` to
+`/data/misc/keystore/omk/data/soter_spoof.conf`. On boot, the module's
+`post-fs-data` hook runs as root before the Zygisk loader maps payloads and
+applies that state by renaming the packaged payload between
+`zygisk/arm64-v8a.so` and `zygisk/arm64-v8a.so.disabled`; the loader only picks
+up `*.so`, so the disabled name hides it. A missing or malformed state file
+leaves the payload enabled, which is the state a fresh install ships in. The
+state is permanent and survives module upgrades. Disabling Soter spoofing
+therefore also requires a reboot. The WebUI shows the current state and, while
+a change is still pending, a note asking you to reboot. The spoof is
+process-local to the Soter service and does not change OMK's `[device]`
+identity. Zygisk Next or the built-in Zygisk loader must already be installed
+and enabled by the user; OMK does not bundle, install, or implement that
+loader. OMK does build and bundle the D-soter payload itself.
 
 The ADB Disabler action stores four strict `0/1` values in
 `/data/misc/keystore/omk/data/adb_disabler.conf`. When enabled, the selected
@@ -131,8 +135,9 @@ settings are applied immediately and replayed by the module service at every
 boot. Disabling the master switch stops future replay; it intentionally does
 not restore properties already changed during the current boot.
 
-The security-patch and PIF network actions use the bundled native HTTPS client
-and require neither `curl` nor `wget`. Other WebUI operations remain local.
+The security-patch and keybox revocation-check network actions use the bundled
+native HTTPS client and require neither `curl` nor `wget`. Other WebUI
+operations remain local; Soter spoofing makes no network request.
 The WebUI can also read and replace `scoop` and select a local XML file from
 shared storage or through another installed file app to replace the active OMK
 keybox. The security-patch actions do not change secrets, identity fields, or

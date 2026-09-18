@@ -20,10 +20,6 @@ find_module_injector() {
     echo "$MODDIR/libs/arm64-v8a/inject"
     return 0
   fi
-  if [ -f "$MODDIR/libs/x86_64/inject" ]; then
-    echo "$MODDIR/libs/x86_64/inject"
-    return 0
-  fi
   return 1
 }
 

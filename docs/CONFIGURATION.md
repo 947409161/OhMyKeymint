@@ -62,19 +62,17 @@ change does not require a keymint restart.
 ## Embedded WebUI
 
 The module includes a WebUI for selecting packages in `scoop`, installing a
-local keybox, managing the Android security patch level, applying a Pixel
-PIF fingerprint through OMK's own Zygisk payload, and configuring ADB Disabler.
+local keybox, managing the Android security patch level, toggling Soter
+spoofing through the bundled Zygisk payload, and configuring ADB Disabler.
 ADB Disabler controls developer options, USB debugging, and OEM unlock and
 reapplies the selected settings at boot. Open it from the Oh My Keymint module page in
 KernelSU. With Magisk, open an installed KSUWebUIStandalone or WebUI X host and
 select Oh My Keymint; the module does not install either host.
 
-The Settings page keeps the selected language, theme mode, accent, and visual
-effects in the WebUI's local storage. Monet and the accent selection are
-independent. When Monet is enabled, **Default** uses the system's dynamic
-colors; selecting a fixed accent uses that color as the seed while Monet stays
-enabled. When Monet is disabled, the selected fixed accent is used, and
-**Default** falls back to the application's default blue. Bar blur, floating
+The Settings page keeps the selected language, theme mode, and visual
+effects in the WebUI's local storage. Colors come from the component library's
+default light and dark palettes for the selected theme mode, so no accent,
+palette style, or color standard is configured or persisted. Bar blur, floating
 navigation, and liquid glass are optional and remain disabled until selected;
 liquid glass uses the floating navigation layout automatically.
 
@@ -102,9 +100,10 @@ do not match either source or level are shown as unknown. The
 security-patch card reads the current
 `ro.build.version.security_patch` runtime property. **TEE: Normal** is shown
 only after the injector reaches OMK and obtains the Trusted Environment
-security level. The spoofed-device value is the Pixel model in OMK's active PIF
-profile; it describes the configured target and is not a separate live check of
-a Google Play services process.
+security level. The **Soter spoofing** row shows **Enabled** or **Disabled**
+from the saved spoofing state, and it shows a note while a changed setting is
+still waiting for the reboot that applies it. It reports the requested state
+only; it is not a live check of the Soter service.
 
 The Keybox card checks every certificate serial number from both presented
 algorithm chains against Google's attestation status list at
@@ -127,14 +126,20 @@ the bundled snapshot.
 The Home page also keeps the 30 most recent successful WebUI changes in
 `/data/misc/keystore/omk/data/webui_activity.json`. The list covers saved app
 targets, Keybox changes, ADB Disabler settings, security-patch synchronization
-and restore, and PIF enable or disable actions. It stores only the action type,
-a short non-secret result such as an entry count, patch date, or Pixel model,
+and restore, and Soter spoofing enable or disable actions. It stores only the
+action type, a short non-secret result such as an entry count or a patch date,
 and the completion time. It never stores package-name lists, Keybox contents or
-filenames, downloaded response bodies, or a PIF
-fingerprint. The Home page initially shows the newest four entries, can expand
-the complete retained list, and provides controls to copy an entry or clear the
-activity file. Activity recording is supplementary: failure to update this file
-does not change the result of a completed WebUI operation.
+filenames, or downloaded response bodies. The Home page initially shows the
+newest four entries, can expand the complete retained list, and provides
+controls to copy an entry or clear the activity file. Activity recording is
+supplementary: failure to update this file does not change the result of a
+completed WebUI operation.
+
+Installing this version deletes an existing activity file. The log stores
+actions as a closed set, so a leftover `pif_enabled` or `pif_disabled` entry
+written by an earlier version would invalidate the whole history. The action
+names for Soter spoofing are `soter_spoof_enabled` and
+`soter_spoof_disabled`.
 
 The WebUI can read and replace the `scoop` package list and can install a local
 keybox selected through Android's system document picker. The picker can use
@@ -177,57 +182,39 @@ exactly `/data/adb/omk` and `/data/misc/keystore/omk`. This includes the active
 configuration, keybox, logs, and OMK-created key data and cannot be undone. A
 module disable does not remove these directories; reboot after an uninstall.
 
-The **Spoof PIF fingerprint** action is a separate OMK Zygisk integration. It
-downloads a Pixel device list from
-`KOWX712/PlayIntegrityFix`'s `bot/device_list.json`, then downloads the selected
-`bot/device_prop/<product>.prop`. The upstream bot refreshes these records
-daily from Google's Android preview pages, Android Flash Tool Canary metadata,
-and Pixel security bulletin. The helper first tries the exact GitHub Raw path
-and then the exact jsDelivr path. It does not run the upstream Autopif shell
-script and does not require a device-provided `curl`, `wget`, or shell download
-tool.
+The **Soter spoofing** action targets Tencent device attestation (Soter). OMK
+builds and bundles the vendored `ajfkdk/D-soter` Zygisk payload, which the
+Zygisk loader maps into `com.tencent.soter.soterserver`. The payload hooks
+`ioctl(BINDER_WRITE_READ)` and forges healthy Soter AIDL transaction replies
+(transaction codes 1 through 13), so a device whose TEE or Soter is broken, for
+example after a bootloader unlock, stops failing Soter attestation. Oh My
+Keymint compiles the payload from source with the Android NDK's `ndk-build`
+when the module ZIP is built, and the payload makes no network request. Its
+upstream commit and licenses are listed in
+[Third-Party Software](THIRD_PARTY.md).
 
-The native helper accepts only the fixed feed paths, validates every catalog
-entry, requires exactly `FINGERPRINT`, `MANUFACTURER`, `MODEL`, and
-`SECURITY_PATCH` in a profile, and splits the fingerprint into its eight Build
-components. It writes the following LF-delimited values only after they agree
-with one another and satisfy TrickyStore's value limits:
+The payload has no configuration file and no runtime switch: once the loader
+maps it, it hooks unconditionally. The WebUI switch therefore only records the
+requested state, and a change takes effect on the next reboot. It writes a
+single line containing `0` or `1` to
+`/data/misc/keystore/omk/data/soter_spoof.conf`, mode `0600`, owned by the
+keystore UID. This state file is not part of either OMK TOML schema. On boot,
+the module's `post-fs-data.sh` runs as root before the Zygisk loader maps
+payloads and applies that state by renaming the packaged payload between
+`zygisk/arm64-v8a.so` and `zygisk/arm64-v8a.so.disabled`; the loader only picks
+up `*.so`, so the disabled name hides the payload. A missing or malformed state
+file leaves the payload enabled, which is the state a fresh installation ships
+in. The setting is permanent and survives module upgrades. The WebUI shows the
+current state and, while a change is still pending, a note asking you to
+reboot. Disabling Soter spoofing therefore also requires a reboot. The spoof is
+process-local to the Soter service: it does not call `resetprop`, change global
+Android properties, or change values under OMK's `[device]` section.
 
-```text
-MANUFACTURER=Google
-MODEL=Pixel ...
-FINGERPRINT=google/.../...:.../.../...:user/release-keys
-BRAND=google
-PRODUCT=...
-DEVICE=...
-RELEASE=...
-ID=...
-INCREMENTAL=...
-TYPE=user
-TAGS=release-keys
-SECURITY_PATCH=YYYY-MM-DD
-```
-
-The complete candidate is atomically stored at
-`/data/misc/keystore/omk/data/pif_fingerprint.json`; an invalid download or
-failed write leaves the previous profile unchanged. This state file is not
-part of either OMK TOML schema. OMK packages its own Zygisk library, which reads
-the validated profile through its root companion when a new
-`com.google.android.gms.unstable` or `com.android.vending` process (including a
-named `:...` child process) is specialized by the Zygisk Next loader. During
-pre-app specialization the payload installs available PLT hooks. On AArch64 it
-also attempts a process-wide bionic callback hook only after validating the
-wrapper semantics, memory mappings, and BTI/MTE permissions. A rejected
-callback hook leaves libc unchanged, records the reason, and continues with
-the available PLT and Java paths. After specialization the payload updates Java
-`Build` fields and records a property probe. Zygisk Next must already be
-installed and enabled by the user; OMK does
-not bundle, install, or implement that loader. The helper ends both target
-process families after a successful change so a later process receives the
-selected values. Disabling spoofing removes the profile and repeats the same
-process refresh. The spoof is process-local: it does not call `resetprop`,
-change global Android properties, or change values under OMK's `[device]`
-section.
+The payload is built for `arm64-v8a` only, which is the module's supported
+architecture. Zygisk Next or the built-in Zygisk loader must already be
+installed and enabled by the user; OMK does not bundle, install, or implement
+that loader. OMK does build and bundle the D-soter payload itself, which is not
+the same thing as the loader.
 
 ADB Disabler stores four strict `0/1` values in
 `/data/misc/keystore/omk/data/adb_disabler.conf`. Enabling the master switch
@@ -1065,8 +1052,8 @@ until the file is corrected.
 
 The embedded WebUI can change `scoop`, install a locally selected keybox,
 synchronize the four `[trust]` patch-level fields from the official Android
-Security Bulletin, restore those fields to `"auto"`, manage the validated PIF
-profile, and configure ADB Disabler. Security-patch sync and restore also manage
+Security Bulletin, restore those fields to `"auto"`, toggle Soter spoofing, and
+configure ADB Disabler. Security-patch sync and restore also manage
 the two global runtime properties and the defaults snapshot described above.
 Persistent native save paths validate the complete candidate before writing and
 use atomic replacement. Successful saves enter the applicable watcher hot-reload

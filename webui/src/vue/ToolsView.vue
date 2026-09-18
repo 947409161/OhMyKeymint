@@ -16,7 +16,7 @@ export type ToolEvent =
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
   | 'openAdbDisabler'
-  | 'spoofPif'
+  | 'spoofSoter'
 
 type BusyPatch = 'sync' | 'restore' | null
 
@@ -31,7 +31,7 @@ const emit = defineEmits<{
   syncSecurityPatch: []
   restoreSecurityPatch: []
   openAdbDisabler: []
-  spoofPif: []
+  spoofSoter: []
 }>()
 
 function runTool(event: ToolEvent): void {
@@ -41,7 +41,7 @@ function runTool(event: ToolEvent): void {
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
     case 'openAdbDisabler': emit('openAdbDisabler'); break
-    case 'spoofPif': emit('spoofPif'); break
+    case 'spoofSoter': emit('spoofSoter'); break
   }
 }
 
@@ -78,12 +78,12 @@ const groups = [
     ],
   },
   {
-    title: tr('tools_fingerprint_spoofing', 'Fingerprint spoofing'),
+    title: tr('tools_soter_spoofing', 'Soter spoofing'),
     items: [{
-      event: 'spoofPif' as const,
+      event: 'spoofSoter' as const,
       icon: Tune,
-      title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
-      summary: tr('tools_pif_desc', 'Fetch and apply a Pixel fingerprint for Play Integrity.'),
+      title: tr('menu_spoof_soter', 'Spoof Soter attestation'),
+      summary: tr('tools_soter_desc', 'Forge healthy Soter responses for Tencent device attestation.'),
     }],
   },
   {

@@ -21,10 +21,6 @@ find_module_keymint() {
     echo "$MODDIR/libs/arm64-v8a/keymint"
     return 0
   fi
-  if [ -f "$MODDIR/libs/x86_64/keymint" ]; then
-    echo "$MODDIR/libs/x86_64/keymint"
-    return 0
-  fi
   return 1
 }
 

@@ -36,3 +36,9 @@ cert.der
 /.cargo/config.toml
 
 __pycache__/
+
+# The D-soter payload keeps its ndk-build output under target/, but a
+# hand-run `ndk-build -C third_party/d-soter/module` would otherwise write
+# these into the vendored tree and flip the build to its -dirty form.
+/third_party/d-soter/module/obj/
+/third_party/d-soter/module/libs/

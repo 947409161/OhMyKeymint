@@ -31,24 +31,34 @@ properties with `resetprop`, and records the original values for restore. Its
 separate restore action restores those properties and resets the four fields to
 `auto` without network access.
 
-## Pixel PIF profile feed
+## D-soter Zygisk payload
 
-The WebUI's PIF fingerprint field mapping follows the documented
-Build-variable contract from
-[TrickyStore](https://github.com/5ec1cff/TrickyStore/tree/master#build-vars-spoofing).
-The field contract was checked against TrickyStore commit
-[`3a515c5fe1ce4c94d5424305afe2eaf4812a635d`](https://github.com/5ec1cff/TrickyStore/commit/3a515c5fe1ce4c94d5424305afe2eaf4812a635d).
-No TrickyStore code or binary is included in or required by Oh My Keymint.
+The Soter spoofing payload is the vendored Zygisk module
+[ajfkdk/D-soter](https://github.com/ajfkdk/D-soter), pinned at commit
+[`6148e02ea5977cb95b5a162a405fc915e39c01db`](https://github.com/ajfkdk/D-soter/commit/6148e02ea5977cb95b5a162a405fc915e39c01db).
+That project is licensed under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). Its source is
+vendored under `third_party/d-soter/`, together with the prebuilt AOSP libraries
+the payload links against, so nothing is downloaded at build time or at run
+time. Oh My Keymint compiles it from source with the Android NDK's `ndk-build`,
+invoked by `build.py`. Upstream's Gradle project is not used, because it only
+wraps `ndk-build`.
 
-Pixel model names and PIF profile values are downloaded at runtime from the
-`bot` branch of
-[KOWX712/PlayIntegrityFix](https://github.com/KOWX712/PlayIntegrityFix). The
-feed format and generation path were checked against its `inject_s` commit
-[`2f8199a90a150ad98921438608e1e0e951ba2d5f`](https://github.com/KOWX712/PlayIntegrityFix/commit/2f8199a90a150ad98921438608e1e0e951ba2d5f).
-That project is licensed under GPL-3.0. Oh My Keymint does not copy or execute
-its WebUI or Autopif implementation; it independently validates the generated
-`device_list.json` and `device_prop/*.prop` data protocol before rendering the
-OMK PIF profile.
+The payload is loaded by the Zygisk loader into
+`com.tencent.soter.soterserver`, where it hooks `ioctl(BINDER_WRITE_READ)` and
+forges healthy Soter AIDL transaction replies. It has no configuration file and
+no runtime switch; switching it off means renaming the packaged payload so the
+loader no longer finds it, which only takes effect on the next boot. The
+user-facing switch is described in the [Configuration Guide](CONFIGURATION.md).
+The payload is built for `arm64-v8a` only.
+
+One vendored header,
+`module/jni/external/linux-kernel/include/android/binder.h`, is licensed under
+`GPL-2.0 WITH Linux-syscall-note` rather than Apache-2.0. The build ships its
+license text as `THIRD_PARTY_LICENSES/linux-syscall-note-GPL-2.0.txt`, and the
+payload's own license as `THIRD_PARTY_LICENSES/d-soter-Apache-2.0.txt`.
+`third_party/d-soter/UPSTREAM.md` records exactly what was kept, dropped, and
+why.
 
 ## Google attestation status snapshot
 
@@ -76,7 +86,8 @@ boot. It does not bundle Specter's shell scripts.
 
 ## Native HTTPS client
 
-The security-patch and PIF fingerprint WebUI actions use the Rust
+The security-patch synchronization and keybox revocation-check WebUI actions
+use the Rust
 [ureq](https://github.com/algesten/ureq) HTTP client (version 3.4.0), licensed
 under the MIT or Apache License 2.0. Its HTTPS implementation uses
 [rustls](https://github.com/rustls/rustls) and
@@ -86,4 +97,5 @@ Apache-2.0/ISC/MIT and ISC terms respectively, together with
 CDLA-Permissive-2.0. These dependencies are built into the existing `keymint`
 helper; no device-provided `curl` or `wget` is used. Each action has a separate
 exact host and path allowlist, and redirects are validated before another
-request is made.
+request is made. These two features are the only WebUI actions that use the
+network; Soter spoofing makes no network request.

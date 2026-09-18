@@ -27,8 +27,8 @@ enum ActivityAction {
     WidevineInstalled,
     SecurityPatchSynced,
     SecurityPatchRestored,
-    PifEnabled,
-    PifDisabled,
+    SoterSpoofEnabled,
+    SoterSpoofDisabled,
     AdbDisablerChanged,
 }
 
@@ -40,8 +40,8 @@ impl ActivityAction {
             "widevine_installed" => Ok(Self::WidevineInstalled),
             "security_patch_synced" => Ok(Self::SecurityPatchSynced),
             "security_patch_restored" => Ok(Self::SecurityPatchRestored),
-            "pif_enabled" => Ok(Self::PifEnabled),
-            "pif_disabled" => Ok(Self::PifDisabled),
+            "soter_spoof_enabled" => Ok(Self::SoterSpoofEnabled),
+            "soter_spoof_disabled" => Ok(Self::SoterSpoofDisabled),
             "adb_disabler_changed" => Ok(Self::AdbDisablerChanged),
             _ => bail!("unsupported WebUI activity action"),
         }
@@ -177,8 +177,8 @@ mod tests {
                 "security_patch_restored",
                 ActivityAction::SecurityPatchRestored,
             ),
-            ("pif_enabled", ActivityAction::PifEnabled),
-            ("pif_disabled", ActivityAction::PifDisabled),
+            ("soter_spoof_enabled", ActivityAction::SoterSpoofEnabled),
+            ("soter_spoof_disabled", ActivityAction::SoterSpoofDisabled),
             ("adb_disabler_changed", ActivityAction::AdbDisablerChanged),
         ] {
             assert_eq!(ActivityAction::parse(name).unwrap(), action);

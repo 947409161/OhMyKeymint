@@ -2,7 +2,7 @@
 SKIPUNZIP=1
 
 SONAME="Oh My Keymint"
-SUPPORTED_ABIS="arm64 x64"
+SUPPORTED_ABIS="arm64"
 MIN_SDK=29
 
 if [ "$BOOTMODE" ] && [ "$KSU" ]; then
@@ -87,13 +87,7 @@ find "$MODPATH/webroot" -type f -exec chmod 0644 {} \;
 chmod 0644 "$MODPATH/webroot.manifest"
 
 
-if [ "$ARCH" = "x64" ] || [ "$ARCH" = "x86_64" ]; then
-  ui_print "- Using packaged x64 binaries"
-  BINDIR="$MODPATH/libs/x86_64"
-  ZYGISK_ABI="x86_64"
-  extract "$ZIPFILE" 'libs/x86_64/keymint' "$MODPATH"
-  extract "$ZIPFILE" 'libs/x86_64/inject'  "$MODPATH"
-elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "arm64-v8a" ]; then
+if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "arm64-v8a" ]; then
   ui_print "- Using packaged arm64 binaries"
   BINDIR="$MODPATH/libs/arm64-v8a"
   ZYGISK_ABI="arm64-v8a"
@@ -107,15 +101,26 @@ fi
 [ -f "$BINDIR/inject" ] || abort "! Missing $BINDIR/inject"
 chmod 755 "$BINDIR/keymint" "$BINDIR/inject"
 
-ui_print "- Extracting Zygisk PIF payload"
+ui_print "- Extracting Zygisk Soter payload"
+# The payload always installs under its loadable name; the saved setting is
+# re-applied by post-fs-data.sh on the next boot.  Drop a payload the previous
+# installation left disabled, so the two names cannot coexist.
+rm -f "$MODPATH/zygisk/$ZYGISK_ABI.so.disabled"
 extract "$ZIPFILE" "zygisk/$ZYGISK_ABI.so" "$MODPATH"
-[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk PIF payload"
+[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk Soter payload"
 chmod 755 "$MODPATH/zygisk/$ZYGISK_ABI.so"
 
 CONFIG_DIR=/data/adb/omk
 mkdir -p "$CONFIG_DIR"
 rm -f "$CONFIG_DIR/restart.keymint" "$CONFIG_DIR/restart.injector" "$CONFIG_DIR/restart.all"
 rm -f "$CONFIG_DIR/keymint" "$CONFIG_DIR/inject" "$CONFIG_DIR/injector" # clean up old hot-update binaries
+
+# Drop state owned by the removed PIF fingerprint feature.  The activity log is
+# deleted with it: actions are stored as a closed enum behind
+# deny_unknown_fields, so a log still holding "pif_enabled" entries would fail
+# validation and take the whole history down with it.
+rm -f /data/misc/keystore/omk/data/pif_fingerprint.json
+rm -f /data/misc/keystore/omk/data/webui_activity.json
 
 if [ ! -e "$CONFIG_DIR/omkdata" ] && [ ! -L "$CONFIG_DIR/omkdata" ]; then
   ln -s /data/misc/keystore/omk "$CONFIG_DIR/omkdata"

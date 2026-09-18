@@ -22,7 +22,7 @@ import { i18n } from '../i18n'
 import { fetchLatestSecurityPatch } from '../security_patch'
 import { isDev } from '../utils/dev'
 import HomeView, { type KeyboxStatus, type ModuleStatus, type TeeStatus } from './HomeView.vue'
-import PifFingerprintDialog from './PifFingerprintDialog.vue'
+import SoterSpoofDialog from './SoterSpoofDialog.vue'
 import SettingsView from './SettingsView.vue'
 import TargetsView from './TargetsView.vue'
 import ToolsView, { type ToolEvent } from './ToolsView.vue'
@@ -46,7 +46,7 @@ const keyboxLevel = ref<'tee' | 'strongbox' | 'unknown'>('unknown')
 const keyboxRevocation = ref<KeyboxRevocationStatus>('not_checked')
 const teeStatus = ref<TeeStatus>('loading')
 const securityPatch = ref<string | null>(null)
-const spoofedDevice = ref<string | null | undefined>(undefined)
+const soterSpoofEnabled = ref<boolean | undefined>(undefined)
 const activities = ref<ActivityEntry[]>([])
 const activityStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const activityClearBusy = ref(false)
@@ -57,12 +57,12 @@ const adbEnabled = ref(true)
 const adbDevOptions = ref(true)
 const adbUsbDebug = ref(true)
 const adbOemUnlock = ref(true)
-const pifOpen = ref(false)
+const soterOpen = ref(false)
 const keyboxOpen = ref(false)
 const selectedKeybox = ref<{ name: string, contents: Uint8Array } | null>(null)
 const keyboxBusy = ref(false)
 const targetsView = ref<InstanceType<typeof TargetsView> | null>(null)
-const pifDialog = ref<InstanceType<typeof PifFingerprintDialog> | null>(null)
+const soterDialog = ref<InstanceType<typeof SoterSpoofDialog> | null>(null)
 
 const pageIds = ['home', 'tools', 'settings'] as const
 const navItems = computed(() => [
@@ -302,15 +302,15 @@ async function refreshIdentity(force = false): Promise<void> {
     keyboxRevocation.value = 'not_listed'
     teeStatus.value = 'normal'
     securityPatch.value = '2026-08-01'
-    spoofedDevice.value = 'Google Pixel 9 Pro'
+    soterSpoofEnabled.value = true
     return
   }
   try {
-    const [keybox, patch, tee, pif] = await Promise.allSettled([
+    const [keybox, patch, tee, soter] = await Promise.allSettled([
       cli.getKeyboxState(),
       cli.getSystemSecurityPatch(),
       cli.getTeeStatus(),
-      cli.getPifFingerprintState(),
+      cli.getSoterSpoofState(),
     ])
     if (keybox.status === 'fulfilled') {
       const value = keybox.value
@@ -326,11 +326,7 @@ async function refreshIdentity(force = false): Promise<void> {
     if (patch.status === 'fulfilled') securityPatch.value = patch.value
     if (tee.status === 'fulfilled') teeStatus.value = 'normal'
     else teeStatus.value = 'error'
-    if (pif.status === 'fulfilled') {
-      spoofedDevice.value = pif.value.enabled
-        ? (/^google\s/i.test(pif.value.model) ? pif.value.model : `Google ${pif.value.model}`)
-        : null
-    }
+    soterSpoofEnabled.value = soter.status === 'fulfilled' ? soter.value.enabled : undefined
   } catch (error) {
     console.error('Unable to load OMK identity:', error)
   }
@@ -432,7 +428,7 @@ function onTool(event: ToolEvent): void {
     case 'syncSecurityPatch': void syncPatch(false); break
     case 'restoreSecurityPatch': void syncPatch(true); break
     case 'openAdbDisabler': void openAdbDisabler(); break
-    case 'spoofPif': pifOpen.value = true; break
+    case 'spoofSoter': soterOpen.value = true; break
   }
 }
 
@@ -534,14 +530,14 @@ watch(pageIndex, index => {
   }
 })
 
-watch(pifOpen, open => {
-  if (open && !overlayHistory.has('pif-fingerprint')) {
-    overlayHistory.add('pif-fingerprint')
-    history.push('pif-fingerprint', () => {
-      overlayHistory.delete('pif-fingerprint')
-      pifDialog.value?.requestClose()
+watch(soterOpen, open => {
+  if (open && !overlayHistory.has('soter-spoof')) {
+    overlayHistory.add('soter-spoof')
+    history.push('soter-spoof', () => {
+      overlayHistory.delete('soter-spoof')
+      soterDialog.value?.requestClose()
     })
-  } else if (!open && overlayHistory.delete('pif-fingerprint')) history.consume('pif-fingerprint')
+  } else if (!open && overlayHistory.delete('soter-spoof')) history.consume('soter-spoof')
 })
 watch(adbOpen, open => {
   if (open && !overlayHistory.has('adb-disabler')) {
@@ -568,7 +564,7 @@ watch(keyboxOpen, open => {
         :keybox-revocation="keyboxRevocation"
         :tee-status="teeStatus"
         :security-patch="securityPatch"
-        :spoofed-device="spoofedDevice"
+        :soter-spoof-enabled="soterSpoofEnabled"
         :activities="activities"
         :activity-status="activityStatus"
         :activity-clear-busy="activityClearBusy"
@@ -583,7 +579,7 @@ watch(keyboxOpen, open => {
         @sync-security-patch="onTool('syncSecurityPatch')"
         @restore-security-patch="onTool('restoreSecurityPatch')"
         @open-adb-disabler="onTool('openAdbDisabler')"
-        @spoof-pif="onTool('spoofPif')"
+        @spoof-soter="onTool('spoofSoter')"
       />
       <SettingsView v-show="pageIndex === 2" />
     </main>
@@ -680,9 +676,9 @@ watch(keyboxOpen, open => {
       </template>
     </MiuixDialog>
 
-    <PifFingerprintDialog
-      ref="pifDialog"
-      v-model="pifOpen"
+    <SoterSpoofDialog
+      ref="soterDialog"
+      v-model="soterOpen"
       :cli="cli"
       @notify="notify"
       @changed="refreshIdentity(true); refreshActivity()"

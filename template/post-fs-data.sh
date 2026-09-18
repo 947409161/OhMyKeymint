@@ -165,4 +165,28 @@ reapply_security_patch_early() (
   return 0
 )
 
+# Apply the WebUI's Soter spoof setting.  The payload has no runtime switch, so
+# switching it off means renaming it out of the loader's way, and this has to
+# happen before Zygisk maps module payloads -- which is why it lives here and
+# not in service.sh.  A missing or malformed state file keeps the payload
+# enabled, the state a fresh installation ships in.
+apply_soter_spoof() (
+  ZYGISK_DIR=$MODDIR/zygisk
+  PAYLOAD=$ZYGISK_DIR/arm64-v8a.so
+  DISABLED_PAYLOAD=$ZYGISK_DIR/arm64-v8a.so.disabled
+  [ -d "$ZYGISK_DIR" ] || return 0
+
+  case "$(cat "$TARGET_DIR/data/soter_spoof.conf" 2>/dev/null)" in
+    0)
+      [ -f "$PAYLOAD" ] && mv -f "$PAYLOAD" "$DISABLED_PAYLOAD" 2>/dev/null
+      ;;
+    *)
+      [ -f "$DISABLED_PAYLOAD" ] && mv -f "$DISABLED_PAYLOAD" "$PAYLOAD" 2>/dev/null
+      ;;
+  esac
+  return 0
+)
+
+apply_soter_spoof || true
+
 reapply_security_patch_early || true
