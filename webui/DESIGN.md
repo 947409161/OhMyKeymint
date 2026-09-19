@@ -415,6 +415,23 @@ follow-the-system behaviour or the pure-black theme, and both are worth keeping.
 dialog rather than a `<select>`: the WebUI is touch-only, and a native dropdown inside a WebView
 renders as a desktop popup.
 
+## Runtime environment
+
+The WebUI normally runs inside a KernelSU WebView, where `kernelsu-alt` exposes the bridge the
+native helpers are reached through. Two things follow, and both are enforced by
+`tests/unit/bundle.test.mjs`.
+
+**A release build never fabricates device state.** `src/bridge/dev.ts` answers the `--webui-*`
+protocol so development and Playwright can exercise the production code path without a device. It
+is installed only under `import.meta.env.DEV`, so Vite removes it from release builds. The
+failure mode this prevents is the worst one available: a device with a broken or missing bridge
+showing a healthy-looking keybox and package list that no native call produced, leaving the user
+convinced an operation succeeded.
+
+**A release build without a bridge says so.** Rather than rendering the ordinary shell — whose
+every field would read "unavailable" for no stated reason — it shows the blocking page from
+`renderBridgeUnavailablePage()`.
+
 ## Copy and translation
 
 No component hard-codes user-visible copy. Strings arrive from `i18n`, and the components that

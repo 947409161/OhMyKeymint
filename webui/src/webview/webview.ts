@@ -31,6 +31,20 @@ export function isSupported(): boolean {
 	return version === null || version >= MIN_ANDROID_WEBVIEW_VERSION;
 }
 
+/**
+ * Shown when the WebUI is running in a release build without a KernelSU
+ * bridge. The alternative — rendering the ordinary shell — would leave every
+ * field reading "unavailable" with no indication of why.
+ */
+export function renderBridgeUnavailablePage(): HTMLElement {
+	const container = document.createElement("div");
+	container.className = "omk-blocking";
+	const message = document.createElement("p");
+	message.textContent = "The KernelSU WebUI bridge is not available.";
+	container.appendChild(message);
+	return container;
+}
+
 export function renderBlockingPage(): HTMLElement {
 	const container = document.createElement("div");
 	container.className = "omk-blocking";
