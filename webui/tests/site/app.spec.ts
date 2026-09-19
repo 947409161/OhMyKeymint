@@ -13,11 +13,17 @@ const gotoPage = async (
 };
 
 test.describe("home", () => {
+	test("names the module in the app bar", async ({ page }) => {
+		await page.goto("/");
+		// The app bar names the module, not the page: the navigation bar
+		// already marks which page is current.
+		await expect(
+			page.locator("header").getByRole("heading", { name: "Oh My Keymint" }),
+		).toBeVisible();
+	});
+
 	test("renders the identity surface from the bridge", async ({ page }) => {
 		await page.goto("/");
-		await expect(
-			page.locator("header").getByRole("heading", { name: "Home" }),
-		).toBeVisible();
 		for (const value of [
 			"Google hardware root certificate",
 			"StrongBox",
@@ -58,16 +64,12 @@ test.describe("navigation", () => {
 	test("switches between the three pages", async ({ page }) => {
 		await page.goto("/");
 		await gotoPage(page, "Tools");
-		await expect(
-			page.locator("header").getByRole("heading", { name: "Tools" }),
-		).toBeVisible();
+		await expect(main(page).getByText("App management")).toBeVisible();
 		await gotoPage(page, "Settings");
-		await expect(
-			page.locator("header").getByRole("heading", { name: "Settings" }),
-		).toBeVisible();
+		await expect(main(page).getByText("Language")).toBeVisible();
 		await gotoPage(page, "Home");
 		await expect(
-			page.locator("header").getByRole("heading", { name: "Home" }),
+			main(page).getByRole("button", { name: /apps selected/ }),
 		).toBeVisible();
 	});
 

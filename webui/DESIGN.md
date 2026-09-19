@@ -268,7 +268,7 @@ point upward. A molecule may compose atoms; an atom never imports a molecule or 
 |---|---|---|
 | `SettingRow` | `Icon`, `Divider`, trailing control | The workhorse. Six variants: switch, checkbox, navigate, value, slider, disabled |
 | `SectionHeader` | — | `text-label`, `on-surface-muted`, 16 px inset |
-| `TopAppBar` | `IconButton`, `Icon` | 56 px + `--omk-top-inset`, `surface` fill, bottom hairline |
+| `TopAppBar` | `IconButton`, `Icon` | 56 px + `--omk-top-inset`, `surface` fill, bottom hairline. Always titled with the module name |
 | `NavigationBar` | `Icon` | 64 px + `--omk-bottom-inset`, 3 items, top hairline |
 | `Dialog` | `Button` | Headless UI, max-width 360 px, `radius-lg`, `scrim` overlay |
 | `SnackbarHost` | — | Inverse surface, 48 px min height, `radius-md`, queued, `aria-live` |
@@ -331,6 +331,14 @@ glyph and weight:
 The tone must also be exposed as text, not only as a glyph: the value string itself states what
 is wrong ("Invalid Keybox", "Not installed"). A screen reader user receives the same information
 as a sighted one.
+
+**The app bar names the module, not the page**
+
+Every app bar reads `MODULE_NAME`, and a drill-down adds a back button instead of a page title.
+The navigation bar already marks which page is current, so repeating it in the bar was redundant,
+and the duplication cost the title the width it needed: with three action icons beside it, a
+three-word page title rendered as "Add package nam…". The module name is short, stable, and
+identifies the product the WebUI belongs to; the content below identifies the page.
 
 **A row that owns a toggle is the control**
 

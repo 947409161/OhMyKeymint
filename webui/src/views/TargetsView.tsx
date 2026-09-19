@@ -13,6 +13,7 @@ import { ProgressIndicator } from "../components/atoms/ProgressIndicator";
 import { SearchBar } from "../components/atoms/SearchBar";
 import { BottomSheet } from "../components/molecules/BottomSheet";
 import { TopAppBar } from "../components/molecules/TopAppBar";
+import { MODULE_NAME } from "../module_info";
 import { appList } from "../state/app";
 import { useOverlayHistory } from "../state/useOverlayHistory";
 import { tr } from "../utils/tr";
@@ -86,11 +87,12 @@ export function TargetsView({
 
 	return (
 		<section
+			data-testid="omk-targets"
 			className="fixed inset-0 z-30 flex flex-col bg-omk-bg"
 			aria-label={tr("app_targets_title", "Add package names")}
 		>
 			<TopAppBar
-				title={tr("app_targets_title", "Add package names")}
+				title={MODULE_NAME}
 				backLabel={tr("functional_button_back", "Back")}
 				onBack={onClose}
 				actions={

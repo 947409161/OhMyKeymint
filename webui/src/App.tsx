@@ -16,6 +16,7 @@ import {
 import { SnackbarHost, snackbar } from "./components/molecules/Snackbar";
 import { TopAppBar } from "./components/molecules/TopAppBar";
 import type { SelectedFile } from "./file_selector/file_selector";
+import { MODULE_NAME } from "./module_info";
 import { fetchLatestSecurityPatch } from "./security_patch";
 import { appList, cli, config, fileSelector, keybind } from "./state/app";
 import type { Identity } from "./state/identity";
@@ -317,7 +318,12 @@ export function App(): React.JSX.Element {
 			className="flex min-h-dvh flex-col bg-omk-bg text-omk-on"
 			data-testid="omk-app"
 		>
-			<TopAppBar title={tr(`nav_${PAGE_IDS[page]}`, "Oh My Keymint")} />
+			{/*
+			 * The app bar names the module, not the page: the navigation bar
+			 * already marks which page is current, so repeating it here was
+			 * redundant and cost the title its width.
+			 */}
+			<TopAppBar title={MODULE_NAME} />
 
 			<main className="flex-1">
 				{page === 0 ? (

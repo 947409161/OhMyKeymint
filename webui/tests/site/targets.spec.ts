@@ -10,9 +10,7 @@ const openTargets = async (page: import("@playwright/test").Page) => {
 	await main(page)
 		.getByRole("button", { name: /apps selected/ })
 		.click();
-	await expect(
-		page.getByRole("heading", { name: "Add package names" }),
-	).toBeVisible();
+	await expect(page.getByTestId("omk-targets")).toBeVisible();
 };
 
 const row = (page: import("@playwright/test").Page, name: string) =>
@@ -30,9 +28,7 @@ test.describe("scoped apps", () => {
 		await main(page)
 			.getByRole("button", { name: /Add package names/ })
 			.click();
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeVisible();
+		await expect(page.getByTestId("omk-targets")).toBeVisible();
 	});
 
 	// Regression: the row was a <label> that both wrapped the control and
@@ -89,9 +85,7 @@ test.describe("scoped apps", () => {
 		await page.getByRole("button", { name: /^Save/ }).click();
 
 		await expect(page.getByText("Config saved")).toBeVisible();
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeHidden();
+		await expect(page.getByTestId("omk-targets")).toBeHidden();
 	});
 });
 
@@ -101,9 +95,7 @@ test.describe("back gestures", () => {
 	test("the back gesture closes the scoped apps view", async ({ page }) => {
 		await openTargets(page);
 		await page.goBack();
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeHidden();
+		await expect(page.getByTestId("omk-targets")).toBeHidden();
 		await expect(
 			main(page).getByRole("button", { name: /apps selected/ }),
 		).toBeVisible();
@@ -112,9 +104,7 @@ test.describe("back gestures", () => {
 	test("Escape closes the scoped apps view", async ({ page }) => {
 		await openTargets(page);
 		await page.keyboard.press("Escape");
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeHidden();
+		await expect(page.getByTestId("omk-targets")).toBeHidden();
 	});
 
 	test("Escape closes one layer at a time", async ({ page }) => {
@@ -125,14 +115,10 @@ test.describe("back gestures", () => {
 		// Headless UI owns this Escape; the scoped apps view must stay open.
 		await page.keyboard.press("Escape");
 		await expect(page.getByRole("dialog")).toBeHidden();
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeVisible();
+		await expect(page.getByTestId("omk-targets")).toBeVisible();
 
 		await page.keyboard.press("Escape");
-		await expect(
-			page.getByRole("heading", { name: "Add package names" }),
-		).toBeHidden();
+		await expect(page.getByTestId("omk-targets")).toBeHidden();
 	});
 
 	test("the back gesture closes a dialog one layer at a time", async ({
