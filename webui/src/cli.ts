@@ -1,508 +1,400 @@
-import { exec, spawn } from 'kernelsu-alt'
-import { normalizePackageNames } from './package_name'
+import type { ExecResult } from "./bridge";
+import { getBridge } from "./bridge";
 import {
-  ANDROID_SECURITY_BULLETIN_MIRROR_URL,
-  ANDROID_SECURITY_BULLETIN_URL,
-  isSecurityPatchDate,
-} from './security_patch'
+	type ActivityAction,
+	type ActivityEntry,
+	type AdbDisablerState,
+	encodeBase64Bytes,
+	encodeBase64Utf8,
+	type KeyboxRevocationStatus,
+	type KeyboxState,
+	MAX_KEYBOX_XML_BYTES,
+	parseActivityLog,
+	parseAdbDisablerState,
+	parseKeyboxState,
+	parseSoterSpoofState,
+	parseSupportedAbi,
+	type SoterSpoofState,
+	type SupportedAbi,
+	shellQuote,
+} from "./cli_parse";
+import { normalizePackageNames } from "./package_name";
+import {
+	ANDROID_SECURITY_BULLETIN_MIRROR_URL,
+	ANDROID_SECURITY_BULLETIN_URL,
+	isSecurityPatchDate,
+} from "./security_patch";
 
-const MODULE_ROOT = '/data/adb/modules/oh_my_keymint'
-const HOT_UPDATE_ROOT = '/data/adb/omk'
-const SUPPORTED_ABIS = ['arm64-v8a'] as const
-type SupportedAbi = typeof SUPPORTED_ABIS[number]
-type HelperPaths = { abi: SupportedAbi, inject: string, keymint: string }
-const KEYBOX_BASE64_CHUNK_BYTES = 48 * 1024
-const MAX_BULLETIN_BYTES = 2 * 1024 * 1024
-const MAX_SOTER_SPOOF_STATE_BYTES = 2 * 1024
-const MAX_ACTIVITY_ENTRIES = 30
-const MAX_ACTIVITY_DETAIL_BYTES = 256
-const MAX_ACTIVITY_TIMESTAMP = 253_402_300_799
+const MODULE_ROOT = "/data/adb/modules/oh_my_keymint";
+const HOT_UPDATE_ROOT = "/data/adb/omk";
+type HelperPaths = { abi: SupportedAbi; inject: string; keymint: string };
+const KEYBOX_BASE64_CHUNK_BYTES = 48 * 1024;
+const MAX_BULLETIN_BYTES = 2 * 1024 * 1024;
+const MAX_SOTER_SPOOF_STATE_BYTES = 2 * 1024;
 
-const ACTIVITY_ACTIONS = [
-  'targets_saved',
-  'keybox_changed',
-  'widevine_installed',
-  'security_patch_synced',
-  'security_patch_restored',
-  'soter_spoof_enabled',
-  'soter_spoof_disabled',
-  'adb_disabler_changed',
-] as const
-export type ActivityAction = typeof ACTIVITY_ACTIONS[number]
-
-export interface ActivityEntry {
-  action: ActivityAction
-  detail: string
-  timestamp: number
-}
-
-export const MAX_KEYBOX_XML_BYTES = 64 * 1024
-
-export interface SoterSpoofState {
-  enabled: boolean
-  /**
-   * True while the packaged payload still disagrees with `enabled`, i.e. until
-   * the next boot lets the module's boot script act on the setting. The dialog
-   * must not present the switch as taking effect before then.
-   */
-  reboot_required: boolean
-}
-
-export type KeyboxSource = 'google_hardware' | 'google_remote' | 'unknown'
-export type KeyboxLevel = 'tee' | 'strongbox' | 'unknown'
-export interface AdbDisablerState {
-  enabled: boolean
-  dev_options: boolean
-  usb_debug: boolean
-  oem_unlock: boolean
-}
-export type PlayIntegrityStatus = 'not_checked'
-export type KeyboxRevocationStatus =
-  | 'not_checked'
-  | 'checking'
-  | 'not_listed'
-  | 'suspended'
-  | 'revoked'
-  | 'unknown'
-
-export interface KeyboxState {
-  valid: boolean
-  bundled: boolean
-  source: KeyboxSource
-  level: KeyboxLevel
-  play_integrity: PlayIntegrityStatus
-  revocation: KeyboxRevocationStatus
-}
-
-function parseCanonicalJson(output: string, description: string): unknown {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(output)
-  } catch {
-    throw new Error(`OMK returned invalid ${description}`)
-  }
-  if (JSON.stringify(parsed) !== output) {
-    throw new Error(`OMK returned non-canonical ${description}`)
-  }
-  return parsed
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const keys = Object.keys(value)
-  return keys.length === allowed.length && keys.every((key, index) => key === allowed[index])
-}
-
-function parseSoterSpoofState(output: string): SoterSpoofState {
-  const parsed = parseCanonicalJson(output, 'Soter spoof state')
-  if (!isRecord(parsed)
-      || !hasOnlyKeys(parsed, ['enabled', 'reboot_required'])
-      || typeof parsed.enabled !== 'boolean'
-      || typeof parsed.reboot_required !== 'boolean') {
-    throw new Error('OMK returned an invalid Soter spoof state')
-  }
-  return { enabled: parsed.enabled, reboot_required: parsed.reboot_required }
-}
-
-function parseKeyboxState(output: string): KeyboxState {
-  const parsed = parseCanonicalJson(output, 'Keybox state')
-  if (!isRecord(parsed)
-      || !hasOnlyKeys(
-        parsed,
-        ['valid', 'bundled', 'source', 'level', 'play_integrity', 'revocation'],
-      )
-      || typeof parsed.valid !== 'boolean'
-      || typeof parsed.bundled !== 'boolean'
-      || (parsed.source !== 'google_hardware'
-        && parsed.source !== 'google_remote'
-        && parsed.source !== 'unknown')
-      || (parsed.level !== 'tee'
-        && parsed.level !== 'strongbox'
-        && parsed.level !== 'unknown')
-      || parsed.play_integrity !== 'not_checked'
-      || (parsed.revocation !== 'not_checked'
-        && parsed.revocation !== 'not_listed'
-        && parsed.revocation !== 'suspended'
-        && parsed.revocation !== 'revoked'
-        && parsed.revocation !== 'unknown')
-      || (!parsed.valid && parsed.bundled)) {
-    throw new Error('OMK returned an invalid Keybox state')
-  }
-  return {
-    valid: parsed.valid,
-    bundled: parsed.bundled,
-    source: parsed.source,
-    level: parsed.level,
-    play_integrity: parsed.play_integrity,
-    revocation: parsed.revocation,
-  }
-}
-
-function parseActivityLog(output: string): ActivityEntry[] {
-  const parsed = parseCanonicalJson(output, 'WebUI activity log')
-  if (!Array.isArray(parsed) || parsed.length > MAX_ACTIVITY_ENTRIES) {
-    throw new Error('OMK returned an invalid WebUI activity log')
-  }
-
-  const actions = new Set<string>(ACTIVITY_ACTIONS)
-  return parsed.map(value => {
-    if (!isRecord(value)
-        || !hasOnlyKeys(value, ['action', 'detail', 'timestamp'])
-        || typeof value.action !== 'string'
-        || !actions.has(value.action)
-        || typeof value.detail !== 'string'
-        || new TextEncoder().encode(value.detail).byteLength > MAX_ACTIVITY_DETAIL_BYTES
-        || /[\u0000-\u001f\u007f]/.test(value.detail)
-        || typeof value.timestamp !== 'number'
-        || !Number.isSafeInteger(value.timestamp)
-        || value.timestamp <= 0
-        || value.timestamp > MAX_ACTIVITY_TIMESTAMP) {
-      throw new Error('OMK returned an invalid WebUI activity entry')
-    }
-    return {
-      action: value.action as ActivityAction,
-      detail: value.detail,
-      timestamp: value.timestamp,
-    }
-  })
-}
-
-function encodeBase64Bytes(bytes: Uint8Array): string {
-  let binary = ''
-  const chunkSize = 0x8000
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
-  }
-  return btoa(binary)
-}
-
-function encodeBase64Utf8(value: string): string {
-  return encodeBase64Bytes(new TextEncoder().encode(value))
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-function normalizeAbiToken(value: string): SupportedAbi | null {
-  switch (value.trim()) {
-    case 'arm64-v8a':
-    case 'aarch64':
-      return 'arm64-v8a'
-    default:
-      return null
-  }
-}
-
-function parseSupportedAbi(output: string): SupportedAbi | null {
-  const tokens = output.split(/[\s,]+/).filter(Boolean)
-  for (const token of tokens) {
-    const abi = normalizeAbiToken(token)
-    if (abi !== null) return abi
-  }
-  return null
-}
+export type {
+	ActivityAction,
+	ActivityEntry,
+	AdbDisablerState,
+	KeyboxLevel,
+	KeyboxRevocationStatus,
+	KeyboxSource,
+	KeyboxState,
+	SoterSpoofState,
+} from "./cli_parse";
+export { MAX_KEYBOX_XML_BYTES };
 
 export class Cli {
-  #helperPaths: Promise<HelperPaths> | null = null
+	#helperPaths: Promise<HelperPaths> | null = null;
 
-  async getScoop(): Promise<string[]> {
-    const output = await this.#runInject(['--webui-get-scoop'])
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(output)
-    } catch {
-      throw new Error('OMK returned an invalid package list')
-    }
-    return normalizePackageNames(parsed)
-  }
+	async getScoop(): Promise<string[]> {
+		const output = await this.#runInject(["--webui-get-scoop"]);
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(output);
+		} catch {
+			throw new Error("OMK returned an invalid package list");
+		}
+		return normalizePackageNames(parsed);
+	}
 
-  async setScoop(packages: string[]): Promise<void> {
-    const normalized = normalizePackageNames(packages)
-    const payload = encodeBase64Utf8(JSON.stringify(normalized))
-    await this.#runInject(['--webui-set-scoop', payload])
-    await this.#recordActivity('targets_saved', String(normalized.length))
-  }
+	async setScoop(packages: string[]): Promise<void> {
+		const normalized = normalizePackageNames(packages);
+		const payload = encodeBase64Utf8(JSON.stringify(normalized));
+		await this.#runInject(["--webui-set-scoop", payload]);
+		await this.#recordActivity("targets_saved", String(normalized.length));
+	}
 
-  async installKeybox(contents: Uint8Array): Promise<void> {
-    if (contents.byteLength > MAX_KEYBOX_XML_BYTES) {
-      throw new Error(`keybox.xml exceeds the ${MAX_KEYBOX_XML_BYTES} byte limit`)
-    }
+	async installKeybox(contents: Uint8Array): Promise<void> {
+		if (contents.byteLength > MAX_KEYBOX_XML_BYTES) {
+			throw new Error(
+				`keybox.xml exceeds the ${MAX_KEYBOX_XML_BYTES} byte limit`,
+			);
+		}
 
-    const payload = encodeBase64Bytes(contents)
-    const chunks: string[] = []
-    for (let offset = 0; offset < payload.length; offset += KEYBOX_BASE64_CHUNK_BYTES) {
-      chunks.push(payload.slice(offset, offset + KEYBOX_BASE64_CHUNK_BYTES))
-    }
-    const { keymint } = await this.#getHelperPaths()
-    await this.#run(keymint, ['--webui-install-keybox', ...chunks])
-    await this.#recordActivity('keybox_changed', '')
-  }
+		const payload = encodeBase64Bytes(contents);
+		const chunks: string[] = [];
+		for (
+			let offset = 0;
+			offset < payload.length;
+			offset += KEYBOX_BASE64_CHUNK_BYTES
+		) {
+			chunks.push(payload.slice(offset, offset + KEYBOX_BASE64_CHUNK_BYTES));
+		}
+		const { keymint } = await this.#getHelperPaths();
+		await this.#run(keymint, ["--webui-install-keybox", ...chunks]);
+		await this.#recordActivity("keybox_changed", "");
+	}
 
-  async getKeyboxState(): Promise<KeyboxState> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-get-keybox-state'], 256)
-    return parseKeyboxState(output)
-  }
+	async getKeyboxState(): Promise<KeyboxState> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(keymint, ["--webui-get-keybox-state"], 256);
+		return parseKeyboxState(output);
+	}
 
-  async checkKeyboxRevocation(): Promise<KeyboxRevocationStatus> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-check-keybox-revocation'], 256)
-    if (output !== 'not_listed' && output !== 'suspended' && output !== 'revoked') {
-      throw new Error('OMK returned an invalid Keybox revocation status')
-    }
-    return output
-  }
+	async checkKeyboxRevocation(): Promise<KeyboxRevocationStatus> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(
+			keymint,
+			["--webui-check-keybox-revocation"],
+			256,
+		);
+		if (
+			output !== "not_listed" &&
+			output !== "suspended" &&
+			output !== "revoked"
+		) {
+			throw new Error("OMK returned an invalid Keybox revocation status");
+		}
+		return output;
+	}
 
-  /** Apply ADB Disabler options and persist them for the next boot. */
-  async setAdbDisabler(
-    enabled: boolean,
-    devOptions: boolean,
-    usbDebug: boolean,
-    oemUnlock: boolean,
-  ): Promise<void> {
-    const { keymint } = await this.#getHelperPaths()
-    const values = [enabled, devOptions, usbDebug, oemUnlock].map(value => value ? '1' : '0')
-    const output = await this.#run(keymint, ['--webui-set-adb-disabler', ...values], 256)
-    if (output !== 'adb_disabler_applied') {
-      throw new Error('OMK returned an unexpected ADB Disabler result')
-    }
-    await this.#recordActivity('adb_disabler_changed', enabled ? 'enabled' : 'disabled')
-  }
+	/** Apply ADB Disabler options and persist them for the next boot. */
+	async setAdbDisabler(
+		enabled: boolean,
+		devOptions: boolean,
+		usbDebug: boolean,
+		oemUnlock: boolean,
+	): Promise<void> {
+		const { keymint } = await this.#getHelperPaths();
+		const values = [enabled, devOptions, usbDebug, oemUnlock].map((value) =>
+			value ? "1" : "0",
+		);
+		const output = await this.#run(
+			keymint,
+			["--webui-set-adb-disabler", ...values],
+			256,
+		);
+		if (output !== "adb_disabler_applied") {
+			throw new Error("OMK returned an unexpected ADB Disabler result");
+		}
+		await this.#recordActivity(
+			"adb_disabler_changed",
+			enabled ? "enabled" : "disabled",
+		);
+	}
 
-  async getAdbDisabler(): Promise<AdbDisablerState> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-get-adb-disabler'], 256)
-    let parsed: unknown
-    try { parsed = JSON.parse(output) } catch { throw new Error('OMK returned invalid ADB Disabler state') }
-    if (!isRecord(parsed)
-        || !hasOnlyKeys(parsed, ['enabled', 'dev_options', 'usb_debug', 'oem_unlock'])
-        || typeof parsed.enabled !== 'boolean'
-        || typeof parsed.dev_options !== 'boolean'
-        || typeof parsed.usb_debug !== 'boolean'
-        || typeof parsed.oem_unlock !== 'boolean') {
-      throw new Error('OMK returned invalid ADB Disabler state')
-    }
-    return parsed as unknown as AdbDisablerState
-  }
+	async getAdbDisabler(): Promise<AdbDisablerState> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(keymint, ["--webui-get-adb-disabler"], 256);
+		return parseAdbDisablerState(output);
+	}
 
-  async syncSecurityPatch(date: string): Promise<string> {
-    if (!isSecurityPatchDate(date)) {
-      throw new Error('Invalid security-patch date')
-    }
+	async syncSecurityPatch(date: string): Promise<string> {
+		if (!isSecurityPatchDate(date)) {
+			throw new Error("Invalid security-patch date");
+		}
 
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-sync-security-patch', date])
-    const firstDayFallback = date.endsWith('-05') ? `${date.slice(0, 8)}01` : null
-    if (output !== date && output !== firstDayFallback) {
-      throw new Error('OMK returned an unexpected security-patch date')
-    }
-    await this.#recordActivity('security_patch_synced', output)
-    return output
-  }
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(keymint, [
+			"--webui-sync-security-patch",
+			date,
+		]);
+		const firstDayFallback = date.endsWith("-05")
+			? `${date.slice(0, 8)}01`
+			: null;
+		if (output !== date && output !== firstDayFallback) {
+			throw new Error("OMK returned an unexpected security-patch date");
+		}
+		await this.#recordActivity("security_patch_synced", output);
+		return output;
+	}
 
-  async restoreDefaultSecurityPatch(): Promise<void> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-sync-security-patch', 'auto'])
-    if (output !== 'auto') {
-      throw new Error('OMK returned an unexpected security-patch mode')
-    }
-    await this.#recordActivity('security_patch_restored', '')
-  }
+	async restoreDefaultSecurityPatch(): Promise<void> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(keymint, [
+			"--webui-sync-security-patch",
+			"auto",
+		]);
+		if (output !== "auto") {
+			throw new Error("OMK returned an unexpected security-patch mode");
+		}
+		await this.#recordActivity("security_patch_restored", "");
+	}
 
-  async getSystemSecurityPatch(): Promise<string> {
-    let probe: Awaited<ReturnType<typeof exec>>
-    try {
-      probe = await exec(
-        `/system/bin/sh -c ${shellQuote('/system/bin/getprop ro.build.version.security_patch')}`,
-      )
-    } catch (error) {
-      throw new Error(`Unable to read the system security patch: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    if (probe.errno !== 0) {
-      throw new Error(
-        `Unable to read the system security patch: ${probe.stderr.trim() || `shell exited with code ${probe.errno}`}`,
-      )
-    }
+	async getSystemSecurityPatch(): Promise<string> {
+		let probe: ExecResult;
+		try {
+			probe = await getBridge().exec(
+				`/system/bin/sh -c ${shellQuote("/system/bin/getprop ro.build.version.security_patch")}`,
+			);
+		} catch (error) {
+			throw new Error(
+				`Unable to read the system security patch: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		if (probe.errno !== 0) {
+			throw new Error(
+				`Unable to read the system security patch: ${probe.stderr.trim() || `shell exited with code ${probe.errno}`}`,
+			);
+		}
 
-    const patch = probe.stdout.trim()
-    if (!isSecurityPatchDate(patch)) {
-      throw new Error('Android returned an invalid system security-patch date')
-    }
-    return patch
-  }
+		const patch = probe.stdout.trim();
+		if (!isSecurityPatchDate(patch)) {
+			throw new Error("Android returned an invalid system security-patch date");
+		}
+		return patch;
+	}
 
-  async getTeeStatus(): Promise<void> {
-    const output = await this.#runInject(['--webui-get-tee-status'])
-    if (output !== 'normal') {
-      throw new Error('OMK returned an unexpected TEE status')
-    }
-  }
+	async getTeeStatus(): Promise<void> {
+		const output = await this.#runInject(["--webui-get-tee-status"]);
+		if (output !== "normal") {
+			throw new Error("OMK returned an unexpected TEE status");
+		}
+	}
 
-  async getActivityLog(): Promise<ActivityEntry[]> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-get-activity-log'], 16 * 1024)
-    return parseActivityLog(output)
-  }
+	async getActivityLog(): Promise<ActivityEntry[]> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(
+			keymint,
+			["--webui-get-activity-log"],
+			16 * 1024,
+		);
+		return parseActivityLog(output);
+	}
 
-  async clearActivityLog(): Promise<void> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(keymint, ['--webui-clear-activity-log'], 256)
-    if (output !== 'ok') throw new Error('OMK returned an unexpected activity-log result')
-  }
+	async clearActivityLog(): Promise<void> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(
+			keymint,
+			["--webui-clear-activity-log"],
+			256,
+		);
+		if (output !== "ok")
+			throw new Error("OMK returned an unexpected activity-log result");
+	}
 
-  async fetchSecurityBulletin(): Promise<string> {
-    let lastError: Error | null = null
-    for (const url of [ANDROID_SECURITY_BULLETIN_URL, ANDROID_SECURITY_BULLETIN_MIRROR_URL]) {
-      try {
-        const { keymint } = await this.#getHelperPaths()
-        return await this.#run(
-          keymint,
-          ['--webui-fetch-security-bulletin', url],
-          MAX_BULLETIN_BYTES + 1024,
-        )
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error))
-      }
-    }
-    throw new Error(`Unable to download the Android Security Bulletin: ${lastError?.message ?? 'network request failed'}`)
-  }
+	async fetchSecurityBulletin(): Promise<string> {
+		let lastError: Error | null = null;
+		for (const url of [
+			ANDROID_SECURITY_BULLETIN_URL,
+			ANDROID_SECURITY_BULLETIN_MIRROR_URL,
+		]) {
+			try {
+				const { keymint } = await this.#getHelperPaths();
+				return await this.#run(
+					keymint,
+					["--webui-fetch-security-bulletin", url],
+					MAX_BULLETIN_BYTES + 1024,
+				);
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+			}
+		}
+		throw new Error(
+			`Unable to download the Android Security Bulletin: ${lastError?.message ?? "network request failed"}`,
+		);
+	}
 
-  async getSoterSpoofState(): Promise<SoterSpoofState> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(
-      keymint,
-      ['--webui-get-soter-spoof'],
-      MAX_SOTER_SPOOF_STATE_BYTES,
-    )
-    return parseSoterSpoofState(output)
-  }
+	async getSoterSpoofState(): Promise<SoterSpoofState> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(
+			keymint,
+			["--webui-get-soter-spoof"],
+			MAX_SOTER_SPOOF_STATE_BYTES,
+		);
+		return parseSoterSpoofState(output);
+	}
 
-  async setSoterSpoofEnabled(enabled: boolean): Promise<SoterSpoofState> {
-    const { keymint } = await this.#getHelperPaths()
-    const output = await this.#run(
-      keymint,
-      ['--webui-set-soter-spoof', enabled ? '1' : '0'],
-      MAX_SOTER_SPOOF_STATE_BYTES,
-    )
-    const state = parseSoterSpoofState(output)
-    if (state.enabled !== enabled) {
-      throw new Error('OMK did not apply the requested Soter spoof state')
-    }
-    await this.#recordActivity(enabled ? 'soter_spoof_enabled' : 'soter_spoof_disabled', '')
-    return state
-  }
+	async setSoterSpoofEnabled(enabled: boolean): Promise<SoterSpoofState> {
+		const { keymint } = await this.#getHelperPaths();
+		const output = await this.#run(
+			keymint,
+			["--webui-set-soter-spoof", enabled ? "1" : "0"],
+			MAX_SOTER_SPOOF_STATE_BYTES,
+		);
+		const state = parseSoterSpoofState(output);
+		if (state.enabled !== enabled) {
+			throw new Error("OMK did not apply the requested Soter spoof state");
+		}
+		await this.#recordActivity(
+			enabled ? "soter_spoof_enabled" : "soter_spoof_disabled",
+			"",
+		);
+		return state;
+	}
 
-  async #recordActivity(action: ActivityAction, detail: string): Promise<void> {
-    try {
-      const { keymint } = await this.#getHelperPaths()
-      const encodedDetail = encodeBase64Utf8(detail)
-      const output = await this.#run(
-        keymint,
-        ['--webui-record-activity', action, encodedDetail],
-        256,
-      )
-      if (output !== 'ok') throw new Error('OMK returned an unexpected activity-log result')
-    } catch (error) {
-      // Activity history is supplementary and must not turn a completed operation into a failure.
-      console.error('Unable to record WebUI activity:', error)
-    }
-  }
+	async #recordActivity(action: ActivityAction, detail: string): Promise<void> {
+		try {
+			const { keymint } = await this.#getHelperPaths();
+			const encodedDetail = encodeBase64Utf8(detail);
+			const output = await this.#run(
+				keymint,
+				["--webui-record-activity", action, encodedDetail],
+				256,
+			);
+			if (output !== "ok")
+				throw new Error("OMK returned an unexpected activity-log result");
+		} catch (error) {
+			// Activity history is supplementary and must not turn a completed operation into a failure.
+			console.error("Unable to record WebUI activity:", error);
+		}
+	}
 
-  async #runInject(args: string[]): Promise<string> {
-    const { inject } = await this.#getHelperPaths()
-    return this.#run(inject, args)
-  }
+	async #runInject(args: string[]): Promise<string> {
+		const { inject } = await this.#getHelperPaths();
+		return this.#run(inject, args);
+	}
 
-  async #getHelperPaths(): Promise<HelperPaths> {
-    if (this.#helperPaths !== null) return this.#helperPaths
+	async #getHelperPaths(): Promise<HelperPaths> {
+		if (this.#helperPaths !== null) return this.#helperPaths;
 
-    const pending = this.#detectHelperPaths()
-    this.#helperPaths = pending.catch(error => {
-      this.#helperPaths = null
-      throw error
-    })
-    return this.#helperPaths
-  }
+		const pending = this.#detectHelperPaths();
+		this.#helperPaths = pending.catch((error) => {
+			this.#helperPaths = null;
+			throw error;
+		});
+		return this.#helperPaths;
+	}
 
-  async #detectHelperPaths(): Promise<HelperPaths> {
-    let abiProbe: Awaited<ReturnType<typeof exec>>
-    try {
-      abiProbe = await exec(
-        `/system/bin/sh -c ${shellQuote('/system/bin/getprop ro.product.cpu.abilist; /system/bin/getprop ro.product.cpu.abi; /system/bin/uname -m 2>/dev/null || :')}`,
-      )
-    } catch (error) {
-      throw new Error(`Unable to detect the Android ABI: ${error instanceof Error ? error.message : String(error)}`)
-    }
-    if (abiProbe.errno !== 0) {
-      throw new Error(
-        `Unable to detect the Android ABI: ${abiProbe.stderr.trim() || `shell exited with code ${abiProbe.errno}`}`,
-      )
-    }
+	async #detectHelperPaths(): Promise<HelperPaths> {
+		let abiProbe: ExecResult;
+		try {
+			abiProbe = await getBridge().exec(
+				`/system/bin/sh -c ${shellQuote("/system/bin/getprop ro.product.cpu.abilist; /system/bin/getprop ro.product.cpu.abi; /system/bin/uname -m 2>/dev/null || :")}`,
+			);
+		} catch (error) {
+			throw new Error(
+				`Unable to detect the Android ABI: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		if (abiProbe.errno !== 0) {
+			throw new Error(
+				`Unable to detect the Android ABI: ${abiProbe.stderr.trim() || `shell exited with code ${abiProbe.errno}`}`,
+			);
+		}
 
-    const abi = parseSupportedAbi(abiProbe.stdout)
-    if (abi === null) {
-      throw new Error('Unsupported Android ABI: OMK requires an arm64-v8a device')
-    }
+		const abi = parseSupportedAbi(abiProbe.stdout);
+		if (abi === null) {
+			throw new Error(
+				"Unsupported Android ABI: OMK requires an arm64-v8a device",
+			);
+		}
 
-    const roots = [HOT_UPDATE_ROOT, `${MODULE_ROOT}/libs/${abi}`]
-    for (const root of roots) {
-      const inject = `${root}/inject`
-      const keymint = `${root}/keymint`
-      const check = await exec(
-        `/system/bin/sh -c ${shellQuote(`[ -x ${shellQuote(inject)} ] && [ -x ${shellQuote(keymint)} ]`)}`,
-      )
-      if (check.errno === 0) return { abi, inject, keymint }
-    }
+		const roots = [HOT_UPDATE_ROOT, `${MODULE_ROOT}/libs/${abi}`];
+		for (const root of roots) {
+			const inject = `${root}/inject`;
+			const keymint = `${root}/keymint`;
+			const check = await getBridge().exec(
+				`/system/bin/sh -c ${shellQuote(`[ -x ${shellQuote(inject)} ] && [ -x ${shellQuote(keymint)} ]`)}`,
+			);
+			if (check.errno === 0) return { abi, inject, keymint };
+		}
 
-    throw new Error(`OMK ${abi} helper binaries are not installed`)
-  }
+		throw new Error(`OMK ${abi} helper binaries are not installed`);
+	}
 
-  #run(binary: string, args: string[], maxOutputBytes = Number.POSITIVE_INFINITY): Promise<string> {
-    return new Promise((resolve, reject) => {
-      let stdout = ''
-      let stderr = ''
-      let stdoutBytes = 0
-      let stderrBytes = 0
-      let outputTooLarge = false
-      let settled = false
-      const process = spawn(binary, args)
+	#run(
+		binary: string,
+		args: string[],
+		maxOutputBytes = Number.POSITIVE_INFINITY,
+	): Promise<string> {
+		return new Promise((resolve, reject) => {
+			let stdout = "";
+			let stderr = "";
+			let stdoutBytes = 0;
+			let stderrBytes = 0;
+			let outputTooLarge = false;
+			let settled = false;
+			const process = getBridge().spawn(binary, args);
 
-      process.stdout.on('data', (chunk: string) => {
-        if (outputTooLarge) return
-        stdoutBytes += new TextEncoder().encode(chunk).byteLength
-        if (stdoutBytes > maxOutputBytes) {
-          outputTooLarge = true
-          return
-        }
-        stdout += chunk
-      })
-      process.stderr.on('data', (chunk: string) => {
-        if (stderrBytes >= 8192) return
-        const remaining = 8192 - stderrBytes
-        const encoded = new TextEncoder().encode(chunk)
-        stderrBytes += encoded.byteLength
-        stderr += new TextDecoder().decode(encoded.subarray(0, remaining))
-      })
-      process.on('exit', (code: number | null) => {
-        if (settled) return
-        settled = true
-        if (outputTooLarge) {
-          reject(new Error('command output exceeds the configured limit'))
-        } else if (code === 0) {
-          resolve(stdout.trim())
-        } else {
-          reject(new Error(stderr.trim() || `OMK helper exited with code ${code ?? 'unknown'}`))
-        }
-      })
-      process.on('error', (error: Error) => {
-        if (settled) return
-        settled = true
-        reject(new Error(`Unable to run the OMK helper: ${error.message}`))
-      })
-    })
-  }
+			process.stdout.on("data", (chunk: string) => {
+				if (outputTooLarge) return;
+				stdoutBytes += new TextEncoder().encode(chunk).byteLength;
+				if (stdoutBytes > maxOutputBytes) {
+					outputTooLarge = true;
+					return;
+				}
+				stdout += chunk;
+			});
+			process.stderr.on("data", (chunk: string) => {
+				if (stderrBytes >= 8192) return;
+				const remaining = 8192 - stderrBytes;
+				const encoded = new TextEncoder().encode(chunk);
+				stderrBytes += encoded.byteLength;
+				stderr += new TextDecoder().decode(encoded.subarray(0, remaining));
+			});
+			process.on("exit", (code: number | null) => {
+				if (settled) return;
+				settled = true;
+				if (outputTooLarge) {
+					reject(new Error("command output exceeds the configured limit"));
+				} else if (code === 0) {
+					resolve(stdout.trim());
+				} else {
+					reject(
+						new Error(
+							stderr.trim() ||
+								`OMK helper exited with code ${code ?? "unknown"}`,
+						),
+					);
+				}
+			});
+			process.on("error", (error: Error) => {
+				if (settled) return;
+				settled = true;
+				reject(new Error(`Unable to run the OMK helper: ${error.message}`));
+			});
+		});
+	}
 }

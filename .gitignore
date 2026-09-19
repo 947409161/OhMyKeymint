@@ -22,6 +22,10 @@ Cargo.lock
 
 /omk
 
+# pnpm materializes its content-addressable store at the repository root when
+# the default global store is unusable for this checkout.
+/.pnpm-store/
+
 # development files
 hex.txt
 parcel.bin
