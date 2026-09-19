@@ -1,5 +1,7 @@
+export type KeybindHandler = () => boolean | undefined;
+
 export class Keybind {
-	#callbacks = new Map<string, Array<() => void>>();
+	#callbacks = new Map<string, KeybindHandler[]>();
 
 	constructor() {
 		document.addEventListener("keydown", (e) => this.#handleKeydown(e));
@@ -7,11 +9,14 @@ export class Keybind {
 
 	#handleKeydown(e: KeyboardEvent): void {
 		const key = this.#resolveEvent(e);
-		if (key) {
-			e.preventDefault();
-			e.stopPropagation();
-			this.#emit(key);
-		}
+		if (key === null) return;
+		// Claim the event only when a handler actually acts on it. A shortcut
+		// layer that always calls preventDefault swallows keys other
+		// components own — Escape in particular belongs to whichever dialog is
+		// open, and Headless UI closes its own.
+		if (!this.#emit(key)) return;
+		e.preventDefault();
+		e.stopPropagation();
 	}
 
 	#resolveEvent(e: KeyboardEvent): string | null {
@@ -27,15 +32,18 @@ export class Keybind {
 		return null;
 	}
 
-	on(event: string, callback: () => void): void {
+	on(event: string, callback: KeybindHandler): void {
 		const cbs = this.#callbacks.get(event) ?? [];
 		cbs.push(callback);
 		this.#callbacks.set(event, cbs);
 	}
 
-	#emit(event: string): void {
-		this.#callbacks.get(event)?.forEach((cb) => {
-			cb();
-		});
+	/** @returns true when at least one handler claimed the event. */
+	#emit(event: string): boolean {
+		let handled = false;
+		for (const callback of this.#callbacks.get(event) ?? []) {
+			if (callback() === true) handled = true;
+		}
+		return handled;
 	}
 }

@@ -12,14 +12,12 @@ export interface SettingRowProps {
 	disabled?: boolean;
 	/** Present makes the whole row an activatable button. */
 	onPress?: () => void;
-	/** Wires a labelled control to the row title when the row is a label. */
-	htmlFor?: string;
 	className?: string;
 }
 
 const ROW = "flex w-full items-start gap-3 px-4 text-start";
 
-function RowContent({
+function RowText({
 	icon,
 	title,
 	summary,
@@ -68,37 +66,23 @@ function RowContent({
 }
 
 /**
- * The shared row anatomy. It renders a `button` when it navigates, a
- * `label` when it owns a control, and a plain `div` when it is inert —
- * never a clickable div.
+ * The shared row anatomy: a `button` when it navigates, a `div` when it is
+ * inert.
  *
- * Two constraints learned the hard way:
- * - A wrapping `label` does not name a `role="switch"`/`role="checkbox"`
- *   button in Chromium, so the control carries `aria-label`.
- * - Disabled state uses an explicit token, never `opacity`. Opacity
- *   composites to an unpredictable value and pushed the summary to 2.71:1.
+ * A row that owns a toggle is neither. It is the control itself — see
+ * `SettingRowSwitch` and `SettingRowCheckbox` — because a `<label>` that
+ * wraps a control *and* points at it with `htmlFor` forwards the activation
+ * a second time, toggling the value back to where it started.
  */
 export function SettingRow({
 	onPress,
-	htmlFor,
 	disabled = false,
 	className,
 	...content
 }: SettingRowProps) {
-	const body = <RowContent {...content} disabled={disabled} />;
+	const body = <RowText {...content} disabled={disabled} />;
 	const base = cx(ROW, "min-h-14 bg-omk-surface", className);
 
-	if (htmlFor !== undefined) {
-		return (
-			<label
-				htmlFor={htmlFor}
-				aria-disabled={disabled || undefined}
-				className={base}
-			>
-				{body}
-			</label>
-		);
-	}
 	if (onPress !== undefined) {
 		return (
 			<button
@@ -119,10 +103,11 @@ export function SettingRow({
 }
 
 export interface SettingRowControlProps
-	extends Omit<SettingRowProps, "trailing" | "htmlFor" | "onPress"> {
+	extends Omit<SettingRowProps, "trailing" | "onPress" | "className"> {
 	checked: boolean;
 	onChange: (checked: boolean) => void;
 	controlId: string;
+	className?: string;
 }
 
 export function SettingRowSwitch({
@@ -132,19 +117,15 @@ export function SettingRowSwitch({
 	...row
 }: SettingRowControlProps) {
 	return (
-		<SettingRow
-			{...row}
-			htmlFor={controlId}
-			trailing={
-				<Switch
-					id={controlId}
-					checked={checked}
-					onChange={onChange}
-					disabled={row.disabled}
-					aria-label={row.title}
-				/>
-			}
-		/>
+		<Switch
+			id={controlId}
+			checked={checked}
+			onChange={onChange}
+			disabled={row.disabled}
+			className={cx("min-h-14 bg-omk-surface", row.className)}
+		>
+			<RowText {...row} />
+		</Switch>
 	);
 }
 
@@ -155,19 +136,15 @@ export function SettingRowCheckbox({
 	...row
 }: SettingRowControlProps) {
 	return (
-		<SettingRow
-			{...row}
-			htmlFor={controlId}
-			trailing={
-				<Checkbox
-					id={controlId}
-					checked={checked}
-					onChange={onChange}
-					disabled={row.disabled}
-					aria-label={row.title}
-				/>
-			}
-		/>
+		<Checkbox
+			id={controlId}
+			checked={checked}
+			onChange={onChange}
+			disabled={row.disabled}
+			className={cx("min-h-14 bg-omk-surface", row.className)}
+		>
+			<RowText {...row} />
+		</Checkbox>
 	);
 }
 

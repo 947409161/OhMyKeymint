@@ -332,6 +332,34 @@ The tone must also be exposed as text, not only as a glyph: the value string its
 is wrong ("Invalid Keybox", "Not installed"). A screen reader user receives the same information
 as a sighted one.
 
+**A row that owns a toggle is the control**
+
+`SettingRowSwitch` and `SettingRowCheckbox` do not wrap a `<label>` around a control. The
+control *is* the row: one `<button role="switch">` containing the row text and the track.
+
+The reason is not stylistic. A `<label>` that both contains the control and points at it with
+`htmlFor` forwards the activation a second time, so the value toggles and immediately toggles
+back — the user sees nothing happen. The element is also the correct answer for accessible
+naming, which a wrapping label never was for a `role="switch"` button.
+
+Inert and navigating rows are still a `div` and a `button` respectively. The rule is only that
+a row owning a control must not be a third element sitting on top of it.
+
+**Overlays own one history entry each**
+
+Every modal layer — dialog, sheet, full-screen view — pushes one entry through
+`useOverlayHistory`, so the Android back gesture closes the topmost layer. The host sets
+`backInterceptor: native`, which is the only route a native back press has into React state.
+
+Layers owned by a child view report their open state up, because the shell cannot otherwise tell
+how deep the stack is: without that, one Escape closes the sheet *and* the view beneath it.
+
+**A global key layer claims a key only when it acts on it**
+
+`Keybind` calls `preventDefault` only when a handler returned `true`. A shortcut layer that
+always claims its keys swallows them from everything else — `Escape` in particular belongs to
+whichever dialog is open, and Headless UI closes its own.
+
 **Sizing a slider**
 
 `Slider` always fills its container, and its track uses `divider` rather than a `container` step —

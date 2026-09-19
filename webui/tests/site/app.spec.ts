@@ -160,6 +160,22 @@ test.describe("settings", () => {
 		await expect(dialog.getByRole("button", { name: "日本語" })).toBeVisible();
 	});
 
+	// Regression: refactoring SettingRow into a text-only subcomponent dropped
+	// the trailing slot, so the slider silently disappeared from the row. A
+	// prop that exists but is never rendered is invisible to the type checker.
+	test("renders the trailing slot of a setting row", async ({ page }) => {
+		await page.goto("/");
+		await gotoPage(page, "Settings");
+		const slider = main(page).getByRole("slider", { name: "Interface scale" });
+		await expect(slider).toBeVisible();
+		const width = await slider.evaluate((thumb) =>
+			Math.round(
+				thumb.parentElement?.parentElement?.getBoundingClientRect().width ?? 0,
+			),
+		);
+		expect(width).toBeGreaterThan(100);
+	});
+
 	test("adjusts the interface scale", async ({ page }) => {
 		await page.goto("/");
 		await gotoPage(page, "Settings");

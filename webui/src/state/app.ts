@@ -3,6 +3,7 @@ import { Cli } from "../cli";
 import { ConfigOhMyKeyMint } from "../config_ohmykeymint";
 import { FileSelector } from "../file_selector/file_selector";
 import { History } from "../history";
+import { Keybind } from "../keybind";
 
 /*
  * Single instances for the whole WebUI. These are plain classes rather than
@@ -14,3 +15,4 @@ export const config = new ConfigOhMyKeyMint(cli);
 export const appList = new AppList(config);
 export const fileSelector = new FileSelector();
 export const history = new History();
+export const keybind = new Keybind();

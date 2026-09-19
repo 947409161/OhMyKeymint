@@ -4,22 +4,28 @@ import IconHome from "~icons/material-symbols/home";
 import IconSettings from "~icons/material-symbols/settings";
 import { MAX_KEYBOX_XML_BYTES } from "./cli";
 import { Button } from "./components/atoms/Button";
-import { Switch } from "./components/atoms/Switch";
 import { Dialog } from "./components/molecules/Dialog";
 import {
 	NavigationBar,
 	type NavigationItem,
 } from "./components/molecules/NavigationBar";
-import { SettingRow, SettingRowList } from "./components/molecules/SettingRow";
+import {
+	SettingRowList,
+	SettingRowSwitch,
+} from "./components/molecules/SettingRow";
 import { SnackbarHost, snackbar } from "./components/molecules/Snackbar";
 import { TopAppBar } from "./components/molecules/TopAppBar";
+import type { SelectedFile } from "./file_selector/file_selector";
 import { fetchLatestSecurityPatch } from "./security_patch";
-import { appList, cli, config } from "./state/app";
+import { appList, cli, config, fileSelector, keybind } from "./state/app";
 import type { Identity } from "./state/identity";
+import { useOverlayHistory } from "./state/useOverlayHistory";
 import { tr } from "./utils/tr";
+import { FileBrowserSheet } from "./views/FileBrowserSheet";
 import { GalleryView } from "./views/GalleryView";
 import { type ActivityState, HomeView } from "./views/HomeView";
 import { SettingsView } from "./views/SettingsView";
+import { TargetsView } from "./views/TargetsView";
 import { ToolsView } from "./views/ToolsView";
 
 export const APPEARANCE_MODES = ["auto", "light", "dark", "amoled"] as const;
@@ -89,15 +95,15 @@ export function App(): React.JSX.Element {
 	const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
 	const [patchBusy, setPatchBusy] = useState<"sync" | "restore" | null>(null);
 	const [activityClearBusy, setActivityClearBusy] = useState(false);
-	const [keyboxFile, setKeyboxFile] = useState<{
-		name: string;
-		bytes: Uint8Array;
-	} | null>(null);
+	const [keyboxFile, setKeyboxFile] = useState<SelectedFile | null>(null);
 	const [keyboxBusy, setKeyboxBusy] = useState(false);
 	const [adbOpen, setAdbOpen] = useState(false);
 	const [soterOpen, setSoterOpen] = useState(false);
-
-	const fileInput = useRef<HTMLInputElement>(null);
+	const [targetsOpen, setTargetsOpen] = useState(false);
+	// Modal layers owned by a child view, reported up so Escape closes exactly
+	// one layer at a time.
+	const [targetsOverlayOpen, setTargetsOverlayOpen] = useState(false);
+	const [fileSelectorOpen, setFileSelectorOpen] = useState(false);
 
 	useEffect(() => {
 		const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -122,6 +128,47 @@ export function App(): React.JSX.Element {
 		);
 		persist(SCALE_KEY, scale);
 	}, [scale]);
+
+	/*
+	 * Overlays join the browser history stack so the Android back gesture
+	 * closes the topmost one. The host intercepts back presses and hands them
+	 * to the page, which is the only way a native WebView back button can
+	 * reach React state.
+	 */
+	useOverlayHistory([
+		{ key: "targets", open: targetsOpen, close: () => setTargetsOpen(false) },
+		{
+			key: "keybox",
+			open: keyboxFile !== null,
+			close: () => setKeyboxFile(null),
+		},
+		{ key: "adb", open: adbOpen, close: () => setAdbOpen(false) },
+		{ key: "soter", open: soterOpen, close: () => setSoterOpen(false) },
+	]);
+
+	// Read through a ref so the handler is registered once: Keybind has no
+	// unsubscribe, and re-registering would stack duplicate handlers.
+	const escapeTarget = useRef({ targetsOpen: false, dialogOpen: false });
+	escapeTarget.current = {
+		targetsOpen,
+		dialogOpen:
+			keyboxFile !== null ||
+			adbOpen ||
+			soterOpen ||
+			targetsOverlayOpen ||
+			fileSelectorOpen,
+	};
+
+	useEffect(() => {
+		keybind.on("keybind-esc", () => {
+			const state = escapeTarget.current;
+			// Returning false leaves the event alone so Headless UI can close
+			// its own dialog; one Escape must never close two layers.
+			if (state.dialogOpen || !state.targetsOpen) return false;
+			setTargetsOpen(false);
+			return true;
+		});
+	}, []);
 
 	const refreshIdentity = useCallback(async () => {
 		await config.read().catch((error: unknown) => {
@@ -163,22 +210,31 @@ export function App(): React.JSX.Element {
 		}
 	}, []);
 
-	const onFileChosen = useCallback(
-		async (event: React.ChangeEvent<HTMLInputElement>) => {
-			const file = event.target.files?.[0];
-			event.target.value = "";
-			if (file === undefined) return;
-			const bytes = new Uint8Array(await file.arrayBuffer());
-			setKeyboxFile({ name: file.name, bytes });
-		},
-		[],
-	);
+	/**
+	 * Delegates to the ported selector rather than a bare <input type="file">.
+	 * It requests every MIME type, because Android document providers
+	 * frequently do not report XML correctly; it validates the extension and
+	 * size; it handles the picker's cancel path on WebViews that never fire a
+	 * change event; and it falls back to the shared-storage browser when the
+	 * WebView refuses to open a chooser at all.
+	 */
+	const chooseKeybox = useCallback(async () => {
+		try {
+			const selected = await fileSelector.getSystemFileContent("xml");
+			if (selected !== null) setKeyboxFile(selected);
+		} catch (error) {
+			snackbar.show(
+				error instanceof Error ? error.message : String(error),
+				"error",
+			);
+		}
+	}, []);
 
 	const installKeybox = useCallback(async () => {
 		if (keyboxFile === null) return;
 		setKeyboxBusy(true);
 		try {
-			await cli.installKeybox(keyboxFile.bytes);
+			await cli.installKeybox(keyboxFile.contents);
 			setKeyboxFile(null);
 			snackbar.show(tr("prompt_keybox_replaced", "Keybox replaced."));
 			await refreshIdentity();
@@ -270,14 +326,14 @@ export function App(): React.JSX.Element {
 						activity={activity}
 						activityClearBusy={activityClearBusy}
 						onClearActivity={() => void clearActivity()}
-						onOpenTargets={() => undefined}
+						onOpenTargets={() => setTargetsOpen(true)}
 					/>
 				) : null}
 				{page === 1 ? (
 					<ToolsView
 						busy={patchBusy}
-						onOpenTargets={() => undefined}
-						onInstallKeybox={() => fileInput.current?.click()}
+						onOpenTargets={() => setTargetsOpen(true)}
+						onInstallKeybox={() => void chooseKeybox()}
 						onSyncPatch={() => void runPatchAction("sync")}
 						onRestorePatch={() => void runPatchAction("restore")}
 						onOpenAdbDisabler={() => setAdbOpen(true)}
@@ -296,20 +352,18 @@ export function App(): React.JSX.Element {
 
 			<NavigationBar items={navItems} value={page} onChange={setPage} />
 
-			{/*
-			 * Triggered programmatically from the Tools row, so it is kept out
-			 * of the tab order and given a name that cannot collide with that
-			 * row's accessible name.
-			 */}
-			<input
-				ref={fileInput}
-				type="file"
-				accept=".xml,application/xml,text/xml"
-				tabIndex={-1}
-				className="sr-only"
-				aria-label={tr("replace_keybox_title", "Keybox file")}
-				onChange={(event) => void onFileChosen(event)}
-			/>
+			{targetsOpen ? (
+				<TargetsView
+					onClose={() => setTargetsOpen(false)}
+					onSaved={() => void refreshIdentity()}
+					onNotify={(message, error) =>
+						snackbar.show(message, error === true ? "error" : "normal")
+					}
+					onOverlayChange={setTargetsOverlayOpen}
+				/>
+			) : null}
+
+			<FileBrowserSheet onOpenChange={setFileSelectorOpen} />
 
 			<Dialog
 				open={keyboxFile !== null}
@@ -317,7 +371,7 @@ export function App(): React.JSX.Element {
 				title={tr("replace_keybox_title", "Replace keybox.xml")}
 			>
 				<p className="text-omk-body text-omk-muted">
-					{keyboxFile?.name} · {keyboxFile?.bytes.byteLength ?? 0} /{" "}
+					{keyboxFile?.name} · {keyboxFile?.contents.byteLength ?? 0} /{" "}
 					{MAX_KEYBOX_XML_BYTES} bytes
 				</p>
 				<div className="mt-4 flex justify-end gap-2">
@@ -419,7 +473,8 @@ function SoterDialog({ open, onClose, onChanged }: SoterDialogProps) {
 			) : (
 				<>
 					<SettingRowList className="mt-3">
-						<SettingRow
+						<SettingRowSwitch
+							controlId="soter-toggle"
 							title={tr("tools_soter_spoofing", "Spoof Soter attestation")}
 							summary={
 								state.reboot_required
@@ -431,19 +486,9 @@ function SoterDialog({ open, onClose, onChanged }: SoterDialogProps) {
 										? tr("soter_spoof_enabled", "Enabled")
 										: tr("soter_spoof_disabled", "Disabled")
 							}
-							htmlFor="soter-toggle"
-							trailing={
-								<Switch
-									id="soter-toggle"
-									checked={state.enabled}
-									disabled={busy}
-									onChange={(next) => void apply(next)}
-									aria-label={tr(
-										"tools_soter_spoofing",
-										"Spoof Soter attestation",
-									)}
-								/>
-							}
+							checked={state.enabled}
+							onChange={(next) => void apply(next)}
+							disabled={busy}
 						/>
 					</SettingRowList>
 					<div className="mt-4 flex justify-end">
@@ -548,20 +593,13 @@ function AdbDialog({ open, onClose, onApplied }: AdbDialogProps) {
 						{rows.map(([key, title, summary], index) => (
 							<div key={key}>
 								{index > 0 ? <div className="h-px bg-omk-divider" /> : null}
-								<SettingRow
+								<SettingRowSwitch
+									controlId={`adb-${key}`}
 									title={title}
 									summary={summary}
-									disabled={!state.enabled && key !== "enabled"}
-									htmlFor={`adb-${key}`}
-									trailing={
-										<Switch
-											id={`adb-${key}`}
-											checked={state[key]}
-											disabled={busy || (!state.enabled && key !== "enabled")}
-											onChange={(next) => setState({ ...state, [key]: next })}
-											aria-label={title}
-										/>
-									}
+									checked={state[key]}
+									disabled={busy || (!state.enabled && key !== "enabled")}
+									onChange={(next) => setState({ ...state, [key]: next })}
 								/>
 							</div>
 						))}
