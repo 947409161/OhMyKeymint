@@ -79,6 +79,48 @@ jobs:
         path: boringssl.tar.gz
         retention-days: 3
 
+  webui-quality:
+    name: WebUI quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: true
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v7
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10.15.1
+        run_install: false
+
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: webui/pnpm-lock.yaml
+
+    - name: Install WebUI dependencies
+      run: pnpm --dir webui install --frozen-lockfile
+
+    - name: Check formatting and lint (no writes)
+      run: pnpm --dir webui exec biome ci ./src
+
+    - name: Type check
+      run: pnpm --dir webui run type-check
+
+    - name: Build WebUI
+      run: pnpm --dir webui run build
+
+    - name: Unit tests
+      run: pnpm --dir webui test
+
+    - name: End-to-end and axe accessibility tests
+      run: pnpm --dir webui exec playwright test
+
   setup-and-build:
     runs-on: ubuntu-latest
     needs:

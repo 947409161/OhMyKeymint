@@ -12,6 +12,18 @@ dist
 dist-ssr
 *.local
 
+# Playwright artifacts
+test-results
+playwright-report
+blob-report
+.playwright
+
+# Visual-regression baselines are local to each machine
+tests/site/*-snapshots/
+
+# Local review screenshots
+.tmp-shots/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

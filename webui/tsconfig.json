@@ -1,42 +1,45 @@
 {
-  "compilerOptions": {
-    "target": "es2022",
-    "module": "esnext",
-    "lib": ["ES2023", "DOM"],
-    "types": ["vite/client"],
-    "paths": {
-      "miuix-vue": ["./node_modules/miuix-vue/dist/src/index.d.ts"],
-      "miuix-vue/icons": ["./node_modules/miuix-vue/dist/src/icons/extended/index.d.ts"]
-    },
-    "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-
-    /* Linting */
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
-  },
-  "include": [
-    "src/bootstrap.ts",
-    "src/cli.ts",
-    "src/config.ts",
-    "src/config_ohmykeymint.ts",
-    "src/appearance.ts",
-    "src/i18n.ts",
-    "src/security_patch.ts",
-    "src/package_name.ts",
-    "src/history.ts",
-    "src/app_list/app_list.ts",
-    "src/file_selector/file_selector.ts",
-    "src/utils/dev.ts",
-    "src/webview/webview.ts",
-    "src/vue/**/*.vue",
-    "src/vue/**/*.ts"
-  ]
+	"compilerOptions": {
+		"target": "es2022",
+		"module": "esnext",
+		"lib": [
+			"ES2023",
+			"DOM",
+			"DOM.Iterable"
+		],
+		"types": [
+			"vite/client",
+			"node",
+			"unplugin-icons/types/react"
+		],
+		"jsx": "react-jsx",
+		"moduleResolution": "bundler",
+		"verbatimModuleSyntax": true,
+		"moduleDetection": "force",
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"strict": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noFallthroughCasesInSwitch": true,
+		"paths": {
+			"@/*": [
+				"./src/*"
+			],
+			"@components/*": [
+				"./src/components/*"
+			],
+			"@bridge/*": [
+				"./src/bridge/*"
+			]
+		}
+	},
+	"include": [
+		"src/**/*.ts",
+		"src/**/*.tsx",
+		"tests/site/**/*.ts",
+		"vite.config.ts",
+		"playwright.config.ts"
+	]
 }

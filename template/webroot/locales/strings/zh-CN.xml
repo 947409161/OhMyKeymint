@@ -98,6 +98,8 @@
     <string name="home_activity_copy">复制操作记录</string>
     <string name="home_activity_cleared">操作记录已清除</string>
     <string name="home_activity_clear_error">无法清除操作记录：%s</string>
+    <string name="home_legacy_key_provisioning">旧版密钥配置</string>
+    <string name="home_legacy_key_provisioning_detail">记录到一次旧版密钥配置操作。</string>
     <string name="app_targets_title">包名添加</string>
     <string name="app_targets_filter_aria">筛选应用</string>
     <string name="app_targets_empty">没有匹配的应用</string>

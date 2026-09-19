@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+/*
+ * OhMyKeymint WebUI is strictly monochrome: every surface, divider and text
+ * tone comes from this grayscale ramp. Introducing any chromatic value is a
+ * build failure — tests/unit/monochrome.test.mjs scans the compiled stylesheet.
+ *
+ * `static` is required: Tailwind otherwise prunes tokens that no utility
+ * references yet, which would leave the light theme without the surfaces its
+ * dark and amoled overrides define.
+ */
+@theme static {
+	--color-omk-bg: #ffffff;
+	--color-omk-surface: #ffffff;
+	--color-omk-container: #f5f5f5;
+	--color-omk-container-high: #ebebeb;
+	--color-omk-on: #000000;
+	--color-omk-muted: #5c5c5c;
+	--color-omk-disabled: #8a8a8a;
+	--color-omk-divider: #e0e0e0;
+	--color-omk-accent: #000000;
+	--color-omk-on-accent: #ffffff;
+	--color-omk-scrim: rgb(0 0 0 / 32%);
+	--color-omk-hairline-strong: rgb(0 0 0 / 14%);
+
+	/* Type roles. Exactly seven exist; a component uses at most two. */
+	--text-omk-display: 28px;
+	--text-omk-display--line-height: 36px;
+	--text-omk-display--font-weight: 600;
+	--text-omk-title: 20px;
+	--text-omk-title--line-height: 28px;
+	--text-omk-title--font-weight: 600;
+	--text-omk-body: 16px;
+	--text-omk-body--line-height: 24px;
+	--text-omk-body--font-weight: 400;
+	--text-omk-body-strong: 16px;
+	--text-omk-body-strong--line-height: 24px;
+	--text-omk-body-strong--font-weight: 500;
+	--text-omk-label: 14px;
+	--text-omk-label--line-height: 20px;
+	--text-omk-label--font-weight: 500;
+	--text-omk-caption: 13px;
+	--text-omk-caption--line-height: 18px;
+	--text-omk-caption--font-weight: 400;
+	/* Shape roles. Only the soft character is defined; see DESIGN.md. */
+	--radius-omk-sm: 6px;
+	--radius-omk-md: 10px;
+	--radius-omk-lg: 14px;
+}
+
+/*
+ * `text-omk-mono` is a utility rather than a `--text-*` theme token because
+ * Tailwind's type sub-tokens cover line-height, letter-spacing and weight but
+ * not font-family, and a monospace role without an actual monospace face
+ * silently renders in the UI font.
+ */
+@utility text-omk-mono {
+	font-family:
+		ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+}
+
+:root {
+	color-scheme: light;
+	/* KernelSU injects --window-inset-* through /internal/insets.css. There is
+	 * no --top-inset family; the safe-area chain is the only valid one. */
+	--omk-top-inset: var(--window-inset-top, env(safe-area-inset-top, 0px));
+	--omk-bottom-inset: var(
+		--window-inset-bottom,
+		env(safe-area-inset-bottom, 0px)
+	);
+	--omk-left-inset: var(--window-inset-left, env(safe-area-inset-left, 0px));
+	--omk-right-inset: var(--window-inset-right, env(safe-area-inset-right, 0px));
+	--omk-nav-height: 64px;
+	--omk-appbar-height: 56px;
+	--omk-ui-scale: 1;
+	--omk-duration-fast: 120ms;
+	--omk-duration-base: 200ms;
+	--omk-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+	--omk-hairline: 1px;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--color-omk-bg: #121212;
+	--color-omk-surface: #1a1a1a;
+	--color-omk-container: #242424;
+	--color-omk-container-high: #2e2e2e;
+	--color-omk-on: #ffffff;
+	--color-omk-muted: #a3a3a3;
+	--color-omk-disabled: #6b6b6b;
+	--color-omk-divider: #333333;
+	--color-omk-accent: #ffffff;
+	--color-omk-on-accent: #000000;
+	--color-omk-scrim: rgb(0 0 0 / 60%);
+	--color-omk-hairline-strong: rgb(255 255 255 / 14%);
+}
+
+:root[data-theme="amoled"] {
+	color-scheme: dark;
+	--color-omk-bg: #000000;
+	--color-omk-surface: #000000;
+	--color-omk-container: #0a0a0a;
+	--color-omk-container-high: #161616;
+	--color-omk-on: #ffffff;
+	--color-omk-muted: #9e9e9e;
+	--color-omk-disabled: #5e5e5e;
+	--color-omk-divider: #262626;
+	--color-omk-accent: #ffffff;
+	--color-omk-on-accent: #000000;
+	--color-omk-scrim: rgb(0 0 0 / 60%);
+	--color-omk-hairline-strong: rgb(255 255 255 / 14%);
+}
+
+/*
+ * Blocking page shown before React mounts when the WebView is too old.
+ */
+.omk-blocking {
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100dvh;
+	width: 100vw;
+	padding: var(--omk-top-inset) calc(var(--omk-right-inset) + 16px)
+		var(--omk-bottom-inset) calc(var(--omk-left-inset) + 16px);
+	background-color: var(--color-omk-bg);
+}
+
+.omk-blocking p {
+	width: 100%;
+	text-align: center;
+	color: var(--color-omk-muted);
+}
+
+/*
+ * Scroll containers hide their scrollbar.
+ *
+ * The WebUI is touch-first, where a scrollbar is a desktop affordance rather
+ * than a control, and the monochrome ramp has no colour available to make a
+ * native scrollbar sit quietly inside the design. Scrolling is unchanged.
+ *
+ * Hiding it also removes the one obvious hint that a list continues, so the
+ * scroll container must clip at a partial item: a list that stops exactly on
+ * an item boundary reads as complete. That is why Dialogs cap their own height
+ * and let the list fill the remainder, instead of capping the list.
+ */
+.omk-scroll {
+	overflow-y: auto;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+.omk-scroll::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+	display: none;
+}
+
+html {
+	background-color: var(--color-omk-bg);
+}
+
+body {
+	margin: 0;
+	background-color: var(--color-omk-bg);
+	color: var(--color-omk-on);
+	font-size: 16px;
+	line-height: 1.5;
+	-webkit-font-smoothing: antialiased;
+	zoom: var(--omk-ui-scale);
+}
+
+/* Focus is a hairline ring, never a colour. */
+:focus-visible {
+	outline: var(--omk-hairline) solid var(--color-omk-on);
+	outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

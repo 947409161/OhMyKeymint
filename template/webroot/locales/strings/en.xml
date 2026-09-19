@@ -98,6 +98,8 @@
     <string name="home_activity_copy">Copy activity</string>
     <string name="home_activity_cleared">Activity cleared</string>
     <string name="home_activity_clear_error">Unable to clear activity: %s</string>
+    <string name="home_legacy_key_provisioning">Legacy key provisioning</string>
+    <string name="home_legacy_key_provisioning_detail">A legacy key-provisioning activity was recorded.</string>
     <string name="app_targets_title">Add package names</string>
     <string name="app_targets_filter_aria">Filter apps</string>
     <string name="app_targets_empty">No matching apps</string>

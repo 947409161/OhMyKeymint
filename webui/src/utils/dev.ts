@@ -1,5 +1,5 @@
-import { isKsuWebui } from 'kernelsu-alt'
+import { getBridge } from "../bridge";
 
 export function isDev(): boolean {
-  return import.meta.env.DEV && !isKsuWebui()
+	return import.meta.env.DEV && !getBridge().isKsuWebui();
 }
