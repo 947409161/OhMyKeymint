@@ -332,6 +332,21 @@ The tone must also be exposed as text, not only as a glyph: the value string its
 is wrong ("Invalid Keybox", "Not installed"). A screen reader user receives the same information
 as a sighted one.
 
+**App icons are content, not chrome**
+
+App lists show the real application icon, fetched from the host's `ksu://icon/<package>` scheme.
+The icon is a raster image the user recognises an app by, so it keeps its colour while every
+surface, divider and text tone around it stays on the grayscale ramp — the same exemption the
+standard already grants to images. Grayscaling them was rejected: it is the one thing in the row
+the user scans by, and flattening it makes the list slower to read, not more consistent.
+
+This is why the monochrome guard scans the built **stylesheet**: it governs chrome, and an image
+is not a colour literal.
+
+The host scheme resolves only inside the KernelSU WebView, so the frame falls back to a glyph
+whenever the request fails — which is always the case in development and in the specs. The frame
+is a fixed square either way, so swapping the glyph for a real icon shifts nothing.
+
 **Scroll containers hide their scrollbar, and must clip mid-item**
 
 Scrollable regions use `.omk-scroll`, which hides the scrollbar in every engine. The WebUI is
