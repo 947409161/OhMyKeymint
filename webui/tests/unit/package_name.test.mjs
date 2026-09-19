@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { isValidPackageName, normalizePackageNames } from "../../src/package_name.ts";
+import {
+	isValidPackageName,
+	normalizePackageNames,
+} from "../../src/package_name.ts";
 
 describe("isValidPackageName", () => {
 	test("accepts dotted Android package names", () => {
@@ -10,7 +13,16 @@ describe("isValidPackageName", () => {
 	});
 
 	test("rejects malformed names", () => {
-		for (const name of ["", ".", "com.", ".com", "com..example", "com/example", "com-example", "com example"]) {
+		for (const name of [
+			"",
+			".",
+			"com.",
+			".com",
+			"com..example",
+			"com/example",
+			"com-example",
+			"com example",
+		]) {
 			assert.equal(isValidPackageName(name), false, name);
 		}
 	});
@@ -33,10 +45,16 @@ describe("normalizePackageNames", () => {
 	});
 
 	test("rejects a non-array payload", () => {
-		assert.throws(() => normalizePackageNames("com.example"), /Invalid package list/);
+		assert.throws(
+			() => normalizePackageNames("com.example"),
+			/Invalid package list/,
+		);
 	});
 
 	test("rejects a list containing an invalid entry", () => {
-		assert.throws(() => normalizePackageNames(["com.example", "bad name"]), /Invalid package list/);
+		assert.throws(
+			() => normalizePackageNames(["com.example", "bad name"]),
+			/Invalid package list/,
+		);
 	});
 });

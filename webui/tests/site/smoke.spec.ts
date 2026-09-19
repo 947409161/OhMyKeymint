@@ -1,45 +1,74 @@
 import { expect, test } from "@playwright/test";
 
-test.describe("WebUI shell", () => {
-	test("renders the application shell", async ({ page }) => {
+const theme = (page: import("@playwright/test").Page, value: string) =>
+	page.getByRole("button", { name: `Theme: ${value}`, exact: true });
+
+const radius = (page: import("@playwright/test").Page, value: string) =>
+	page.getByRole("button", { name: `Radius: ${value}`, exact: true });
+
+test.describe("design gallery", () => {
+	test("renders the component inventory", async ({ page }) => {
 		await page.goto("/");
-		await expect(page.getByTestId("omk-app")).toBeVisible();
-		await expect(page.getByTestId("omk-shell-status")).toHaveText(
-			/React toolchain online/,
-		);
+		await expect(
+			page.getByRole("heading", { name: "Design gallery" }),
+		).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Buttons" })).toBeVisible();
+		await expect(
+			page.getByRole("heading", { name: "Status tones" }),
+		).toBeVisible();
 	});
 
-	test("applies the selected theme to the document element", async ({ page }) => {
+	test("switches the theme attribute", async ({ page }) => {
 		await page.goto("/");
-		for (const mode of ["light", "dark", "amoled"] as const) {
-			await page.getByTestId(`omk-theme-${mode}`).click();
-			await expect(page.locator("html")).toHaveAttribute("data-theme", mode);
+		for (const value of ["light", "dark", "amoled"]) {
+			await theme(page, value).click();
+			await expect(page.locator("html")).toHaveAttribute("data-theme", value);
 		}
 	});
 
 	test("marks the active theme for assistive technology", async ({ page }) => {
 		await page.goto("/");
-		await page.getByTestId("omk-theme-dark").click();
-		await expect(page.getByTestId("omk-theme-dark")).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-		await expect(page.getByTestId("omk-theme-light")).toHaveAttribute(
-			"aria-pressed",
-			"false",
-		);
+		await theme(page, "dark").click();
+		await expect(theme(page, "dark")).toHaveAttribute("aria-pressed", "true");
+		await expect(theme(page, "light")).toHaveAttribute("aria-pressed", "false");
 	});
 
-	test("persists the appearance preference across reloads", async ({ page }) => {
+	test("switches the radius character", async ({ page }) => {
 		await page.goto("/");
-		await page.getByTestId("omk-theme-amoled").click();
+		await radius(page, "tight").click();
+		await expect(page.locator("html")).toHaveAttribute("data-radius", "tight");
+		await radius(page, "soft").click();
+		await expect(page.locator("html")).toHaveAttribute("data-radius", "soft");
+	});
+
+	test("radius characters resolve to different computed radii", async ({
+		page,
+	}) => {
+		await page.goto("/");
+		const card = page.locator(".rounded-omk-lg").first();
+		await radius(page, "soft").click();
+		const soft = await card.evaluate(
+			(node) => getComputedStyle(node).borderTopLeftRadius,
+		);
+		await radius(page, "tight").click();
+		const tight = await card.evaluate(
+			(node) => getComputedStyle(node).borderTopLeftRadius,
+		);
+		expect(soft).not.toEqual(tight);
+	});
+
+	test("persists the appearance preference across reloads", async ({
+		page,
+	}) => {
+		await page.goto("/");
+		await theme(page, "amoled").click();
 		await page.reload();
 		await expect(page.locator("html")).toHaveAttribute("data-theme", "amoled");
 	});
 
 	test("paints a monochrome surface", async ({ page }) => {
 		await page.goto("/");
-		await page.getByTestId("omk-theme-light").click();
+		await theme(page, "light").click();
 		const background = await page
 			.locator("html")
 			.evaluate((node) => getComputedStyle(node).backgroundColor);

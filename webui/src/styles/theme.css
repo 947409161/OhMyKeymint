@@ -4,8 +4,7 @@
  * OhMyKeymint WebUI is strictly monochrome: every surface, divider and text
  * tone comes from this grayscale ramp. Introducing any chromatic value is a
  * build failure — tests/unit/monochrome.test.mjs scans the compiled stylesheet.
- */
-/*
+ *
  * `static` is required: Tailwind otherwise prunes tokens that no utility
  * references yet, which would leave the light theme without the surfaces its
  * dark and amoled overrides define.
@@ -21,10 +20,42 @@
 	--color-omk-divider: #e0e0e0;
 	--color-omk-accent: #000000;
 	--color-omk-on-accent: #ffffff;
+	--color-omk-scrim: rgb(0 0 0 / 32%);
+	--color-omk-hairline-strong: rgb(0 0 0 / 14%);
+
+	/* Type roles. Exactly seven exist; a component uses at most two. */
+	--text-omk-display: 28px;
+	--text-omk-display--line-height: 36px;
+	--text-omk-display--font-weight: 600;
+	--text-omk-title: 20px;
+	--text-omk-title--line-height: 28px;
+	--text-omk-title--font-weight: 600;
+	--text-omk-body: 16px;
+	--text-omk-body--line-height: 24px;
+	--text-omk-body--font-weight: 400;
+	--text-omk-body-strong: 16px;
+	--text-omk-body-strong--line-height: 24px;
+	--text-omk-body-strong--font-weight: 500;
+	--text-omk-label: 14px;
+	--text-omk-label--line-height: 20px;
+	--text-omk-label--font-weight: 500;
+	--text-omk-caption: 13px;
+	--text-omk-caption--line-height: 18px;
+	--text-omk-caption--font-weight: 400;
+	--text-omk-mono: 13px;
+	--text-omk-mono--line-height: 18px;
+	--text-omk-mono--font-weight: 400;
+
+	/* Shape roles. `data-radius="tight"` below swaps the whole set. */
+	--radius-omk-sm: 6px;
+	--radius-omk-md: 10px;
+	--radius-omk-lg: 14px;
 }
 
 :root {
 	color-scheme: light;
+	/* KernelSU injects --window-inset-* through /internal/insets.css. There is
+	 * no --top-inset family; the safe-area chain is the only valid one. */
 	--omk-top-inset: var(--window-inset-top, env(safe-area-inset-top, 0px));
 	--omk-bottom-inset: var(
 		--window-inset-bottom,
@@ -33,10 +64,18 @@
 	--omk-left-inset: var(--window-inset-left, env(safe-area-inset-left, 0px));
 	--omk-right-inset: var(--window-inset-right, env(safe-area-inset-right, 0px));
 	--omk-nav-height: 64px;
+	--omk-appbar-height: 56px;
 	--omk-ui-scale: 1;
 	--omk-duration-fast: 120ms;
 	--omk-duration-base: 200ms;
 	--omk-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+	--omk-hairline: 1px;
+}
+
+:root[data-radius="tight"] {
+	--radius-omk-sm: 4px;
+	--radius-omk-md: 6px;
+	--radius-omk-lg: 8px;
 }
 
 :root[data-theme="dark"] {
@@ -51,6 +90,8 @@
 	--color-omk-divider: #333333;
 	--color-omk-accent: #ffffff;
 	--color-omk-on-accent: #000000;
+	--color-omk-scrim: rgb(0 0 0 / 60%);
+	--color-omk-hairline-strong: rgb(255 255 255 / 14%);
 }
 
 :root[data-theme="amoled"] {
@@ -65,12 +106,12 @@
 	--color-omk-divider: #262626;
 	--color-omk-accent: #ffffff;
 	--color-omk-on-accent: #000000;
+	--color-omk-scrim: rgb(0 0 0 / 60%);
+	--color-omk-hairline-strong: rgb(255 255 255 / 14%);
 }
 
 /*
  * Blocking page shown before React mounts when the WebView is too old.
- * KernelSU injects --window-inset-* via /internal/insets.css (see Insets.kt);
- * there is no --top-inset family, so the safe-area chain is the only valid one.
  */
 .omk-blocking {
 	position: absolute;
@@ -104,6 +145,12 @@ body {
 	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
 	zoom: var(--omk-ui-scale);
+}
+
+/* Focus is a hairline ring, never a colour. */
+:focus-visible {
+	outline: var(--omk-hairline) solid var(--color-omk-on);
+	outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

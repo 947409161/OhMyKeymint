@@ -8,7 +8,9 @@ const THEMES = ["light", "dark", "amoled"] as const;
 for (const theme of THEMES) {
 	test(`has no axe violations in the ${theme} theme`, async ({ page }) => {
 		await page.goto("/");
-		await page.getByTestId(`omk-theme-${theme}`).click();
+		await page
+			.getByRole("button", { name: `Theme: ${theme}`, exact: true })
+			.click();
 		await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 
 		const results = await new AxeBuilder({ page })

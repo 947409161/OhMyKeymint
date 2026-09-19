@@ -19,7 +19,10 @@ describe("parseCanonicalJson", () => {
 	});
 
 	test("rejects non-JSON", () => {
-		assert.throws(() => parseCanonicalJson("nope", "Keybox state"), /invalid Keybox state/);
+		assert.throws(
+			() => parseCanonicalJson("nope", "Keybox state"),
+			/invalid Keybox state/,
+		);
 	});
 
 	test("rejects any output that is not byte-identical to its round-trip", () => {
@@ -50,7 +53,10 @@ describe("parseSoterSpoofState", () => {
 	});
 
 	test("rejects a missing field", () => {
-		assert.throws(() => parseSoterSpoofState('{"enabled":true}'), /invalid Soter spoof state/);
+		assert.throws(
+			() => parseSoterSpoofState('{"enabled":true}'),
+			/invalid Soter spoof state/,
+		);
 	});
 
 	test("rejects a non-boolean field", () => {
@@ -82,22 +88,35 @@ describe("parseKeyboxState", () => {
 
 	test("rejects bundled combined with invalid", () => {
 		const bad = { ...valid, valid: false, bundled: true };
-		assert.throws(() => parseKeyboxState(JSON.stringify(bad)), /invalid Keybox state/);
+		assert.throws(
+			() => parseKeyboxState(JSON.stringify(bad)),
+			/invalid Keybox state/,
+		);
 	});
 
 	test("rejects an unknown source", () => {
 		const bad = { ...valid, source: "somewhere" };
-		assert.throws(() => parseKeyboxState(JSON.stringify(bad)), /invalid Keybox state/);
+		assert.throws(
+			() => parseKeyboxState(JSON.stringify(bad)),
+			/invalid Keybox state/,
+		);
 	});
 
 	test("rejects an unknown revocation status", () => {
 		const bad = { ...valid, revocation: "maybe" };
-		assert.throws(() => parseKeyboxState(JSON.stringify(bad)), /invalid Keybox state/);
+		assert.throws(
+			() => parseKeyboxState(JSON.stringify(bad)),
+			/invalid Keybox state/,
+		);
 	});
 });
 
 describe("parseActivityLog", () => {
-	const entry = { action: "targets_saved", detail: "3", timestamp: 1_700_000_000 };
+	const entry = {
+		action: "targets_saved",
+		detail: "3",
+		timestamp: 1_700_000_000,
+	};
 
 	test("accepts an entry", () => {
 		assert.deepEqual(parseActivityLog(JSON.stringify([entry])), [entry]);
@@ -109,12 +128,18 @@ describe("parseActivityLog", () => {
 
 	test("rejects an unknown action", () => {
 		const bad = { ...entry, action: "not_a_real_action" };
-		assert.throws(() => parseActivityLog(JSON.stringify([bad])), /invalid WebUI activity entry/);
+		assert.throws(
+			() => parseActivityLog(JSON.stringify([bad])),
+			/invalid WebUI activity entry/,
+		);
 	});
 
 	test("rejects control characters in the detail", () => {
 		const bad = { ...entry, detail: "a\u0001b" };
-		assert.throws(() => parseActivityLog(JSON.stringify([bad])), /invalid WebUI activity entry/);
+		assert.throws(
+			() => parseActivityLog(JSON.stringify([bad])),
+			/invalid WebUI activity entry/,
+		);
 	});
 
 	test("rejects an out-of-range timestamp", () => {
@@ -130,7 +155,10 @@ describe("parseActivityLog", () => {
 
 	test("rejects more entries than the log limit", () => {
 		const many = Array.from({ length: 31 }, () => entry);
-		assert.throws(() => parseActivityLog(JSON.stringify(many)), /invalid WebUI activity log/);
+		assert.throws(
+			() => parseActivityLog(JSON.stringify(many)),
+			/invalid WebUI activity log/,
+		);
 	});
 });
 
@@ -153,7 +181,10 @@ describe("parseAdbDisablerState", () => {
 	});
 
 	test("rejects malformed JSON", () => {
-		assert.throws(() => parseAdbDisablerState("{"), /invalid ADB Disabler state/);
+		assert.throws(
+			() => parseAdbDisablerState("{"),
+			/invalid ADB Disabler state/,
+		);
 	});
 });
 
@@ -176,12 +207,18 @@ describe("parseSupportedAbi", () => {
 describe("base64 and shell quoting", () => {
 	test("encodes UTF-8 payloads", () => {
 		assert.equal(encodeBase64Utf8("abc"), "YWJj");
-		assert.equal(encodeBase64Utf8("重构"), Buffer.from("重构", "utf8").toString("base64"));
+		assert.equal(
+			encodeBase64Utf8("重构"),
+			Buffer.from("重构", "utf8").toString("base64"),
+		);
 	});
 
 	test("encodes raw bytes across the chunk boundary", () => {
 		const bytes = new Uint8Array(0x8000 * 2 + 7).fill(65);
-		assert.equal(encodeBase64Bytes(bytes), Buffer.from(bytes).toString("base64"));
+		assert.equal(
+			encodeBase64Bytes(bytes),
+			Buffer.from(bytes).toString("base64"),
+		);
 	});
 
 	test("quotes single quotes for the device shell", () => {

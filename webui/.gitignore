@@ -21,6 +21,9 @@ blob-report
 # Visual-regression baselines are local to each machine
 tests/site/*-snapshots/
 
+# Local review screenshots
+.tmp-shots/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

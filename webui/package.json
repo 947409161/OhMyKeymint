@@ -28,6 +28,8 @@
 		"@biomejs/biome": "2.5.14",
 		"@iconify-json/material-symbols": "^1.2.92",
 		"@playwright/test": "^1.63.0",
+		"@svgr/core": "^8.1.0",
+		"@svgr/plugin-jsx": "^8.1.0",
 		"@tailwindcss/vite": "^4.3.3",
 		"@types/node": "^26.6.2",
 		"@types/react": "^19.3.0",
