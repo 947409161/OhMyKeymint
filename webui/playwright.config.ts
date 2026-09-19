@@ -15,6 +15,9 @@ export default defineConfig({
 		// The WebUI only ever runs inside an Android WebView, so specs use a
 		// phone viewport rather than a desktop default.
 		viewport: { width: 412, height: 915 },
+		// Pin the locale: the ported i18n manager detects the browser language,
+		// so an unpinned run would assert different copy on each machine.
+		locale: "en-US",
 		trace: "retain-on-failure",
 	},
 	webServer: {

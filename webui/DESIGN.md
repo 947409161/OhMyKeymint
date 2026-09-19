@@ -405,6 +405,29 @@ follow-the-system behaviour or the pure-black theme, and both are worth keeping.
 dialog rather than a `<select>`: the WebUI is touch-only, and a native dropdown inside a WebView
 renders as a desktop popup.
 
+## Copy and translation
+
+No component hard-codes user-visible copy. Strings arrive from `i18n`, and the components that
+need them together (a picker's options, a row's title and summary) take them as a `labels` prop,
+so the owning view supplies the translation rather than the component inventing one.
+
+Three rules, all enforced by `tests/unit/i18n_keys.test.mjs`:
+
+- **Every key used by the sources exists in `en.xml`.** A missing key does not crash — it renders
+  the English fallback, which in a translated UI is a silent regression.
+- **`en.xml` and `zh-CN.xml` define the same key set.** They are the reference locales; the other
+  twenty-one are partial by design and fall back to English.
+- **Placeholders match across locales.** A locale that drops or renames `%s` renders the
+  placeholder verbatim.
+
+The last rule exists because of a real defect: `home_selected_apps` is `"%s apps selected"`, and
+it was used as a plain label, so the placeholder reached the screen. A parameterised string is
+never a label — it is the whole sentence, with the value substituted.
+
+The English fallback passed to `tr()` is defence in depth, not the source of truth. If it drifts
+from `en.xml` the screen shows the `en.xml` text, so tests must assert the shipped copy rather
+than the fallback.
+
 ## Validation
 
 ```sh

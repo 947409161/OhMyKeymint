@@ -12,7 +12,7 @@ for (const theme of THEMES) {
 		// mid-transition value and report a contrast failure that no user sees.
 		// Collapse motion first, then scan the settled state.
 		await page.emulateMedia({ reducedMotion: "reduce" });
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await page
 			.getByRole("button", { name: `Preview: ${theme}`, exact: true })
 			.click();
@@ -27,7 +27,7 @@ for (const theme of THEMES) {
 
 test("the night mode picker has no axe violations", async ({ page }) => {
 	await page.emulateMedia({ reducedMotion: "reduce" });
-	await page.goto("/");
+	await page.goto("/?gallery");
 	await page.getByRole("button", { name: /^Appearance/ }).click();
 	await expect(page.getByRole("dialog")).toBeVisible();
 

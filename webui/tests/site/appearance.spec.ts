@@ -8,7 +8,7 @@ const appearanceRow = (page: import("@playwright/test").Page) =>
 
 test.describe("appearance", () => {
 	test("preview buttons switch the document theme", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		for (const value of ["light", "dark", "amoled"]) {
 			await preview(page, value).click();
 			await expect(page.locator("html")).toHaveAttribute("data-theme", value);
@@ -18,7 +18,7 @@ test.describe("appearance", () => {
 	test("marks the active preview for assistive technology", async ({
 		page,
 	}) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await preview(page, "dark").click();
 		await expect(preview(page, "dark")).toHaveAttribute("aria-pressed", "true");
 		await expect(preview(page, "light")).toHaveAttribute(
@@ -28,7 +28,7 @@ test.describe("appearance", () => {
 	});
 
 	test("paints a monochrome surface", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await preview(page, "light").click();
 		const background = await page
 			.locator("html")
@@ -42,7 +42,7 @@ test.describe("appearance", () => {
 
 test.describe("night mode picker", () => {
 	test("selects a theme from the dialog", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await appearanceRow(page).click();
 
 		const dialog = page.getByRole("dialog");
@@ -53,7 +53,7 @@ test.describe("night mode picker", () => {
 	});
 
 	test("offers automatic as an explicit option", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await preview(page, "dark").click();
 		await appearanceRow(page).click();
 
@@ -70,7 +70,7 @@ test.describe("night mode picker", () => {
 	});
 
 	test("closes on Escape and returns focus to the row", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		const row = appearanceRow(page);
 		await row.click();
 		await expect(page.getByRole("dialog")).toBeVisible();
@@ -81,7 +81,7 @@ test.describe("night mode picker", () => {
 	});
 
 	test("persists the chosen theme across reloads", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("/?gallery");
 		await preview(page, "amoled").click();
 		await page.reload();
 		await expect(page.locator("html")).toHaveAttribute("data-theme", "amoled");

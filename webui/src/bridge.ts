@@ -8,11 +8,12 @@ import {
 	listPackages as ksuListPackages,
 	spawn as ksuSpawn,
 	type PackagesInfo,
+	type Stdio,
 } from "kernelsu-alt";
 
 export type PackageFilter = "user" | "system" | "all";
 
-export type { ChildProcess, ExecOptions, ExecResult, PackagesInfo };
+export type { ChildProcess, ExecOptions, ExecResult, PackagesInfo, Stdio };
 
 /**
  * The single seam between application code and the KernelSU WebView bridge.

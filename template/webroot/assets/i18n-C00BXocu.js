@@ -1,0 +1,1 @@
+import{n as e}from"./i18n-BGT6J-Y4.js";export{e as i18n};
