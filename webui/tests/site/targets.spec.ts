@@ -54,6 +54,47 @@ test.describe("scoped apps", () => {
 		await expect(save).toHaveText(/Save \(1\)/);
 	});
 
+	test("requests each app icon through the host scheme", async ({ page }) => {
+		await openTargets(page);
+		const icons = page.locator('img[src^="ksu://icon/"]');
+		await expect(icons).toHaveCount(6);
+		await expect(icons.first()).toHaveAttribute(
+			"src",
+			"ksu://icon/com.google.android.gms",
+		);
+	});
+
+	// Outside a WebView ksu:// never resolves. Every frame must still paint, so
+	// the fallback is what the browser and the specs always exercise.
+	test("falls back to a glyph when the host cannot serve the icon", async ({
+		page,
+	}) => {
+		await openTargets(page);
+		const hasGlyph = await page
+			.locator('img[src^="ksu://icon/"]')
+			.first()
+			.evaluate((img) => img.parentElement?.querySelector("svg") !== null);
+		expect(hasGlyph).toBe(true);
+	});
+
+	test("keeps the icon frame square so the row cannot shift", async ({
+		page,
+	}) => {
+		await openTargets(page);
+		const frame = await page
+			.locator('img[src^="ksu://icon/"]')
+			.first()
+			.evaluate((img) => {
+				const box = img.parentElement?.getBoundingClientRect();
+				return {
+					width: Math.round(box?.width ?? 0),
+					height: Math.round(box?.height ?? 0),
+				};
+			});
+		expect(frame.width).toBeGreaterThan(0);
+		expect(frame.width).toBe(frame.height);
+	});
+
 	test("filters by search and by selection", async ({ page }) => {
 		await openTargets(page);
 

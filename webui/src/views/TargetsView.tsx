@@ -3,6 +3,7 @@ import IconAdd from "~icons/material-symbols/add-circle";
 import IconClear from "~icons/material-symbols/checklist";
 import IconSelectAll from "~icons/material-symbols/done-all";
 import IconRefresh from "~icons/material-symbols/refresh";
+import { AppIcon } from "../components/atoms/AppIcon";
 import { Button } from "../components/atoms/Button";
 import { Card } from "../components/atoms/Card";
 import { Checkbox } from "../components/atoms/Checkbox";
@@ -170,8 +171,9 @@ export function TargetsView({
 									onChange={(next) =>
 										appList.setSelected(entry.packageName, next)
 									}
-									className="min-h-14 py-2"
+									className="min-h-16 py-2"
 								>
+									<AppIcon packageName={entry.packageName} />
 									<span className="flex min-w-0 flex-1 flex-col">
 										<span className="truncate text-omk-body-strong text-omk-on">
 											{entry.appName}
@@ -224,8 +226,9 @@ export function TargetsView({
 									id={`system-${entry.packageName}`}
 									checked={entry.selected}
 									onChange={() => appList.toggleSelected(entry.packageName)}
-									className="min-h-12"
+									className="min-h-14"
 								>
+									<AppIcon packageName={entry.packageName} size={32} />
 									<span className="min-w-0 flex-1 truncate text-omk-mono text-omk-on">
 										{entry.packageName}
 									</span>
