@@ -332,6 +332,16 @@ The tone must also be exposed as text, not only as a glyph: the value string its
 is wrong ("Invalid Keybox", "Not installed"). A screen reader user receives the same information
 as a sighted one.
 
+**Sizing a slider**
+
+`Slider` always fills its container, and its track uses `divider` rather than a `container` step —
+a container step is invisible against the `surface` row a slider normally sits on.
+
+Size the **wrapper**, never the slider. Passing a width through the component's `className` puts
+two width utilities in one class list, and CSS resolves that by stylesheet order rather than by
+the order the classes appear, so the result is not something the caller can reason about. This
+is not theoretical: it collapsed the control to the thumb's 16 px and left no visible track.
+
 **Naming a control inside a row**
 
 A row that owns a control renders as a `<label for>` so the whole row is a hit area. That label

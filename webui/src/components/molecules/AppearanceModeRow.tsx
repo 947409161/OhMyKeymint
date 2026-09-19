@@ -5,7 +5,8 @@ import { SettingRow } from "./SettingRow";
 
 export interface AppearanceModeLabels {
 	title: string;
-	summary: string;
+	/** Optional: a one-word key such as "Mode" reads as a stray label here. */
+	summary?: string;
 	dialogTitle: string;
 	options: Record<string, string>;
 }

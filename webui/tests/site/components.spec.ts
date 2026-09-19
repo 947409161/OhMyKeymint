@@ -41,6 +41,22 @@ test.describe("Checkbox", () => {
 });
 
 test.describe("Slider", () => {
+	// Regression: the component's own `w-full` used to compete with a width
+	// passed by the caller, collapsing the root to the thumb's 16px and leaving
+	// no visible track.
+	test("spans its container instead of collapsing to the thumb", async ({
+		page,
+	}) => {
+		await page.goto("/?gallery");
+		const slider = page.getByRole("slider", { name: "Raw slider" });
+		const width = await slider.evaluate((thumb) =>
+			Math.round(
+				thumb.parentElement?.parentElement?.getBoundingClientRect().width ?? 0,
+			),
+		);
+		expect(width).toBeGreaterThan(100);
+	});
+
 	test("steps with the arrow keys", async ({ page }) => {
 		await page.goto("/?gallery");
 		const slider = page.getByRole("slider", { name: "Raw slider" });

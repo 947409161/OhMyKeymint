@@ -9,6 +9,12 @@ export interface SliderProps {
 	step?: number;
 	disabled?: boolean;
 	"aria-label": string;
+	/**
+	 * The slider always fills its container, so size the wrapper instead of
+	 * passing a width here. A width in this class list competes with the
+	 * component's own `w-full`, and CSS resolves that by stylesheet order
+	 * rather than by the order the classes appear.
+	 */
 	className?: string;
 }
 
@@ -36,7 +42,12 @@ export function Slider({
 				className,
 			)}
 		>
-			<RadixSlider.Track className="relative h-1 grow rounded-full bg-omk-container-high">
+			{/*
+			 * The track uses `divider` rather than `container-high`: a
+			 * container step is invisible against a `surface` row, which is
+			 * where the slider actually sits.
+			 */}
+			<RadixSlider.Track className="relative h-1 grow rounded-full bg-omk-divider">
 				<RadixSlider.Range className="absolute h-full rounded-full bg-omk-accent" />
 			</RadixSlider.Track>
 			{/* role="slider" lives on the thumb, so the accessible name must too. */}

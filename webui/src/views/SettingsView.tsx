@@ -1,4 +1,3 @@
-import IconLanguage from "~icons/material-symbols/translate";
 import IconTune from "~icons/material-symbols/tune";
 import { Divider } from "../components/atoms/Divider";
 import { Icon } from "../components/atoms/Icon";
@@ -47,7 +46,6 @@ export function SettingsView({
 						modes={["auto", "light", "dark", "amoled"]}
 						labels={{
 							title: tr("settings_appearance", "Appearance"),
-							summary: tr("settings_mode", "Follow the system, or pin a theme"),
 							dialogTitle: tr("settings_appearance", "Appearance"),
 							options: {
 								auto: tr("theme_mode_auto", "Follow system"),
@@ -71,24 +69,20 @@ export function SettingsView({
 							"Adjust the overall display size",
 						)}
 						trailing={
-							<Slider
-								aria-label={tr("settings_interface_scale", "Interface scale")}
-								value={scale}
-								min={80}
-								max={120}
-								step={5}
-								onChange={onScaleChange}
-								className="w-32"
-							/>
+							<span className="w-32">
+								<Slider
+									aria-label={tr("settings_interface_scale", "Interface scale")}
+									value={scale}
+									min={80}
+									max={120}
+									step={5}
+									onChange={onScaleChange}
+								/>
+							</span>
 						}
 					/>
 				</SettingRowList>
 			</div>
-
-			<p className="mt-4 flex items-center justify-center gap-1 px-4 text-omk-caption text-omk-muted">
-				<Icon as={IconLanguage} size="sm" />
-				{i18n.lang}
-			</p>
 		</div>
 	);
 }

@@ -255,12 +255,13 @@ export function GalleryView({
 						title="Slider row"
 						summary={`${slide}%`}
 						trailing={
-							<Slider
-								aria-label="Interface scale"
-								value={slide}
-								onChange={setSlide}
-								className="w-32"
-							/>
+							<span className="w-32">
+								<Slider
+									aria-label="Interface scale"
+									value={slide}
+									onChange={setSlide}
+								/>
+							</span>
 						}
 					/>
 					<SettingRowSeparator />
@@ -309,12 +310,9 @@ export function GalleryView({
 					onChange={setChecked}
 					aria-label="Raw checkbox"
 				/>
-				<Slider
-					aria-label="Raw slider"
-					value={slide}
-					onChange={setSlide}
-					className="max-w-40"
-				/>
+				<span className="w-40">
+					<Slider aria-label="Raw slider" value={slide} onChange={setSlide} />
+				</span>
 			</div>
 
 			<SectionHeader>Navigation</SectionHeader>
