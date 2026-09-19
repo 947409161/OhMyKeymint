@@ -99,12 +99,33 @@ test.describe("NavigationBar", () => {
 	});
 });
 
+test.describe("Snackbar", () => {
+	test("announces a transient message", async ({ page }) => {
+		await page.goto("/");
+		await page.getByRole("button", { name: "Show snackbar" }).click();
+		await expect(page.getByText("Keybox installed.")).toBeVisible();
+	});
+
+	test("carries an error tone without hue", async ({ page }) => {
+		await page.goto("/");
+		await page.getByRole("button", { name: "Show error snackbar" }).click();
+		const item = page.getByText("Keybox validation failed.");
+		await expect(item).toBeVisible();
+		const background = await item
+			.locator("..")
+			.evaluate((node) => getComputedStyle(node).backgroundColor);
+		const channels = background.match(/\d+/g)?.map(Number) ?? [];
+		expect(channels[0]).toBe(channels[1]);
+		expect(channels[1]).toBe(channels[2]);
+	});
+});
+
 test.describe("StatusField", () => {
 	test("states the condition in text, not only in tone", async ({ page }) => {
 		await page.goto("/");
 		await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
 		await expect(
-			page.getByText("Google hardware root", { exact: true }),
+			page.getByText("Google hardware root certificate", { exact: true }),
 		).toBeVisible();
 		await expect(
 			page.getByText("Not installed", { exact: true }),

@@ -47,7 +47,7 @@ export function StatusField({
 				) : null}
 				<span
 					className={cx(
-						"min-w-0 truncate",
+						"min-w-0 wrap-anywhere",
 						isUnavailable
 							? "text-omk-body text-omk-muted"
 							: "text-omk-body-strong text-omk-on",

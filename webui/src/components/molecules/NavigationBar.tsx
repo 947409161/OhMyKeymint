@@ -16,8 +16,10 @@ export interface NavigationBarProps {
 }
 
 /**
- * Selected state is carried by weight plus a filled icon mark above the
- * label — no hue, and no extra indicator bar.
+ * Selected state is a `container-high` pill behind the icon plus a medium
+ * label. With no hue available, the surface step is the strongest signal that
+ * does not compete with the label for attention; an indicator bar would be a
+ * second, redundant signal.
  */
 export function NavigationBar({
 	items,
@@ -47,23 +49,23 @@ export function NavigationBar({
 								onClick={() => onChange(index)}
 								aria-current={selected ? "page" : undefined}
 								className={cx(
-									"flex h-full w-full flex-col items-center justify-center gap-1",
+									"flex h-full w-full flex-col items-center justify-center gap-0.5",
 									selected ? "text-omk-on" : "text-omk-muted",
 								)}
 							>
-								<Icon as={item.icon} />
+								<span
+									className={cx(
+										"flex h-7 w-12 items-center justify-center rounded-full transition-colors",
+										selected && "bg-omk-container-high",
+									)}
+								>
+									<Icon as={item.icon} size="md" />
+								</span>
 								<span
 									className={cx("text-omk-caption", selected && "font-medium")}
 								>
 									{item.label}
 								</span>
-								<span
-									aria-hidden="true"
-									className={cx(
-										"h-0.5 w-6 rounded-full",
-										selected ? "bg-omk-on" : "bg-transparent",
-									)}
-								/>
 							</button>
 						</li>
 					);

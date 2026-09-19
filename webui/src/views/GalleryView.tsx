@@ -7,12 +7,12 @@ import { Badge } from "../components/atoms/Badge";
 import { Button } from "../components/atoms/Button";
 import { Card } from "../components/atoms/Card";
 import { Checkbox } from "../components/atoms/Checkbox";
-import { Divider } from "../components/atoms/Divider";
 import { Icon } from "../components/atoms/Icon";
 import { IconButton } from "../components/atoms/IconButton";
 import { ProgressIndicator } from "../components/atoms/ProgressIndicator";
 import { Slider } from "../components/atoms/Slider";
 import { Switch } from "../components/atoms/Switch";
+import { AppearanceModeRow } from "../components/molecules/AppearanceModeRow";
 import { NavigationBar } from "../components/molecules/NavigationBar";
 import { SectionHeader } from "../components/molecules/SectionHeader";
 import {
@@ -22,6 +22,7 @@ import {
 	SettingRowSeparator,
 	SettingRowSwitch,
 } from "../components/molecules/SettingRow";
+import { snackbar } from "../components/molecules/Snackbar";
 import { StatusField } from "../components/molecules/StatusField";
 import { TopAppBar } from "../components/molecules/TopAppBar";
 
@@ -36,7 +37,7 @@ const TYPE_ROLES = [
 	["text-omk-body-strong", "16 / 500"],
 	["text-omk-label", "14 / 500"],
 	["text-omk-caption", "13 / 400"],
-	["text-omk-mono", "13 / 400 mono"],
+	["text-omk-mono", "13 / mono"],
 ] as const;
 
 const SURFACES = [
@@ -47,20 +48,33 @@ const SURFACES = [
 ] as const;
 
 const THEME_VALUES = ["light", "dark", "amoled"] as const;
-const RADIUS_VALUES = ["soft", "tight"] as const;
+
+const APPEARANCE_LABELS = {
+	title: "Appearance",
+	summary: "Follow the system, or pin a theme",
+	dialogTitle: "Appearance",
+	options: {
+		auto: "Automatic",
+		light: "Light",
+		dark: "Night",
+		amoled: "Night (pure black)",
+	},
+} as const;
+
+const APPEARANCE_OPTIONS = ["auto", "light", "dark", "amoled"] as const;
 
 export interface GalleryViewProps {
-	mode: string;
-	onModeChange: (mode: string) => void;
-	radius: "soft" | "tight";
-	onRadiusChange: (radius: "soft" | "tight") => void;
+	/** The concrete theme currently applied to the document. */
+	theme: string;
+	/** The stored preference, which may be `auto`. */
+	appearance: string;
+	onAppearanceChange: (mode: string) => void;
 }
 
 export function GalleryView({
-	mode,
-	onModeChange,
-	radius,
-	onRadiusChange,
+	theme,
+	appearance,
+	onAppearanceChange,
 }: GalleryViewProps) {
 	const [nav, setNav] = useState(0);
 	const [switched, setSwitched] = useState(true);
@@ -78,37 +92,38 @@ export function GalleryView({
 				}
 			/>
 
-			<SectionHeader>Controls</SectionHeader>
+			<SectionHeader>Appearance</SectionHeader>
 			<div className="px-4">
-				<Card className="flex flex-col gap-3">
-					<div className="flex flex-wrap gap-2">
-						{THEME_VALUES.map((value) => (
-							<Button
-								key={value}
-								variant={mode === value ? "primary" : "secondary"}
-								aria-pressed={mode === value}
-								aria-label={`Theme: ${value}`}
-								onClick={() => onModeChange(value)}
-							>
-								{value}
-							</Button>
-						))}
-					</div>
-					<Divider />
-					<div className="flex flex-wrap items-center gap-2">
-						{RADIUS_VALUES.map((value) => (
-							<Button
-								key={value}
-								variant={radius === value ? "primary" : "secondary"}
-								aria-pressed={radius === value}
-								aria-label={`Radius: ${value}`}
-								onClick={() => onRadiusChange(value)}
-							>
-								{value}
-							</Button>
-						))}
-					</div>
-				</Card>
+				<SettingRowList>
+					<AppearanceModeRow
+						controlId="g-appearance"
+						value={appearance}
+						onChange={onAppearanceChange}
+						modes={APPEARANCE_OPTIONS}
+						labels={APPEARANCE_LABELS}
+					/>
+					<SettingRowSeparator />
+					<SettingRow
+						title="Resolved theme"
+						summary="What the document is actually using"
+						trailing={
+							<span className="text-omk-body text-omk-muted">{theme}</span>
+						}
+					/>
+				</SettingRowList>
+				<div className="mt-3 flex flex-wrap gap-2">
+					{THEME_VALUES.map((value) => (
+						<Button
+							key={value}
+							variant={theme === value ? "primary" : "secondary"}
+							aria-pressed={theme === value}
+							aria-label={`Preview: ${value}`}
+							onClick={() => onAppearanceChange(value)}
+						>
+							{value}
+						</Button>
+					))}
+				</div>
 			</div>
 
 			<SectionHeader>Typography</SectionHeader>
@@ -177,6 +192,20 @@ export function GalleryView({
 						aria-label="Loading"
 						className="max-w-32"
 					/>
+				</Card>
+				<Card className="flex flex-wrap gap-2">
+					<Button
+						variant="secondary"
+						onClick={() => snackbar.show("Keybox installed.")}
+					>
+						Show snackbar
+					</Button>
+					<Button
+						variant="secondary"
+						onClick={() => snackbar.show("Keybox validation failed.", "error")}
+					>
+						Show error snackbar
+					</Button>
 				</Card>
 			</div>
 
@@ -253,8 +282,11 @@ export function GalleryView({
 
 			<SectionHeader>Status tones</SectionHeader>
 			<div className="px-4">
-				<Card className="grid grid-cols-2 gap-4">
-					<StatusField label="Keybox" value="Google hardware root" />
+				<Card className="flex flex-col gap-4">
+					<StatusField
+						label="Keybox"
+						value="Google hardware root certificate"
+					/>
 					<StatusField label="Revocation" value="Revoked" tone="error" />
 					<StatusField label="Attestation" value="Checking" tone="pending" />
 					<StatusField

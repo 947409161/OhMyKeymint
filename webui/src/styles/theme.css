@@ -42,14 +42,25 @@
 	--text-omk-caption: 13px;
 	--text-omk-caption--line-height: 18px;
 	--text-omk-caption--font-weight: 400;
-	--text-omk-mono: 13px;
-	--text-omk-mono--line-height: 18px;
-	--text-omk-mono--font-weight: 400;
-
-	/* Shape roles. `data-radius="tight"` below swaps the whole set. */
+	/* Shape roles. Only the soft character is defined; see DESIGN.md. */
 	--radius-omk-sm: 6px;
 	--radius-omk-md: 10px;
 	--radius-omk-lg: 14px;
+}
+
+/*
+ * `text-omk-mono` is a utility rather than a `--text-*` theme token because
+ * Tailwind's type sub-tokens cover line-height, letter-spacing and weight but
+ * not font-family, and a monospace role without an actual monospace face
+ * silently renders in the UI font.
+ */
+@utility text-omk-mono {
+	font-family:
+		ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
 }
 
 :root {
@@ -70,12 +81,6 @@
 	--omk-duration-base: 200ms;
 	--omk-easing-standard: cubic-bezier(0.2, 0, 0, 1);
 	--omk-hairline: 1px;
-}
-
-:root[data-radius="tight"] {
-	--radius-omk-sm: 4px;
-	--radius-omk-md: 6px;
-	--radius-omk-lg: 8px;
 }
 
 :root[data-theme="dark"] {

@@ -166,7 +166,7 @@ the CSP forbids remote origins.
 | `text-body-strong` | 16 px | 500 | 24 px | Setting row titles, status values. |
 | `text-label` | 14 px | 500 | 20 px | Button labels, field labels, section headers. |
 | `text-caption` | 13 px | 400 | 18 px | Setting summaries, helper text, badges. |
-| `text-mono` | 13 px | 400 | 18 px | Package names, fingerprints, dates. Tabular figures. |
+| `text-mono` | 13 px | 400 | 18 px | Package names, fingerprints, dates. Monospace, tabular figures. |
 
 **Rules**
 
@@ -174,6 +174,11 @@ the CSP forbids remote origins.
 - Weight, not size, carries emphasis inside a row. `text-body` → `text-body-strong` is the
   preferred promotion; jumping to `text-title` inside a list is not allowed.
 - `text-mono` is mandatory for anything a user may copy verbatim (package names, dates).
+
+`text-mono` is declared as a utility rather than a `--text-*` theme token, because Tailwind's
+type sub-tokens cover line-height, letter-spacing and weight but not font-family. A monospace
+role defined without a monospace face silently renders in the UI font — which is exactly what
+happened before the gallery was rendered and reviewed.
 
 ## Layout
 
@@ -261,14 +266,18 @@ point upward. A molecule may compose atoms; an atom never imports a molecule or 
 
 | Component | Composes | Notes |
 |---|---|---|
-| `SettingRow` | `Icon`, `Divider`, trailing control | The workhorse. Six variants: switch, checkbox, navigate, dropdown, slider, progress |
+| `SettingRow` | `Icon`, `Divider`, trailing control | The workhorse. Six variants: switch, checkbox, navigate, value, slider, disabled |
 | `SectionHeader` | — | `text-label`, `on-surface-muted`, 16 px inset |
 | `TopAppBar` | `IconButton`, `Icon` | 56 px + `--omk-top-inset`, `surface` fill, bottom hairline |
 | `NavigationBar` | `Icon` | 64 px + `--omk-bottom-inset`, 3 items, top hairline |
-| `BottomSheet` | `Divider` | Headless UI dialog, `radius-lg` top corners, 32×4 drag handle |
-| `Dialog` | `Button` | Headless UI dialog, max-width 360 px, `radius-lg`, scrim |
-| `SnackbarHost` | — | Inverse surface, 48 px min height, `radius-md`, queued |
-| `StatusField` | `Icon` | Label + value + tone, used by the Home identity grid |
+| `Dialog` | `Button` | Headless UI, max-width 360 px, `radius-lg`, `scrim` overlay |
+| `SnackbarHost` | — | Inverse surface, 48 px min height, `radius-md`, queued, `aria-live` |
+| `StatusField` | `Icon` | Label + value + tone; values wrap rather than truncate |
+| `AppearanceModeRow` | `SettingRow`, `Dialog` | The night-mode control. Copy-free: all strings arrive as props |
+
+`Dialog` carries the scrim and the panel, and its `role="dialog"` root spans the viewport. A root
+sized only by its `position: relative` children collapses to zero height, which assistive
+technology and automated checks both read as hidden.
 
 ### Tier B — needed by the view rewrite, not blocking the first slice
 
@@ -363,18 +372,38 @@ reserved for transient feedback. Minimum height 48 px, `radius-md`, offset from 
 - Add a token that is not on the grayscale ramp — including "just for the disabled state".
 - Add a type size outside the seven roles.
 
-## Open decisions
+## Resolved decisions
 
-These four are deliberate judgement calls left to review, not oversights:
+Each of these was open at review and is now fixed. The reasoning is recorded so a later change
+does not silently undo it.
 
-1. **Radius character** — current spec is 6/10/14 px (soft). A tighter 4/6/8 px set reads more
-   engineered and more "modern monochrome". Which direction?
-2. **Navigation bar selected state** — current spec uses weight plus a filled icon. A 2 px top
-   indicator bar is the alternative; it adds a hard edge but doubles the signal.
-3. **Snackbar treatment** — current spec is the inverse surface. The alternative is a
-   `container-high` fill with a `hairline` boundary, which is quieter but competes with cards.
-4. **Card treatment** — current spec is fill-based with no boundary. The alternative is
-   `surface` plus a `hairline`, which separates adjacent levels without adding a fill step.
+**Radius — soft (6/10/14 px).** Chosen over a tighter 4/6/8 px set. The system is already
+geometric through its flat fills and hairlines; sharper corners on top of that read as severe
+rather than modern, and the softer set stays closer to the platform surfaces the WebUI sits
+inside. Only the soft set is defined — there is no runtime radius switch, because a second
+character with no consumer is dead configuration.
+
+**Navigation bar selected state — `container-high` pill plus medium label weight.** With no hue
+available, the surface step is the strongest signal that does not compete with the label. An
+indicator bar was rejected as a second, redundant signal; a small bottom stub in particular
+looked fussy at 64 px row height.
+
+**Snackbar — inverse surface.** `on-surface` fill with `background` text: a solid black bar in
+light theme, a solid white bar in dark. It is the strongest emphasis the ramp can produce and is
+reserved for transient feedback, so it does not compete with the `container` fill that cards use.
+The quieter alternative (`container-high` plus a hairline) was rejected because it made a
+transient message look like another card.
+
+**Card — fill-based, no boundary.** A `container` fill on the page canvas, with `container-high`
+as the pressed step. This keeps elevation entirely on the surface ladder, leaves the hairline
+free to mean "separator" rather than "edge", and avoids drawing a border between two adjacent
+levels that are already distinct.
+
+**Night mode — an explicit four-way choice, not a single toggle.** The appearance row offers
+Automatic, Light, Night and Night (pure black). A boolean would have to discard either the
+follow-the-system behaviour or the pure-black theme, and both are worth keeping. The picker is a
+dialog rather than a `<select>`: the WebUI is touch-only, and a native dropdown inside a WebView
+renders as a desktop popup.
 
 ## Validation
 

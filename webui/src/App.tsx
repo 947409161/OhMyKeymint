@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
+import { SnackbarHost } from "./components/molecules/Snackbar";
 import { GalleryView } from "./views/GalleryView";
 
 export const APPEARANCE_MODES = ["auto", "light", "dark", "amoled"] as const;
 export type AppearanceMode = (typeof APPEARANCE_MODES)[number];
 
-export const RADIUS_CHARACTERS = ["soft", "tight"] as const;
-export type RadiusCharacter = (typeof RADIUS_CHARACTERS)[number];
-
-const THEME_KEY = "omk-appearance";
-const RADIUS_KEY = "omk-radius";
+const STORAGE_KEY = "omk-appearance";
 
 function prefersDark(): boolean {
 	return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -23,37 +20,23 @@ export function resolveTheme(
 	return mode;
 }
 
-function readStored<T extends string>(
-	key: string,
-	allowed: readonly T[],
-	fallback: T,
-): T {
+function readStoredMode(): AppearanceMode {
 	try {
-		const stored = window.localStorage.getItem(key);
-		if (stored !== null && (allowed as readonly string[]).includes(stored)) {
-			return stored as T;
+		const stored = window.localStorage.getItem(STORAGE_KEY);
+		if (
+			stored !== null &&
+			(APPEARANCE_MODES as readonly string[]).includes(stored)
+		) {
+			return stored as AppearanceMode;
 		}
 	} catch {
 		// Storage is unavailable in some WebView configurations.
 	}
-	return fallback;
-}
-
-function persist(key: string, value: string): void {
-	try {
-		window.localStorage.setItem(key, value);
-	} catch {
-		// Persisting the preference is best effort.
-	}
+	return "auto";
 }
 
 export function App(): React.JSX.Element {
-	const [mode, setMode] = useState<AppearanceMode>(() =>
-		readStored(THEME_KEY, APPEARANCE_MODES, "auto"),
-	);
-	const [radius, setRadius] = useState<RadiusCharacter>(() =>
-		readStored(RADIUS_KEY, RADIUS_CHARACTERS, "soft"),
-	);
+	const [mode, setMode] = useState<AppearanceMode>(readStoredMode);
 	const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
 
 	useEffect(() => {
@@ -66,45 +49,42 @@ export function App(): React.JSX.Element {
 
 	useEffect(() => {
 		document.documentElement.dataset.theme = resolveTheme(mode, systemDark);
-		persist(THEME_KEY, mode);
+		try {
+			window.localStorage.setItem(STORAGE_KEY, mode);
+		} catch {
+			// Persisting the preference is best effort.
+		}
 	}, [mode, systemDark]);
 
-	useEffect(() => {
-		document.documentElement.dataset.radius = radius;
-		persist(RADIUS_KEY, radius);
-	}, [radius]);
-
-	const onModeChange = useCallback((next: string) => {
+	const onAppearanceChange = useCallback((next: string) => {
 		if ((APPEARANCE_MODES as readonly string[]).includes(next)) {
 			setMode(next as AppearanceMode);
 		}
 	}, []);
 
-	const onRadiusChange = useCallback(
-		(next: RadiusCharacter) => setRadius(next),
-		[],
-	);
-
-	if (import.meta.env.DEV) {
-		return (
-			<GalleryView
-				mode={mode === "auto" ? resolveTheme(mode, systemDark) : mode}
-				onModeChange={onModeChange}
-				radius={radius}
-				onRadiusChange={onRadiusChange}
-			/>
-		);
-	}
-
 	return (
-		<div className="min-h-dvh bg-omk-bg p-4 text-omk-on" data-testid="omk-app">
-			<h1 className="text-omk-title">Oh My Keymint</h1>
-			<p
-				className="mt-2 text-omk-body text-omk-muted"
-				data-testid="omk-shell-status"
-			>
-				Views are not implemented yet.
-			</p>
-		</div>
+		<>
+			{import.meta.env.DEV ? (
+				<GalleryView
+					theme={resolveTheme(mode, systemDark)}
+					appearance={mode}
+					onAppearanceChange={onAppearanceChange}
+				/>
+			) : (
+				<div
+					className="min-h-dvh bg-omk-bg p-4 text-omk-on"
+					data-testid="omk-app"
+				>
+					<h1 className="text-omk-title">Oh My Keymint</h1>
+					<p
+						className="mt-2 text-omk-body text-omk-muted"
+						data-testid="omk-shell-status"
+					>
+						Views are not implemented yet.
+					</p>
+				</div>
+			)}
+			<SnackbarHost />
+		</>
 	);
 }
