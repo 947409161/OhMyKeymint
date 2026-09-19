@@ -33,16 +33,23 @@ export function Dialog({
 				className="fixed inset-0 bg-omk-scrim transition-opacity duration-200"
 			/>
 			<div className="fixed inset-0 flex items-center justify-center p-4">
+				{/*
+				 * The panel owns the height limit and is a flex column, so a long
+				 * child list fills the remaining space and clips at the panel edge.
+				 * Capping the list itself with a fixed height instead puts the cut
+				 * wherever that number happens to fall — often on an item boundary,
+				 * which reads as "the list ends here".
+				 */}
 				<DialogPanel
 					className={cx(
-						"w-full max-w-90 rounded-omk-lg bg-omk-surface p-4 shadow-none",
+						"flex max-h-[85dvh] w-full max-w-90 flex-col rounded-omk-lg bg-omk-surface p-4",
 						className,
 					)}
 				>
 					<DialogTitle className="text-omk-title text-omk-on">
 						{title}
 					</DialogTitle>
-					<div className="mt-3">{children}</div>
+					<div className="mt-3 flex min-h-0 flex-1 flex-col">{children}</div>
 				</DialogPanel>
 			</div>
 		</HeadlessDialog>

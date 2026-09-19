@@ -151,10 +151,7 @@ export function TargetsView({
 			 * rendered beside the shell's own main landmark, and a document may
 			 * only expose one.
 			 */}
-			<div
-				className="min-h-0 flex-1 overflow-y-auto px-4 pb-4"
-				aria-busy={busy}
-			>
+			<div className="omk-scroll min-h-0 flex-1 px-4 pb-4" aria-busy={busy}>
 				{entries.length === 0 ? (
 					<Card className="flex flex-col items-center gap-2 py-10">
 						<Icon as={IconAdd} className="text-omk-muted" />
@@ -163,7 +160,7 @@ export function TargetsView({
 						</p>
 					</Card>
 				) : (
-					<Card className="p-0">
+					<Card padded={false}>
 						{entries.map((entry, index) => (
 							<div key={entry.packageName}>
 								{index > 0 ? <Divider inset /> : null}
@@ -218,8 +215,8 @@ export function TargetsView({
 				onClose={() => setSystemOpen(false)}
 				title={tr("add_system_app_title", "System apps")}
 			>
-				<div className="min-h-0 flex-1 overflow-y-auto pb-2">
-					<Card className="p-0">
+				<div className="omk-scroll min-h-0 flex-1 pb-2">
+					<Card padded={false}>
 						{systemEntries.map((entry, index) => (
 							<div key={entry.packageName}>
 								{index > 0 ? <Divider inset /> : null}

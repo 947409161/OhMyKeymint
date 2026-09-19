@@ -5,7 +5,7 @@ import { Card } from "../components/atoms/Card";
 import { Icon } from "../components/atoms/Icon";
 import { IconButton } from "../components/atoms/IconButton";
 import { ProgressIndicator } from "../components/atoms/ProgressIndicator";
-import { SettingRow } from "../components/molecules/SettingRow";
+import { SettingRow, SettingRowList } from "../components/molecules/SettingRow";
 import {
 	StatusField,
 	type StatusTone,
@@ -252,7 +252,7 @@ export function HomeView({
 			 * selected"), so it is the row title with the count substituted —
 			 * not a label sitting next to a separate value.
 			 */}
-			<Card className="overflow-hidden p-0">
+			<SettingRowList>
 				<SettingRow
 					title={tr(
 						"home_selected_apps",
@@ -264,7 +264,7 @@ export function HomeView({
 						<Icon as={IconChevron} size="md" className="text-omk-muted" />
 					}
 				/>
-			</Card>
+			</SettingRowList>
 
 			<Card className="flex flex-col">
 				<div className="flex items-center justify-between gap-2">

@@ -60,7 +60,7 @@ export function LanguageRow({
 				onClose={() => setOpen(false)}
 				title={labels.dialogTitle}
 			>
-				<ul className="m-0 flex max-h-100 list-none flex-col gap-1 overflow-y-auto p-0">
+				<ul className="omk-scroll m-0 flex min-h-0 flex-1 list-none flex-col gap-1 p-0">
 					{options.map(([code, label]) => {
 						const selected =
 							code === "default" ? value === "default" : value === code;

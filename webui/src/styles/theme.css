@@ -138,6 +138,30 @@
 	color: var(--color-omk-muted);
 }
 
+/*
+ * Scroll containers hide their scrollbar.
+ *
+ * The WebUI is touch-first, where a scrollbar is a desktop affordance rather
+ * than a control, and the monochrome ramp has no colour available to make a
+ * native scrollbar sit quietly inside the design. Scrolling is unchanged.
+ *
+ * Hiding it also removes the one obvious hint that a list continues, so the
+ * scroll container must clip at a partial item: a list that stops exactly on
+ * an item boundary reads as complete. That is why Dialogs cap their own height
+ * and let the list fill the remainder, instead of capping the list.
+ */
+.omk-scroll {
+	overflow-y: auto;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+}
+
+.omk-scroll::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+	display: none;
+}
+
 html {
 	background-color: var(--color-omk-bg);
 }

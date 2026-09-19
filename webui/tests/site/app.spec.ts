@@ -178,6 +178,37 @@ test.describe("settings", () => {
 		expect(width).toBeGreaterThan(100);
 	});
 
+	test("hides the language scrollbar but keeps the list scrollable", async ({
+		page,
+	}) => {
+		await page.goto("/");
+		await gotoPage(page, "Settings");
+		await main(page)
+			.getByRole("button", { name: /^Language/ })
+			.click();
+
+		const dialog = page.getByRole("dialog");
+		const list = dialog.locator("ul");
+		const metrics = await list.evaluate((node) => {
+			const element = node as HTMLElement;
+			return {
+				// A hidden scrollbar leaves no gutter between offset and client width.
+				gutter: element.offsetWidth - element.clientWidth,
+				canScroll: element.scrollHeight > element.clientHeight + 1,
+			};
+		});
+		expect(metrics.gutter).toBe(0);
+		expect(metrics.canScroll).toBe(true);
+
+		// With no scrollbar, reaching the end is the only proof it scrolls.
+		await list.evaluate((node) => {
+			(node as HTMLElement).scrollTop = node.scrollHeight;
+		});
+		await expect(
+			dialog.getByRole("button", { name: "繁體中文" }),
+		).toBeVisible();
+	});
+
 	test("adjusts the interface scale", async ({ page }) => {
 		await page.goto("/");
 		await gotoPage(page, "Settings");

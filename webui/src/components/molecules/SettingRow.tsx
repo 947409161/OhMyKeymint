@@ -81,7 +81,7 @@ export function SettingRow({
 	...content
 }: SettingRowProps) {
 	const body = <RowText {...content} disabled={disabled} />;
-	const base = cx(ROW, "min-h-14 bg-omk-surface", className);
+	const base = cx(ROW, "min-h-14", className);
 
 	if (onPress !== undefined) {
 		return (
@@ -122,7 +122,7 @@ export function SettingRowSwitch({
 			checked={checked}
 			onChange={onChange}
 			disabled={row.disabled}
-			className={cx("min-h-14 bg-omk-surface", row.className)}
+			className={cx("min-h-14", row.className)}
 		>
 			<RowText {...row} />
 		</Switch>
@@ -141,7 +141,7 @@ export function SettingRowCheckbox({
 			checked={checked}
 			onChange={onChange}
 			disabled={row.disabled}
-			className={cx("min-h-14 bg-omk-surface", row.className)}
+			className={cx("min-h-14", row.className)}
 		>
 			<RowText {...row} />
 		</Checkbox>
@@ -157,7 +157,10 @@ export interface SettingRowListProps {
 export function SettingRowList({ children, className }: SettingRowListProps) {
 	return (
 		<div
-			className={cx("overflow-hidden rounded-omk-lg bg-omk-surface", className)}
+			className={cx(
+				"overflow-hidden rounded-omk-lg bg-omk-container",
+				className,
+			)}
 		>
 			{children}
 		</div>

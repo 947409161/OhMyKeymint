@@ -125,7 +125,7 @@ export function FileBrowserSheet({ onOpenChange }: FileBrowserSheetProps) {
 				) : null}
 
 				{state.entries.length > 0 ? (
-					<Card className="min-h-0 flex-1 overflow-y-auto p-0">
+					<Card padded={false} className="omk-scroll min-h-0 flex-1">
 						{state.entries.map((entry, index) => (
 							<div key={entry.name}>
 								{index > 0 ? <Divider inset /> : null}

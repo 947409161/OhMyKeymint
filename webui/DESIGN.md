@@ -332,6 +332,21 @@ The tone must also be exposed as text, not only as a glyph: the value string its
 is wrong ("Invalid Keybox", "Not installed"). A screen reader user receives the same information
 as a sighted one.
 
+**Scroll containers hide their scrollbar, and must clip mid-item**
+
+Scrollable regions use `.omk-scroll`, which hides the scrollbar in every engine. The WebUI is
+touch-first, where a scrollbar is a desktop affordance rather than a control, and the grayscale
+ramp has no colour available to make a native scrollbar sit quietly inside the design.
+
+Hiding it removes the one obvious hint that a list continues, so **a scroll container must clip at
+a partial item**. A list that stops exactly on an item boundary reads as complete — which is
+exactly what a fixed `max-height` on the list produced: eight of twenty-four languages visible,
+the cut landing on a boundary, and nothing suggesting the other sixteen existed.
+
+The rule that follows: cap the **container**, never the list, and let the list fill the remainder.
+A dialog therefore sets `max-h-[85dvh]` on its panel and `flex-1 min-h-0` on the list, so the
+clip lands wherever the viewport puts it — in practice, mid-item.
+
 **The app bar names the module, not the page**
 
 Every app bar reads `MODULE_NAME`, and a drill-down adds a back button instead of a page title.
