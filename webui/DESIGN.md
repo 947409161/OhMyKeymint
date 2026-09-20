@@ -347,6 +347,10 @@ The host scheme resolves only inside the KernelSU WebView, so the frame falls ba
 whenever the request fails — which is always the case in development and in the specs. The frame
 is a fixed square either way, so swapping the glyph for a real icon shifts nothing.
 
+The image is never hidden while it loads. A browser does not fetch an image that is not being
+rendered, so an icon held back with `display: none` never arrives and the glyph becomes the only
+thing the frame ever shows. The image sits over the glyph instead.
+
 **Scroll containers hide their scrollbar, and must clip mid-item**
 
 Scrollable regions use `.omk-scroll`, which hides the scrollbar in every engine. The WebUI is

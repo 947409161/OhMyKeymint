@@ -77,6 +77,15 @@ test.describe("scoped apps", () => {
 		expect(hasGlyph).toBe(true);
 	});
 
+	// Regression: the image was hidden with `display: none` until it loaded,
+	// and a browser does not fetch an image that is not being rendered — so the
+	// icon never arrived, its load event never fired, and the glyph was the
+	// only thing the frame could ever show.
+	test("keeps the icon image rendered while it loads", async ({ page }) => {
+		await openTargets(page);
+		await expect(page.locator('img[src^="ksu://icon/"]').first()).toBeVisible();
+	});
+
 	test("keeps the icon frame square so the row cannot shift", async ({
 		page,
 	}) => {

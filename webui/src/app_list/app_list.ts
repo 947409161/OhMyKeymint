@@ -12,6 +12,17 @@ const DEFAULT_VISIBLE_SYSTEM_APPS = [
 
 const PACKAGE_INFO_BATCH_SIZE = 32;
 
+const PACKAGE_LIST_COMMANDS = [
+	{
+		all: "/system/bin/pm list packages --user 0",
+		userInstalled: "/system/bin/pm list packages -3 --user 0",
+	},
+	{
+		all: "cmd package list packages --user 0",
+		userInstalled: "cmd package list packages -3 --user 0",
+	},
+] as const;
+
 function afterPaint(): Promise<void> {
 	return new Promise((resolve) => {
 		window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
@@ -22,35 +33,78 @@ function normalizeSearchQuery(query: string): string {
 	return query.trim().toLocaleLowerCase();
 }
 
-async function queryInstalledPackages(): Promise<string[]> {
+function parsePackageList(stdout: string): string[] {
+	return stdout
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith("package:"))
+		.map((line) => line.slice("package:".length))
+		.filter(isValidPackageName);
+}
+
+/**
+ * Runs one package-manager query, or reports null when the command did not
+ * answer. That is not the same as answering with nothing: a device whose user
+ * installed no app of their own really does list none.
+ */
+async function queryPackageList(command: string): Promise<string[] | null> {
+	try {
+		const result = await getBridge().exec(command);
+		if (result.errno !== 0) return null;
+		return [...new Set(parsePackageList(result.stdout))].sort();
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The manager answers `{ packageName, error }` for a package its own app list
+ * does not hold — which is every package until that list has loaded, and stays
+ * that way for the whole process if loading it failed. Caching such an answer
+ * would pin the app to "not system, no label" for the life of the WebUI, and
+ * no refresh could correct it, so only an answer that describes the package is
+ * kept and the rest are asked for again on the next fetch.
+ */
+function describesPackage(info: PackagesInfo): boolean {
+	return (
+		typeof info.isSystem === "boolean" ||
+		(typeof info.appLabel === "string" && info.appLabel.length > 0)
+	);
+}
+
+interface InstalledPackages {
+	/** Every package installed for the current user, system ones included. */
+	packages: string[];
+	/** The subset the user installed themselves, or null when unknown. */
+	userInstalled: Set<string> | null;
+}
+
+async function queryInstalledPackages(): Promise<InstalledPackages> {
 	// ksu.listPackages() can retain the package-manager snapshot from the
 	// WebView process. Query Android's package manager directly on every fetch
 	// so apps installed while the WebUI is open appear without a cold start.
-	const commands = [
-		"/system/bin/pm list packages --user 0",
-		"cmd package list packages --user 0",
-	];
-	for (const command of commands) {
-		try {
-			const result = await getBridge().exec(command);
-			if (result.errno !== 0) continue;
-			const packages = result.stdout
-				.split(/\r?\n/)
-				.map((line) => line.trim())
-				.filter((line) => line.startsWith("package:"))
-				.map((line) => line.slice("package:".length))
-				.filter(isValidPackageName);
-			if (packages.length > 0) return [...new Set(packages)].sort();
-		} catch {
-			// Try the alternate package-manager command before using the bridge.
-		}
+	for (const command of PACKAGE_LIST_COMMANDS) {
+		const packages = await queryPackageList(command.all);
+		if (packages === null || packages.length === 0) continue;
+		const userInstalled = await queryPackageList(command.userInstalled);
+		return {
+			packages,
+			userInstalled: userInstalled === null ? null : new Set(userInstalled),
+		};
 	}
 
 	// Keep compatibility with older KernelSU/APatch WebUI bridges that do not
 	// expose exec but do provide listPackages.
-	return getBridge()
+	const packages = await getBridge()
 		.listPackages("all")
 		.catch(() => []);
+	const userInstalled = await getBridge()
+		.listPackages("user")
+		.catch(() => null);
+	return {
+		packages,
+		userInstalled: userInstalled === null ? null : new Set(userInstalled),
+	};
 }
 
 export type SelectionFilter = "all" | "selected" | "unselected";
@@ -252,7 +306,7 @@ export class AppList {
 		// KernelSU package APIs cross a synchronous WebView bridge. Yield before
 		// each call so the navigation and progress animations can reach the screen.
 		await afterPaint();
-		const packages = await queryInstalledPackages();
+		const { packages, userInstalled } = await queryInstalledPackages();
 		const installedPackages = new Set(packages);
 
 		for (const packageName of this.#packageInfoCache.keys()) {
@@ -280,7 +334,8 @@ export class AppList {
 				for (const info of infos) {
 					if (
 						isValidPackageName(info.packageName) &&
-						installedPackages.has(info.packageName)
+						installedPackages.has(info.packageName) &&
+						describesPackage(info)
 					) {
 						this.#packageInfoCache.set(info.packageName, info);
 					}
@@ -299,7 +354,14 @@ export class AppList {
 						typeof info?.appLabel === "string" && info.appLabel
 							? info.appLabel
 							: packageName,
-					isSystem: info?.isSystem ?? false,
+					// Android itself sorts system apps from the ones the user
+					// installed. The manager's app list answers the same question,
+					// but only once it has loaded — before that it calls every
+					// package a user app, which lists the whole system on screen.
+					isSystem:
+						userInstalled === null
+							? (info?.isSystem ?? false)
+							: !userInstalled.has(packageName),
 				};
 			}),
 		);
