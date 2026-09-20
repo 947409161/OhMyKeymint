@@ -148,7 +148,8 @@
 
 ### Issue tracker
 
-Issues are tracked as GitHub issues in `ITxiao6666/OhMyKeymint`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are tracked as GitHub issues in `947409161/OhMyKeymint`, via the `gh` CLI with an
+explicit `-R`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
