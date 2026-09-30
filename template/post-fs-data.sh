@@ -3,6 +3,7 @@
 MODDIR=${0%/*}
 TARGET_DIR=/data/misc/keystore/omk
 LOG_DIR=$TARGET_DIR/logs
+SOTER_DIR=$TARGET_DIR/data/soterta
 TARGET_KEYBOX=$TARGET_DIR/keybox.xml
 TARGET_INJECTOR_CONFIG=$TARGET_DIR/injector.toml
 STATE_DIR=/data/adb/omk
@@ -17,6 +18,12 @@ chown 1017:1017 "$TARGET_DIR"
 mkdir -p "$LOG_DIR"
 chmod 0770 "$LOG_DIR"
 chown 1017:1017 "$LOG_DIR"
+
+# Qualcomm Soter relay configuration, ledger and watchdog status all live in
+# OMK's persistent data directory so the module overlay can be replaced safely.
+mkdir -p "$SOTER_DIR"
+chmod 0770 "$SOTER_DIR"
+chown 1017:1017 "$SOTER_DIR"
 
 mkdir -p "$STATE_DIR"
 rm -f "$STATE_DIR/keymint-daemon.pid" "$STATE_DIR/injector-daemon.pid"

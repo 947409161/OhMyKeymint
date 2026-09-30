@@ -114,16 +114,6 @@
     <string name="tools_key_management">密钥管理</string>
     <string name="tools_keybox_desc">选择 XML 文件替换当前 Keybox</string>
     <string name="tools_adb_disabler">ADB 禁用器</string>
-    <string name="tools_adb_disabler_desc">启动时禁用开发者选项、USB 调试和 OEM 解锁。</string>
-    <string name="adb_disabler_desc">选择模块启动时要禁用的开发者相关设置。</string>
-    <string name="adb_disabler_enabled">启用 ADB 禁用器</string>
-    <string name="adb_disabler_enabled_desc">立即应用所选开关，并在每次启动后重新应用。</string>
-    <string name="adb_disabler_dev_options">开发者选项</string>
-    <string name="adb_disabler_dev_options_desc">隐藏开发者选项并隐藏调试版本属性。</string>
-    <string name="adb_disabler_usb_debug">USB 调试</string>
-    <string name="adb_disabler_usb_debug_desc">关闭 Android USB 调试，并将 USB 模式保持为文件传输。</string>
-    <string name="adb_disabler_oem_unlock">OEM 解锁</string>
-    <string name="adb_disabler_oem_unlock_desc">阻止 Android 设置重新启用 OEM 解锁。</string>
     <string name="prompt_adb_disabler_applied">ADB 禁用器设置已应用，部分更改将在重启后生效。</string>
     <string name="prompt_adb_disabler_disabled">ADB 禁用器已停用，当前更改会保留，直到设备状态被手动更改。</string>
     <string name="tools_security_patch">设置安全补丁</string>
@@ -182,4 +172,12 @@
     <string name="soter_beta_reboot">请自行安装并启用 Zygisk Next。开启或关闭后均需重启设备；兼容效果尚未验证。</string>
     <string name="soter_beta_saved">Soter Beta 设置已保存，请重启设备以应用；兼容效果尚未验证。</string>
     <string name="soter_beta_preview">仅为界面预览，此处无法保存设备设置。</string>
+    <string name="tools_wechat_soter">修复微信支付指纹</string>
+    <string name="tools_wechat_soter_desc">配置Qualcomm Soter服务</string>
+    <string name="tools_soter_hal">Soter HAL 配置</string>
+    <string name="soter_hal_desc">配置Qualcomm Soter服务</string>
+    <string name="soter_hal_enabled">启用功能</string>
+    <string name="soter_hal_saved">功能已启用</string>
+    <string name="soter_hal_disabled">功能已关闭</string>
+    <string name="soter_hal_preview">仅为界面预览，此处无法保存设备设置。</string>
 </resources>

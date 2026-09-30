@@ -29,6 +29,7 @@ enum ActivityAction {
     SecurityPatchRestored,
     PifEnabled,
     PifDisabled,
+    // Kept for deserializing existing history; new records are not accepted.
     AdbDisablerChanged,
 }
 
@@ -42,7 +43,6 @@ impl ActivityAction {
             "security_patch_restored" => Ok(Self::SecurityPatchRestored),
             "pif_enabled" => Ok(Self::PifEnabled),
             "pif_disabled" => Ok(Self::PifDisabled),
-            "adb_disabler_changed" => Ok(Self::AdbDisablerChanged),
             _ => bail!("unsupported WebUI activity action"),
         }
     }
@@ -179,7 +179,6 @@ mod tests {
             ),
             ("pif_enabled", ActivityAction::PifEnabled),
             ("pif_disabled", ActivityAction::PifDisabled),
-            ("adb_disabler_changed", ActivityAction::AdbDisablerChanged),
         ] {
             assert_eq!(ActivityAction::parse(name).unwrap(), action);
             assert_eq!(
@@ -188,6 +187,17 @@ mod tests {
             );
         }
         assert!(ActivityAction::parse("unknown").is_err());
+    }
+
+    #[test]
+    fn retired_adb_activity_remains_readable_but_cannot_be_recorded() {
+        assert!(ActivityAction::parse("adb_disabler_changed").is_err());
+        let json =
+            r#"[{"action":"adb_disabler_changed","detail":"enabled","timestamp":1788537600}]"#;
+        let entries: Vec<ActivityEntry> = serde_json::from_str(json).unwrap();
+        assert_eq!(entries[0].action, ActivityAction::AdbDisablerChanged);
+        entries[0].validate().unwrap();
+        assert_eq!(serde_json::to_string(&entries).unwrap(), json);
     }
 
     #[test]

@@ -114,16 +114,6 @@
     <string name="tools_key_management">Key management</string>
     <string name="tools_keybox_desc">Select an XML file to replace the current Keybox</string>
     <string name="tools_adb_disabler">ADB Disabler</string>
-    <string name="tools_adb_disabler_desc">Disable developer options, USB debugging and OEM unlock at boot.</string>
-    <string name="adb_disabler_desc">Choose which security related developer settings to disable when the module starts.</string>
-    <string name="adb_disabler_enabled">Enable ADB Disabler</string>
-    <string name="adb_disabler_enabled_desc">Apply the selected switches now and again after every boot.</string>
-    <string name="adb_disabler_dev_options">Developer options</string>
-    <string name="adb_disabler_dev_options_desc">Hide developer options and debug build properties.</string>
-    <string name="adb_disabler_usb_debug">USB debugging</string>
-    <string name="adb_disabler_usb_debug_desc">Turn off Android USB debugging and keep USB mode on file transfer.</string>
-    <string name="adb_disabler_oem_unlock">OEM unlocking</string>
-    <string name="adb_disabler_oem_unlock_desc">Prevent OEM unlocking from being enabled by Android settings.</string>
     <string name="prompt_adb_disabler_applied">ADB Disabler settings applied. Some changes take effect after reboot.</string>
     <string name="prompt_adb_disabler_disabled">ADB Disabler disabled. Existing changes remain until the device state is changed.</string>
     <string name="tools_security_patch">Security patch settings</string>
@@ -182,4 +172,12 @@
     <string name="soter_beta_reboot">Install and enable Zygisk Next separately. Restart the device after enabling or disabling. Compatibility is not verified.</string>
     <string name="soter_beta_saved">Soter Beta preference saved. Restart the device to apply. Compatibility is not verified.</string>
     <string name="soter_beta_preview">Preview only. Device settings cannot be saved here.</string>
+    <string name="tools_wechat_soter">Fix WeChat payment fingerprint</string>
+    <string name="tools_wechat_soter_desc">Configure the Qualcomm Soter service.</string>
+    <string name="tools_soter_hal">Soter HAL configuration</string>
+    <string name="soter_hal_desc">Configure the Qualcomm Soter service.</string>
+    <string name="soter_hal_enabled">Enable feature</string>
+    <string name="soter_hal_saved">Feature enabled</string>
+    <string name="soter_hal_disabled">Feature disabled</string>
+    <string name="soter_hal_preview">Preview only. Device settings cannot be saved here.</string>
 </resources>

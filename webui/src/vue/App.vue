@@ -7,7 +7,6 @@ import {
   MiuixNavigationBar,
   MiuixProgressIndicator,
   MiuixSnackbarHost,
-  MiuixSwitchPreference,
   showSnackbar,
   setThemeMode,
 } from 'miuix-vue'
@@ -25,6 +24,7 @@ import HomeView, { type KeyboxStatus, type ModuleStatus, type TeeStatus } from '
 import PifFingerprintDialog from './PifFingerprintDialog.vue'
 import SettingsView from './SettingsView.vue'
 import SoterDialog from './SoterDialog.vue'
+import SoterHalDialog from './SoterHalDialog.vue'
 import TargetsView from './TargetsView.vue'
 import ToolsView, { type ToolEvent } from './ToolsView.vue'
 import FileBrowserSheet from './FileBrowserSheet.vue'
@@ -54,13 +54,8 @@ const activities = ref<ActivityEntry[]>([])
 const activityStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const activityClearBusy = ref(false)
 const securityPatchBusy = ref<'sync' | 'restore' | null>(null)
-const adbBusy = ref(false)
-const adbOpen = ref(false)
-const adbEnabled = ref(true)
-const adbDevOptions = ref(true)
-const adbUsbDebug = ref(true)
-const adbOemUnlock = ref(true)
 const soterOpen = ref(false)
+const soterHalOpen = ref(false)
 const pifOpen = ref(false)
 const keyboxOpen = ref(false)
 const selectedKeybox = ref<{ name: string, contents: Uint8Array } | null>(null)
@@ -69,6 +64,7 @@ const targetsView = ref<InstanceType<typeof TargetsView> | null>(null)
 const settingsView = ref<InstanceType<typeof SettingsView> | null>(null)
 const pifDialog = ref<InstanceType<typeof PifFingerprintDialog> | null>(null)
 const soterDialog = ref<InstanceType<typeof SoterDialog> | null>(null)
+const soterHalDialog = ref<InstanceType<typeof SoterHalDialog> | null>(null)
 
 const pageIds = ['home', 'tools', 'settings'] as const
 const navItems = computed(() => [
@@ -279,6 +275,7 @@ function onTargetsOverlayClose(): void {
 
 function handleEscape(): void {
   if (soterOpen.value && soterDialog.value?.busy) return
+  if (soterHalOpen.value && soterHalDialog.value?.busy) return
   if (targetsOpen.value && targetsView.value?.dismissOverlay()) return
   if (history.size > 0) history.back()
 }
@@ -425,59 +422,15 @@ async function syncPatch(restore: boolean): Promise<void> {
   }
 }
 
-async function applyAdbDisabler(): Promise<void> {
-  if (adbBusy.value) return
-  adbBusy.value = true
-  try {
-    if (!isDev()) {
-      await cli.setAdbDisabler(
-        adbEnabled.value,
-        adbDevOptions.value,
-        adbUsbDebug.value,
-        adbOemUnlock.value,
-      )
-    }
-    adbOpen.value = false
-    notify(i18n.t('prompt_adb_disabler_applied'))
-    await refreshActivity()
-  } catch (error) {
-    notify(error instanceof Error ? error.message : String(error), true)
-  } finally {
-    adbBusy.value = false
-  }
-}
-
 function onTool(event: ToolEvent): void {
   switch (event) {
     case 'openAppTargets': openTargets(); break
     case 'installKeybox': void chooseKeybox(); break
     case 'syncSecurityPatch': void syncPatch(false); break
     case 'restoreSecurityPatch': void syncPatch(true); break
-    case 'openAdbDisabler': void openAdbDisabler(); break
     case 'openSoterBeta': soterOpen.value = true; break
+    case 'openSoterHal': soterHalOpen.value = true; break
     case 'spoofPif': pifOpen.value = true; break
-  }
-}
-
-async function openAdbDisabler(): Promise<void> {
-  if (adbOpen.value) return
-  adbOpen.value = true
-  if (isDev()) {
-    adbEnabled.value = false
-    adbDevOptions.value = true
-    adbUsbDebug.value = true
-    adbOemUnlock.value = true
-    return
-  }
-  try {
-    const state = await cli.getAdbDisabler()
-    adbEnabled.value = state.enabled
-    adbDevOptions.value = state.dev_options
-    adbUsbDebug.value = state.usb_debug
-    adbOemUnlock.value = state.oem_unlock
-  } catch (error) {
-    adbOpen.value = false
-    notify(error instanceof Error ? error.message : String(error), true)
   }
 }
 
@@ -582,12 +535,6 @@ watch(pifOpen, open => {
     })
   } else if (!open && overlayHistory.delete('pif-fingerprint')) history.consume('pif-fingerprint')
 })
-watch(adbOpen, open => {
-  if (open && !overlayHistory.has('adb-disabler')) {
-    overlayHistory.add('adb-disabler')
-    history.push('adb-disabler', () => { if (!adbBusy.value) adbOpen.value = false })
-  } else if (!open && overlayHistory.delete('adb-disabler')) history.consume('adb-disabler')
-})
 function trackSoterOverlay(): void {
   const key = 'soter-beta'
   if (!soterOpen.value || overlayHistory.has(key)) return
@@ -604,6 +551,19 @@ function trackSoterOverlay(): void {
 watch(soterOpen, open => {
   if (open) trackSoterOverlay()
   else if (overlayHistory.delete('soter-beta')) history.consume('soter-beta')
+})
+function trackSoterHalOverlay(): void {
+  const key = 'soter-hal'
+  if (!soterHalOpen.value || overlayHistory.has(key)) return
+  overlayHistory.add(key)
+  history.push(key, () => {
+    overlayHistory.delete(key)
+    if (soterHalDialog.value?.requestClose() === false) void nextTick(trackSoterHalOverlay)
+  })
+}
+watch(soterHalOpen, open => {
+  if (open) trackSoterHalOverlay()
+  else if (overlayHistory.delete('soter-hal')) history.consume('soter-hal')
 })
 watch(keyboxOpen, open => {
   if (open && !overlayHistory.has('keybox')) {
@@ -636,13 +596,12 @@ watch(keyboxOpen, open => {
         <ToolsView
           v-show="pageIndex === 1"
           :security-patch-busy="securityPatchBusy"
-          :adb-busy="adbBusy"
           @open-app-targets="onTool('openAppTargets')"
           @install-keybox="onTool('installKeybox')"
           @sync-security-patch="onTool('syncSecurityPatch')"
           @restore-security-patch="onTool('restoreSecurityPatch')"
-          @open-adb-disabler="onTool('openAdbDisabler')"
           @open-soter-beta="onTool('openSoterBeta')"
+          @open-soter-hal="onTool('openSoterHal')"
           @spoof-pif="onTool('spoofPif')"
         />
       </Transition>
@@ -710,49 +669,6 @@ watch(keyboxOpen, open => {
       </template>
     </MiuixDialog>
 
-    <MiuixDialog
-      v-model="adbOpen"
-      :title="i18n.t('tools_adb_disabler')"
-      :close-on-click-modal="!adbBusy"
-    >
-      <template #default="{ close }">
-        <div class="confirm-sheet adb-disabler-sheet">
-          <p>{{ i18n.t('adb_disabler_desc') }}</p>
-          <MiuixSwitchPreference
-            v-model="adbEnabled"
-            :title="i18n.t('adb_disabler_enabled')"
-            :summary="i18n.t('adb_disabler_enabled_desc')"
-            :disabled="adbBusy"
-          />
-          <MiuixSwitchPreference
-            v-model="adbDevOptions"
-            :title="i18n.t('adb_disabler_dev_options')"
-            :summary="i18n.t('adb_disabler_dev_options_desc')"
-            :disabled="adbBusy || !adbEnabled"
-          />
-          <MiuixSwitchPreference
-            v-model="adbUsbDebug"
-            :title="i18n.t('adb_disabler_usb_debug')"
-            :summary="i18n.t('adb_disabler_usb_debug_desc')"
-            :disabled="adbBusy || !adbEnabled"
-          />
-          <MiuixSwitchPreference
-            v-model="adbOemUnlock"
-            :title="i18n.t('adb_disabler_oem_unlock')"
-            :summary="i18n.t('adb_disabler_oem_unlock_desc')"
-            :disabled="adbBusy || !adbEnabled"
-          />
-          <div class="confirm-actions">
-            <MiuixButton :disabled="adbBusy" @click="close">{{ i18n.t('functional_button_cancel') }}</MiuixButton>
-            <MiuixButton type="primary" :disabled="adbBusy" @click="void applyAdbDisabler()">
-              <MiuixProgressIndicator v-if="adbBusy" type="circular" :size="18" />
-              {{ i18n.t('functional_button_apply') }}
-            </MiuixButton>
-          </div>
-        </div>
-      </template>
-    </MiuixDialog>
-
     <PifFingerprintDialog
       ref="pifDialog"
       v-model="pifOpen"
@@ -761,6 +677,7 @@ watch(keyboxOpen, open => {
       @changed="refreshIdentity(true); refreshActivity()"
     />
     <SoterDialog ref="soterDialog" v-model="soterOpen" :cli="cli" @notify="notify" />
+    <SoterHalDialog ref="soterHalDialog" v-model="soterHalOpen" :cli="cli" @notify="notify" />
     <MiuixSnackbarHost />
   </div>
 </template>

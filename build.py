@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import zipfile
 
 try:
@@ -44,6 +45,7 @@ BINARY_SPECS = (
     {"package": None, "bin": "keymint", "output_name": "keymint"},
     {"package": "injector", "bin": "inject", "output_name": "inject"},
 )
+SOTERTA_SERVICE_NAME = "soterta-svc"
 PIF_SPOOF_PACKAGE = "pif-spoof"
 PIF_SPOOF_LIBRARY = "libpif_spoof.so"
 
@@ -56,6 +58,7 @@ REQUIRED_TEMPLATE_FILES = (
     "uninstall.sh",
     "post-fs-data.sh",
     "service.sh",
+    "soterta.sh",
     "verify.sh",
     "webroot",
 )
@@ -68,6 +71,7 @@ MODULE_TEXT_FILES = (
     "THIRD_PARTY_LICENSES/Tricky-Addon-Update-Target-List.txt",
     "THIRD_PARTY_LICENSES/zygisk-api-0BSD.txt",
     "THIRD_PARTY_LICENSES/D-soter.txt",
+    "THIRD_PARTY_LICENSES/ommega-soter-ta.txt",
     "customize.sh",
     "daemon",
     "daemon-injector",
@@ -79,6 +83,7 @@ MODULE_TEXT_FILES = (
     "post-fs-data.sh",
     "sepolicy.rule",
     "service.sh",
+    "soterta.sh",
     "verify.sh",
     "META-INF/com/google/android/update-binary",
     "META-INF/com/google/android/updater-script",
@@ -207,6 +212,28 @@ def copy_binary(binary: Path, output_name: str, abi: str, stage_dir: Path) -> No
     print(f"Copied {binary} to {dest_path}")
 
 
+def build_soterta_service(*, abi: str, release: bool) -> Path:
+    """Build the C Binder shim linked with the Rust software Soter TA.
+
+    The shim is intentionally built by its dedicated script: it needs the NDK
+    Binder C API in addition to Cargo's staticlib, while the normal package
+    binaries are pure Rust.
+    """
+    profile = "release" if release else "debug"
+    command = [
+        os.fspath(Path(__file__).resolve().parent / "scripts" / "build_soterta_svc.py"),
+        "--abi",
+        abi,
+    ]
+    if not release:
+        command.append("--debug")
+    run([os.fspath(Path(sys.executable)), *command])
+    output = TARGET_ROOT / "soterta-svc" / abi / profile / SOTERTA_SERVICE_NAME
+    if not output.is_file():
+        raise FileNotFoundError(f"Built Soter service not found at {output}")
+    return output
+
+
 def build_cdylib(
     *,
     abi: str,
@@ -272,6 +299,10 @@ def copy_project_documents(stage_dir: Path) -> None:
         (
             REPO_ROOT / "pif-spoof" / "D-soter.NOTICE",
             stage_dir / "THIRD_PARTY_LICENSES" / "D-soter.txt",
+        ),
+        (
+            REPO_ROOT / "template" / "THIRD_PARTY_LICENSES" / "ommega-soter-ta.txt",
+            stage_dir / "THIRD_PARTY_LICENSES" / "ommega-soter-ta.txt",
         ),
     )
     for source, destination in documents:
@@ -453,6 +484,7 @@ def build_package_for_abi(
                 package=spec["package"],
                 bin_name=spec["bin"],
             )
+        soterta_service = build_soterta_service(abi=abi, release=release)
         pif_payload = build_cdylib(
             abi=abi,
             target=target,
@@ -472,6 +504,7 @@ def build_package_for_abi(
                 abi,
                 stage_dir,
             )
+        copy_binary(soterta_service, SOTERTA_SERVICE_NAME, abi, stage_dir)
         copy_zygisk_payload(pif_payload, abi, stage_dir)
 
         modify_module_prop(stage_dir, version, git_count, git_hash, release)

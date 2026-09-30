@@ -7,7 +7,7 @@ import {
   MiuixSmallTitle,
   MiuixTopAppBar,
 } from 'miuix-vue'
-import { AddCircle, Lock, Replace, Reset, Tune, Update } from 'miuix-vue/icons'
+import { AddCircle, Replace, Reset, Tune, Update } from 'miuix-vue/icons'
 import { i18n } from '../i18n'
 
 export type ToolEvent =
@@ -15,15 +15,14 @@ export type ToolEvent =
   | 'installKeybox'
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
-  | 'openAdbDisabler'
   | 'openSoterBeta'
+  | 'openSoterHal'
   | 'spoofPif'
 
 type BusyPatch = 'sync' | 'restore' | null
 
 const props = defineProps<{
   securityPatchBusy: BusyPatch
-  adbBusy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,8 +30,8 @@ const emit = defineEmits<{
   installKeybox: []
   syncSecurityPatch: []
   restoreSecurityPatch: []
-  openAdbDisabler: []
   openSoterBeta: []
+  openSoterHal: []
   spoofPif: []
 }>()
 
@@ -42,8 +41,8 @@ function runTool(event: ToolEvent): void {
     case 'installKeybox': emit('installKeybox'); break
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
-    case 'openAdbDisabler': emit('openAdbDisabler'); break
     case 'openSoterBeta': emit('openSoterBeta'); break
+    case 'openSoterHal': emit('openSoterHal'); break
     case 'spoofPif': emit('spoofPif'); break
   }
 }
@@ -73,16 +72,16 @@ const groups = [
         summary: tr('tools_keybox_desc', 'Choose a Keybox.xml file and install it for Oh My Keymint.'),
       },
       {
-        event: 'openAdbDisabler' as const,
-        icon: Lock,
-        title: tr('tools_adb_disabler', 'ADB Disabler'),
-        summary: tr('tools_adb_disabler_desc', 'Disable developer options, USB debugging and OEM unlock at boot.'),
-      },
-      {
         event: 'openSoterBeta' as const,
         icon: Tune,
         title: tr('tools_soter_beta', 'Tencent Soter compatibility (Beta)'),
         summary: tr('tools_soter_beta_desc', 'Experimental compatibility for Tencent SoterServer. Requires Zygisk Next.'),
+      },
+      {
+        event: 'openSoterHal' as const,
+        icon: Tune,
+        title: tr('tools_wechat_soter', 'Fix WeChat payment fingerprint'),
+        summary: tr('tools_wechat_soter_desc', 'Configure the Qualcomm Soter service.'),
       },
     ],
   },
@@ -115,15 +114,13 @@ const groups = [
 ]
 
 function isBusy(event: ToolEvent): boolean {
-  if (event === 'openAdbDisabler') return props.adbBusy
   if (event === 'syncSecurityPatch') return props.securityPatchBusy !== null
   if (event === 'restoreSecurityPatch') return props.securityPatchBusy !== null
   return false
 }
 
 function isActiveBusy(event: ToolEvent): boolean {
-  return (event === 'openAdbDisabler' && props.adbBusy)
-    || (event === 'syncSecurityPatch' && props.securityPatchBusy === 'sync')
+  return (event === 'syncSecurityPatch' && props.securityPatchBusy === 'sync')
     || (event === 'restoreSecurityPatch' && props.securityPatchBusy === 'restore')
 }
 </script>

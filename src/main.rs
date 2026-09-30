@@ -23,7 +23,6 @@ use crate::{
     top::qwq2333::ohmykeymint::IOhMyKsService::BnOhMyKsService,
 };
 
-pub mod adb_disabler;
 pub mod att_mgr;
 pub mod config;
 pub mod consts;
@@ -39,6 +38,7 @@ pub mod proto;
 pub mod security_patch;
 pub mod selinux;
 pub mod soter_beta;
+pub mod soter_hal;
 pub mod utils;
 pub mod watchdog;
 pub mod webui_activity;
@@ -371,46 +371,6 @@ fn handle_webui_keybox_command() -> Option<Result<String, String>> {
     }
 }
 
-fn handle_webui_adb_disabler_command() -> Option<Result<&'static str, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    if args.next()?.as_str() != "--webui-set-adb-disabler" {
-        return None;
-    }
-    let values: Vec<String> = args.collect();
-    let settings = match adb_disabler::Settings::from_tokens(&values) {
-        Ok(settings) => settings,
-        Err(error) => return Some(Err(format!("{error:#}"))),
-    };
-    // WebUI helpers run as short-lived root commands, before the normal
-    // daemon startup path.  Ensure the shared OMK data directory exists and
-    // has the expected ownership before persisting the configuration.
-    prepare_android_storage();
-    Some(
-        adb_disabler::apply(settings)
-            .map(|()| "adb_disabler_applied")
-            .map_err(|error| format!("{error:#}")),
-    )
-}
-
-fn handle_webui_get_adb_disabler_command() -> Option<Result<String, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    if args.next()?.as_str() != "--webui-get-adb-disabler" {
-        return None;
-    }
-    if args.next().is_some() {
-        return Some(Err(
-            "--webui-get-adb-disabler does not accept arguments".to_string()
-        ));
-    }
-    let settings = adb_disabler::read();
-    Some(Ok(format!(
-        "{{\"enabled\":{},\"dev_options\":{},\"usb_debug\":{},\"oem_unlock\":{}}}",
-        settings.enabled, settings.dev_options, settings.usb_debug, settings.oem_unlock
-    )))
-}
-
 fn handle_webui_soter_beta_command(
     mut args: impl Iterator<Item = String>,
 ) -> Option<Result<String, String>> {
@@ -441,6 +401,47 @@ fn handle_webui_soter_beta_command(
             Some(
                 soter_beta::save(enabled)
                     .map(|()| "soter_beta_saved".to_string())
+                    .map_err(|error| format!("{error:#}")),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn handle_webui_soter_hal_command(
+    mut args: impl Iterator<Item = String>,
+) -> Option<Result<String, String>> {
+    let command = args.next()?;
+    match command.as_str() {
+        "--webui-get-soter-hal" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-get-soter-hal does not accept arguments".to_string()
+                ));
+            }
+            Some(soter_hal::state_json().map_err(|error| format!("{error:#}")))
+        }
+        "--webui-set-soter-hal" | "--webui-set-soter-hal-base64" => {
+            let payload = args.next();
+            if payload.is_none() || args.next().is_some() {
+                return Some(Err(format!(
+                    "{command} requires exactly one configuration argument"
+                )));
+            }
+            let payload = payload.expect("payload checked above");
+            let parsed = if command == "--webui-set-soter-hal-base64" {
+                soter_hal::Config::parse_base64(&payload)
+            } else {
+                soter_hal::Config::parse(&payload)
+            };
+            let config = match parsed {
+                Ok(config) => config,
+                Err(error) => return Some(Err(format!("{error:#}"))),
+            };
+            prepare_android_storage();
+            Some(
+                soter_hal::save(config)
+                    .map(|()| "soter_hal_saved".to_string())
                     .map_err(|error| format!("{error:#}")),
             )
         }
@@ -637,29 +638,18 @@ fn main() {
         return;
     }
 
+    if let Some(result) = handle_webui_soter_hal_command(std::env::args().skip(1)) {
+        match result {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
     if let Some(result) = handle_webui_activity_command() {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_adb_disabler_command() {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_get_adb_disabler_command() {
         match result {
             Ok(output) => println!("{output}"),
             Err(error) => {
@@ -712,6 +702,15 @@ fn main() {
             }
         }
         return;
+    }
+
+    // A stale WebUI must not start the daemon after a helper command is removed.
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|arg| arg.starts_with("--webui-"))
+    {
+        eprintln!("unsupported WebUI command");
+        std::process::exit(2);
     }
 
     logging::init_logger();
@@ -844,6 +843,26 @@ fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webui_soter_hal_rejects_invalid_arguments_before_storage_setup() {
+        for arguments in [
+            vec!["--webui-get-soter-hal", "extra"],
+            vec!["--webui-set-soter-hal"],
+            vec!["--webui-set-soter-hal", "{}", "extra"],
+            vec!["--webui-set-soter-hal-base64"],
+            vec!["--webui-set-soter-hal-base64", "e30=", "extra"],
+            vec!["--webui-set-soter-hal-base64", "not-base64"],
+            vec!["--webui-set-soter-hal-base64", "/w=="],
+            vec!["--webui-set-soter-hal-base64", "e30="],
+        ] {
+            assert!(
+                handle_webui_soter_hal_command(arguments.into_iter().map(str::to_string))
+                    .unwrap()
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn webui_soter_beta_rejects_invalid_arguments_before_storage_setup() {

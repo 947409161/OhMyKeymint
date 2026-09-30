@@ -74,6 +74,7 @@ members = [
   "injector",
   "pif-common",
   "pif-spoof",
+  "soter-ta",
 ]
 
 [patch.crates-io]

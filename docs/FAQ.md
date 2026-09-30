@@ -179,11 +179,7 @@ either level.
 Continue to manage those settings through the documented active files.
 
 **Spoof PIF fingerprint** is the other network-backed action. PIF uses only the
-documented Pixel profile feed described below. The **ADB Disabler** controls
-developer options, USB debugging, and OEM unlock independently. Its four
-settings are persisted under OMK's data directory and replayed by the module at
-boot; disabling its master switch stops future replay but does not restore
-properties already changed during the current boot.
+documented Pixel profile feed described below.
 
 ### What happens when the WebUI saves the app list?
 

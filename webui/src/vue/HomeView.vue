@@ -177,6 +177,7 @@ function describeActivity(entry: ActivityEntry): { title: string, detail: string
         detail: tr('prompt_pif_disabled', 'PIF fingerprint spoofing disabled.'),
       }
     case 'adb_disabler_changed':
+      // Preserve existing history without restoring the retired tool.
       return {
         title: tr('tools_adb_disabler', 'ADB Disabler'),
         detail: entry.detail === 'enabled'

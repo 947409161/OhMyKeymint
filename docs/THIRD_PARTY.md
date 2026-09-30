@@ -71,19 +71,14 @@ same schema and serial validation used for live checks. The snapshot contains
 only Google's public `REVOKED`/`SUSPENDED` entries; it does not contain private
 keys or device identifiers.
 
-## Specter interface and ADB Disabler reference
+## Specter interface reference
 
-The WebUI information architecture and ADB Disabler workflow were checked against
+The WebUI information architecture was checked against
 [dpejoh/specter](https://github.com/dpejoh/specter) commit
 [`829c4fa95ab5a08e4cd7e18dd686e73896d90a24`](https://github.com/dpejoh/specter/commit/829c4fa95ab5a08e4cd7e18dd686e73896d90a24).
 That project is licensed under GPL-3.0. Oh My Keymint does not include or run
 Specter's WebUI or shell scripts. Its WebUI and Rust implementation are
-independent; they reproduce only the documented ADB Disabler settings.
-
-The ADB Disabler action follows Specter's documented settings: it independently
-controls developer options, USB debugging, and OEM unlock, persists four strict
-0/1 values under OMK's data directory, and reapplies the selected properties at
-boot. It does not bundle Specter's shell scripts.
+independent.
 
 ## D-soter compatibility experiment
 
@@ -102,6 +97,16 @@ are mock responses, not genuine attestation or payment credentials.
 
 The release includes this attribution in `THIRD_PARTY_LICENSES/D-soter.txt` and
 the Apache-2.0 terms in `AOSP.Apache-license-2.0.txt`.
+
+## Qualcomm Soter software TA
+
+The Qualcomm Soter HAL software TA and Binder service are adapted from the
+`soter-ta` and `soterta-svc` components of
+[Andrea-lyz/ommega](https://github.com/Andrea-lyz/ommega), licensed under
+AGPL-3.0-or-later. The service is isolated behind
+`vendor.qti.hardware.soter.ISoter/default`, uses OMK's persistent data path,
+and retains the upstream remote-relay contract. It does not replace the OMK
+KeyMint route or the independent Tencent Soter compatibility experiment.
 
 ## Native HTTPS client
 
