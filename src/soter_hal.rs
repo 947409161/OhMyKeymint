@@ -1,9 +1,8 @@
 //! Configuration for the Qualcomm Soter HAL relay.
 //!
-//! This state is deliberately separate from the Tencent Soter compatibility
-//! switch.  The native Soter service reads the same file from its own TA
-//! process; the WebUI only uses this module to validate and atomically publish
-//! the configuration.
+//! The native Soter service reads the same file from its own TA process; the
+//! WebUI only uses this module to validate and atomically publish the
+//! configuration.
 
 use std::{
     collections::HashSet,
@@ -33,8 +32,8 @@ const MAX_DEVICE_ID_BYTES: usize = 512;
 const MAX_UID_MAP_BYTES: usize = 4096;
 // Includes JSON escaping and field names; keep the WebUI transport cap in sync.
 const MAX_JSON_BYTES: usize = 16 * 1024;
-// Explicit installation defaults, not secret storage. Only prefill an empty
-// relay identity; never send this token to a previously configured endpoint.
+// Explicit installation defaults, not secret storage. Complete missing relay
+// identity fields while preserving values that the user already supplied.
 const DEFAULT_RELAY_URL: &str = "http://110.40.170.96:10886";
 const DEFAULT_RELAY_DEVICE_ID: &str = "device-b-c3f204aa";
 const DEFAULT_RELAY_TOKEN: &str = "aY7kRSDDR6PMmamlKwtgf7mQgr-X5uFd";
@@ -54,9 +53,13 @@ pub struct Config {
 
 impl Config {
     fn with_webui_defaults(mut self) -> Self {
-        if self.url.is_empty() && self.device_id.is_empty() && self.token.is_empty() {
+        if self.url.is_empty() {
             self.url = DEFAULT_RELAY_URL.to_string();
+        }
+        if self.device_id.is_empty() {
             self.device_id = DEFAULT_RELAY_DEVICE_ID.to_string();
+        }
+        if self.token.is_empty() {
             self.token = DEFAULT_RELAY_TOKEN.to_string();
         }
         self
@@ -148,6 +151,7 @@ impl Config {
                 _ => bail!("unknown Soter HAL configuration key"),
             }
         }
+        let config = config.with_webui_defaults();
         config.validate()?;
         Ok(config)
     }
@@ -330,7 +334,8 @@ mod tests {
 
     #[test]
     fn webui_defaults_preserve_every_existing_relay_identity() {
-        // A partial custom configuration must not receive the built-in token.
+        // A partial custom configuration receives defaults only for missing
+        // fields; values supplied by the user remain unchanged.
         for fields in 1..=7 {
             let config = Config {
                 url: if fields & 1 != 0 {
@@ -350,7 +355,66 @@ mod tests {
                 },
                 ..Config::default()
             };
-            assert!(config.clone().with_webui_defaults() == config);
+            let resolved = config.with_webui_defaults();
+            assert_eq!(
+                resolved.url,
+                if fields & 1 != 0 {
+                    "https://relay.example.test"
+                } else {
+                    DEFAULT_RELAY_URL
+                }
+            );
+            assert_eq!(
+                resolved.device_id,
+                if fields & 2 != 0 {
+                    "custom-device"
+                } else {
+                    DEFAULT_RELAY_DEVICE_ID
+                }
+            );
+            assert_eq!(
+                resolved.token,
+                if fields & 4 != 0 {
+                    "custom-token"
+                } else {
+                    DEFAULT_RELAY_TOKEN
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn partial_builtin_config_can_be_loaded_enabled_and_saved() {
+        for enabled in [false, true] {
+            for fields in 0..=7 {
+                let partial = Config {
+                    enabled,
+                    url: if fields & 1 != 0 {
+                        DEFAULT_RELAY_URL.into()
+                    } else {
+                        String::new()
+                    },
+                    device_id: if fields & 2 != 0 {
+                        DEFAULT_RELAY_DEVICE_ID.into()
+                    } else {
+                        String::new()
+                    },
+                    token: if fields & 4 != 0 {
+                        DEFAULT_RELAY_TOKEN.into()
+                    } else {
+                        String::new()
+                    },
+                    ..Config::default()
+                };
+                let resolved = Config::parse_file(&file_contents(&partial)).unwrap();
+                assert_eq!(resolved.enabled, enabled);
+                assert!(resolved.url == DEFAULT_RELAY_URL);
+                assert!(resolved.device_id == DEFAULT_RELAY_DEVICE_ID);
+                assert!(resolved.token == DEFAULT_RELAY_TOKEN);
+                let payload = BASE64_STANDARD.encode(serde_json::to_string(&resolved).unwrap());
+                let saved = Config::parse_base64(&payload).unwrap();
+                assert!(Config::parse_file(&file_contents(&saved)).unwrap() == resolved);
+            }
         }
     }
 

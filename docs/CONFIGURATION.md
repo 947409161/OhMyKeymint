@@ -62,9 +62,8 @@ change does not require a keymint restart.
 ## Embedded WebUI
 
 The module includes a WebUI for selecting packages in `scoop`, installing a
-local keybox, managing the Android security patch level, applying a Pixel
-PIF fingerprint through OMK's own Zygisk payload, and independently enabling
-Tencent Soter compatibility (Beta). Open it from the Oh My Keymint module page in
+local keybox, managing the Android security patch level, and applying a Pixel
+PIF fingerprint through OMK's own Zygisk payload. Open it from the Oh My Keymint module page in
 KernelSU. With Magisk, open an installed KSUWebUIStandalone or WebUI X host and
 select Oh My Keymint; the module does not install either host.
 
@@ -260,23 +259,15 @@ process refresh. The spoof is process-local: it does not call `resetprop`,
 change global Android properties, or change values under OMK's `[device]`
 section.
 
-**Tencent Soter compatibility (Beta)** is an optional simulation based on
-D-soter. Its switch is disabled by default and is independent of PIF, `scoop`,
-and all KeyMint routing and key storage. Applying the switch atomically stores
-one strict `0` or `1` byte in
-`/data/misc/keystore/omk/data/soter_beta.conf`. Opening or cancelling the dialog
-does not write this file. The native commands are `--webui-get-soter-beta` and
-`--webui-set-soter-beta 0|1`; both run as short-lived root helpers without
-starting the daemon. Read failures are reported to the WebUI, and the payload
-does not enable the experiment when configuration cannot be validated.
-
 **Soter HAL** is a separate Qualcomm integration for
 `vendor.qti.hardware.soter.ISoter/default`. Its WebUI panel exposes only an
 enable switch and the Cancel and Save actions. Server URL, B-device ID, token,
 UID mapping, and the self-signed-TLS option are not shown. Built-in relay defaults
-fill the URL, B-device ID, and token as a group only when all three fields are
-empty, including when no configuration has been saved. Existing custom relay
-configuration is preserved. The switch is disabled by default, TLS certificate
+fill each missing URL, B-device ID, or token field, including when no
+configuration has been saved. Existing nonempty custom relay values are
+preserved. Enabled configurations with missing fields are also resolved by the
+native relay when read.
+The switch is disabled by default, TLS certificate
 validation remains enabled, and the default UID map is empty. Toggling the
 switch changes only the enabled state and preserves the other configuration
 fields. Opening or cancelling the panel does not write configuration.
@@ -288,53 +279,11 @@ fields in the WebUI does not make them confidential. Custom saved configuration
 is device-local. When disabled, the software TA uses its local ledger; when
 enabled, supported operations use the configured relay. Relay failures return
 the stock dead-TA reply and never fall back to the local ledger. The service is
-independent of KeyMint routing and Tencent Soter Beta, and saved settings survive
-reboot.
+independent of KeyMint routing, and saved settings survive reboot.
 The WebUI sends configuration as one bounded Base64-encoded UTF-8 JSON argument
 to `--webui-set-soter-hal-base64`, then reads `--webui-get-soter-hal` and checks
 every field before reporting a successful save. The raw JSON command
 `--webui-set-soter-hal` remains available for correctly quoted direct CLI calls.
-
-The user must install and enable Zygisk Next separately and reboot after
-enabling or disabling this option. The module does not restart Soter itself.
-The existing Zygisk entry point selects only the exact
-`com.tencent.soter.soterserver` process. A supplied nonempty app data directory
-must belong to that package; loaders which omit it are supported. The separate
-Rust handler intercepts both Binder transaction and security-context transaction
-commands. It matches codes 1 through 13 and the UTF-16
-`com.tencent.soter.soterserver.ISoterService` descriptor, following D-soter.
-It does not interpret arguments or reject OEM trailing fields, transaction
-flags, or argument objects. Driver buffer and request sizes remain bounded to
-1 MiB. Matching requests go to a local Binder stub; unrecognized transactions
-remain unchanged. Other processes, including Google Play and KeyMint, do not
-install this handler.
-
-Zygisk registers the native hook before specialization. The local Binder stub
-is created and interception is activated after specialization, once Android
-has established the app's identity and file-descriptor state.
-
-Android 13 and newer use the NDK legacy-interface option to let the Rust
-handler match the descriptor independently of the Parcel header layout.
-Android 12/12L retain the platform's standard AIDL interface-header check;
-nonstandard headerless requests are not supported on those versions.
-All 13 upstream reply contracts are implemented: ASK and auth-key creation,
-export, existence and removal; signing sessions and signature results; device
-ID, version, and extra parameters.
-
-Diagnostics use the `OhMyKeymint-Soter` logcat tag. Loading, disabled state,
-companion failures and hook installation are logged separately. Each method
-logs its first intercepted request and first delivered simulated reply, or
-first reply failure, per process. Arguments, key data and challenges are not
-logged. To inspect an affected device after rebooting and invoking its Soter
-client, run `adb logcat -d -s OhMyKeymint-Soter:I`. An installation message alone
-does not establish that requests reached the handler.
-
-Replies contain a fixed public-key placeholder, zero-filled signatures, and
-simulated success values. They are not authentic TEE keys, cryptographically
-valid signatures, payment repairs, or Play Integrity verdicts. Saving a switch
-confirms only that the preference was saved, not that device compatibility was
-verified. The feature is experimental; no supported-OS-wide validation is
-implied. Disabling and rebooting restores the unmodified Soter process path.
 
 All other WebUI assets are bundled and no network request is made for normal
 local operations. None of the WebUI network paths requires a device-provided

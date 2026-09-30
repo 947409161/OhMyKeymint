@@ -23,7 +23,6 @@ import { isDev } from '../utils/dev'
 import HomeView, { type KeyboxStatus, type ModuleStatus, type TeeStatus } from './HomeView.vue'
 import PifFingerprintDialog from './PifFingerprintDialog.vue'
 import SettingsView from './SettingsView.vue'
-import SoterDialog from './SoterDialog.vue'
 import SoterHalDialog from './SoterHalDialog.vue'
 import TargetsView from './TargetsView.vue'
 import ToolsView, { type ToolEvent } from './ToolsView.vue'
@@ -54,7 +53,6 @@ const activities = ref<ActivityEntry[]>([])
 const activityStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const activityClearBusy = ref(false)
 const securityPatchBusy = ref<'sync' | 'restore' | null>(null)
-const soterOpen = ref(false)
 const soterHalOpen = ref(false)
 const pifOpen = ref(false)
 const keyboxOpen = ref(false)
@@ -63,7 +61,6 @@ const keyboxBusy = ref(false)
 const targetsView = ref<InstanceType<typeof TargetsView> | null>(null)
 const settingsView = ref<InstanceType<typeof SettingsView> | null>(null)
 const pifDialog = ref<InstanceType<typeof PifFingerprintDialog> | null>(null)
-const soterDialog = ref<InstanceType<typeof SoterDialog> | null>(null)
 const soterHalDialog = ref<InstanceType<typeof SoterHalDialog> | null>(null)
 
 const pageIds = ['home', 'tools', 'settings'] as const
@@ -274,7 +271,6 @@ function onTargetsOverlayClose(): void {
 }
 
 function handleEscape(): void {
-  if (soterOpen.value && soterDialog.value?.busy) return
   if (soterHalOpen.value && soterHalDialog.value?.busy) return
   if (targetsOpen.value && targetsView.value?.dismissOverlay()) return
   if (history.size > 0) history.back()
@@ -428,7 +424,6 @@ function onTool(event: ToolEvent): void {
     case 'installKeybox': void chooseKeybox(); break
     case 'syncSecurityPatch': void syncPatch(false); break
     case 'restoreSecurityPatch': void syncPatch(true); break
-    case 'openSoterBeta': soterOpen.value = true; break
     case 'openSoterHal': soterHalOpen.value = true; break
     case 'spoofPif': pifOpen.value = true; break
   }
@@ -535,23 +530,6 @@ watch(pifOpen, open => {
     })
   } else if (!open && overlayHistory.delete('pif-fingerprint')) history.consume('pif-fingerprint')
 })
-function trackSoterOverlay(): void {
-  const key = 'soter-beta'
-  if (!soterOpen.value || overlayHistory.has(key)) return
-  overlayHistory.add(key)
-  history.push(key, () => {
-    overlayHistory.delete(key)
-    if (soterDialog.value?.requestClose() === false) {
-      // Re-arm after the current popstate handler finishes so a busy dialog
-      // does not lose its back entry or close the page beneath it.
-      void nextTick(trackSoterOverlay)
-    }
-  })
-}
-watch(soterOpen, open => {
-  if (open) trackSoterOverlay()
-  else if (overlayHistory.delete('soter-beta')) history.consume('soter-beta')
-})
 function trackSoterHalOverlay(): void {
   const key = 'soter-hal'
   if (!soterHalOpen.value || overlayHistory.has(key)) return
@@ -600,7 +578,6 @@ watch(keyboxOpen, open => {
           @install-keybox="onTool('installKeybox')"
           @sync-security-patch="onTool('syncSecurityPatch')"
           @restore-security-patch="onTool('restoreSecurityPatch')"
-          @open-soter-beta="onTool('openSoterBeta')"
           @open-soter-hal="onTool('openSoterHal')"
           @spoof-pif="onTool('spoofPif')"
         />
@@ -676,7 +653,6 @@ watch(keyboxOpen, open => {
       @notify="notify"
       @changed="refreshIdentity(true); refreshActivity()"
     />
-    <SoterDialog ref="soterDialog" v-model="soterOpen" :cli="cli" @notify="notify" />
     <SoterHalDialog ref="soterHalDialog" v-model="soterHalOpen" :cli="cli" @notify="notify" />
     <MiuixSnackbarHost />
   </div>

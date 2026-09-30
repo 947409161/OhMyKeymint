@@ -70,7 +70,6 @@ MODULE_TEXT_FILES = (
     "README.md",
     "THIRD_PARTY_LICENSES/Tricky-Addon-Update-Target-List.txt",
     "THIRD_PARTY_LICENSES/zygisk-api-0BSD.txt",
-    "THIRD_PARTY_LICENSES/D-soter.txt",
     "THIRD_PARTY_LICENSES/ommega-soter-ta.txt",
     "customize.sh",
     "daemon",
@@ -295,10 +294,6 @@ def copy_project_documents(stage_dir: Path) -> None:
         (
             REPO_ROOT / "third_party" / "zygisk-api" / "LICENSE",
             stage_dir / "THIRD_PARTY_LICENSES" / "zygisk-api-0BSD.txt",
-        ),
-        (
-            REPO_ROOT / "pif-spoof" / "D-soter.NOTICE",
-            stage_dir / "THIRD_PARTY_LICENSES" / "D-soter.txt",
         ),
         (
             REPO_ROOT / "template" / "THIRD_PARTY_LICENSES" / "ommega-soter-ta.txt",
