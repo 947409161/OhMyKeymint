@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 #![feature(once_cell_try)]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::panic;
 use std::sync::Arc;
@@ -37,6 +37,7 @@ pub mod plat;
 pub mod proto;
 pub mod security_patch;
 pub mod selinux;
+pub mod soter_beta;
 pub mod soter_hal;
 pub mod utils;
 pub mod watchdog;
@@ -370,6 +371,70 @@ fn handle_webui_keybox_command() -> Option<Result<String, String>> {
     }
 }
 
+fn ensure_soter_features_are_exclusive(
+    requested_enabled: bool,
+    other_enabled: Result<bool>,
+    requested_name: &str,
+    other_name: &str,
+) -> Result<()> {
+    if !requested_enabled {
+        return Ok(());
+    }
+    if other_enabled? {
+        bail!("{requested_name} cannot be enabled while {other_name} is enabled; disable it first");
+    }
+    Ok(())
+}
+
+fn handle_webui_soter_beta_command(
+    mut args: impl Iterator<Item = String>,
+) -> Option<Result<String, String>> {
+    match args.next()?.as_str() {
+        "--webui-get-soter-beta" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-get-soter-beta does not accept arguments".to_string()
+                ));
+            }
+            Some(soter_beta::state_json().map_err(|error| format!("{error:#}")))
+        }
+        "--webui-set-soter-beta" => {
+            let value = args.next();
+            if value.is_none() || args.next().is_some() {
+                return Some(Err(
+                    "--webui-set-soter-beta requires exactly one argument: 0 or 1".to_string(),
+                ));
+            }
+            let enabled = match pif_common::soter::parse(value.unwrap().as_bytes()) {
+                Ok(enabled) => enabled,
+                Err(error) => return Some(Err(error.to_string())),
+            };
+            if let Err(error) = soter_beta::require_root() {
+                return Some(Err(format!("{error:#}")));
+            }
+            if enabled {
+                if let Err(error) = ensure_soter_features_are_exclusive(
+                    true,
+                    soter_hal::is_enabled(),
+                    "Tencent Soter Beta",
+                    "Qualcomm Soter HAL",
+                ) {
+                    return Some(Err(format!(
+                        "failed to validate Soter feature selection: {error:#}"
+                    )));
+                }
+            }
+            prepare_android_storage();
+            Some(
+                soter_beta::save(enabled)
+                    .map(|()| "soter_beta_saved".to_string())
+                    .map_err(|error| format!("{error:#}")),
+            )
+        }
+        _ => None,
+    }
+}
+
 fn handle_webui_soter_hal_command(
     mut args: impl Iterator<Item = String>,
 ) -> Option<Result<String, String>> {
@@ -400,6 +465,18 @@ fn handle_webui_soter_hal_command(
                 Ok(config) => config,
                 Err(error) => return Some(Err(format!("{error:#}"))),
             };
+            if config.enabled {
+                if let Err(error) = ensure_soter_features_are_exclusive(
+                    true,
+                    soter_beta::is_enabled(),
+                    "Qualcomm Soter HAL",
+                    "Tencent Soter Beta",
+                ) {
+                    return Some(Err(format!(
+                        "failed to validate Soter feature selection: {error:#}"
+                    )));
+                }
+            }
             prepare_android_storage();
             Some(
                 soter_hal::save(config)
@@ -589,6 +666,17 @@ fn handle_webui_activity_command() -> Option<Result<String, String>> {
 }
 
 fn main() {
+    if let Some(result) = handle_webui_soter_beta_command(std::env::args().skip(1)) {
+        match result {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
     if let Some(result) = handle_webui_soter_hal_command(std::env::args().skip(1)) {
         match result {
             Ok(output) => println!("{output}"),
@@ -813,6 +901,57 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn webui_soter_beta_rejects_invalid_arguments_before_storage_setup() {
+        for arguments in [
+            vec!["--webui-get-soter-beta", "1"],
+            vec!["--webui-set-soter-beta"],
+            vec!["--webui-set-soter-beta", "true"],
+            vec!["--webui-set-soter-beta", "1", "0"],
+            vec!["--webui-set-soter-beta", "1\n"],
+        ] {
+            assert!(
+                handle_webui_soter_beta_command(arguments.into_iter().map(str::to_string))
+                    .unwrap()
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn soter_features_allow_one_enabled_service_and_fail_closed_on_conflict() {
+        assert!(ensure_soter_features_are_exclusive(
+            true,
+            Ok(false),
+            "Tencent Soter Beta",
+            "Qualcomm Soter HAL",
+        )
+        .is_ok());
+        let conflict = ensure_soter_features_are_exclusive(
+            true,
+            Ok(true),
+            "Qualcomm Soter HAL",
+            "Tencent Soter Beta",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(conflict.contains("cannot be enabled"));
+        assert!(ensure_soter_features_are_exclusive(
+            false,
+            Err(anyhow::anyhow!("unreadable state")),
+            "Tencent Soter Beta",
+            "Qualcomm Soter HAL",
+        )
+        .is_ok());
+        assert!(ensure_soter_features_are_exclusive(
+            true,
+            Err(anyhow::anyhow!("unreadable state")),
+            "Tencent Soter Beta",
+            "Qualcomm Soter HAL",
+        )
+        .is_err());
     }
 
     #[test]

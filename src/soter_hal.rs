@@ -242,6 +242,10 @@ pub fn state_json() -> Result<String> {
     serde_json::to_string(&config).context("failed to serialize Soter HAL state")
 }
 
+pub fn is_enabled() -> Result<bool> {
+    Ok(Config::load()?.enabled)
+}
+
 fn ensure_config_dir() -> Result<()> {
     fs::create_dir_all(CONFIG_DIR).context("failed to create Soter HAL configuration directory")?;
     fs::set_permissions(CONFIG_DIR, fs::Permissions::from_mode(0o770))

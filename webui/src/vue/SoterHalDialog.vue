@@ -21,6 +21,7 @@ const DEFAULT_RELAY_URL = 'http://110.40.170.96:10886'
 const DEFAULT_RELAY_DEVICE_ID = 'device-b-c3f204aa'
 const DEFAULT_RELAY_TOKEN = 'aY7kRSDDR6PMmamlKwtgf7mQgr-X5uFd'
 const enabled = ref(false)
+const soterBetaEnabled = ref(false)
 const saved = ref<SoterHalState | null>(null)
 const status = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
@@ -57,6 +58,7 @@ const canApply = computed(() => {
           || parsed.username || parsed.password) return false
     } catch { return false }
   }
+  if (state.enabled && soterBetaEnabled.value) return false
   return JSON.stringify(state) !== JSON.stringify(saved.value)
 })
 
@@ -66,20 +68,22 @@ async function load(): Promise<void> {
   status.value = 'loading'
   saved.value = null
   errorMessage.value = ''
+  soterBetaEnabled.value = false
   try {
-    const state: SoterHalState = preview
-      ? {
+    const [state, betaState] = preview
+      ? [{
           enabled: false,
           url: DEFAULT_RELAY_URL,
           token: DEFAULT_RELAY_TOKEN,
           device_id: DEFAULT_RELAY_DEVICE_ID,
           tls_insecure: false,
           uid_map: '',
-        }
-      : await props.cli.getSoterHal()
+        }, { enabled: false }]
+      : await Promise.all([props.cli.getSoterHal(), props.cli.getSoterBeta()])
     if (currentGeneration !== generation || !props.modelValue) return
     enabled.value = state.enabled
     saved.value = { ...state }
+    soterBetaEnabled.value = betaState.enabled
     status.value = 'ready'
   } catch (error) {
     if (currentGeneration !== generation || !props.modelValue) return
@@ -131,6 +135,9 @@ async function apply(): Promise<void> {
   >
     <div class="soter-hal-dialog" :aria-busy="busy || status === 'loading'">
       <p>{{ tr('soter_hal_desc', 'Configure the Qualcomm Soter service.') }}</p>
+      <p v-if="soterBetaEnabled" class="soter-hal-dialog__error">
+        Only one Soter service can be enabled at a time. Disable Tencent Soter Beta before enabling Qualcomm Soter HAL.
+      </p>
       <div v-if="status === 'loading'" class="soter-hal-dialog__loading" role="status">
         <MiuixProgressIndicator type="circular" :size="28" />
         <span>{{ tr('home_status_loading', 'Checking') }}</span>
