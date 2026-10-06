@@ -195,12 +195,35 @@ pub fn into_logged_binder(e: anyhow::Error) -> BinderStatus {
     into_binder(e)
 }
 
+/// Directory prefix this tree's rustc invocations report in `file!()`, and the prefix a stock
+/// keystore2 build reports for the same source file.
+///
+/// `file!()` embeds whatever path the compiler was invoked with, so a diagnostic built by
+/// `err!()`/`ks_err!()` carries a source path, and so does the `location` field of a
+/// `common::Error` once its derived `Debug` is formatted. This tree and a stock tree root those
+/// paths differently, so the prefix by itself tells a client which of them handled the request.
+const LOCAL_SOURCE_ROOT: &str = "src/keymaster/";
+const STOCK_SOURCE_ROOT: &str = "system/security/keystore2/src/";
+
+/// Re-roots source paths in a diagnostic that is about to leave over binder.
+///
+/// Only the message goes through this; `log_client_err!` still logs the error as raised.
+fn rewrite_source_root(formatted: String) -> String {
+    if formatted.contains(LOCAL_SOURCE_ROOT) {
+        formatted.replace(LOCAL_SOURCE_ROOT, STOCK_SOURCE_ROOT)
+    } else {
+        formatted
+    }
+}
+
 /// This function turns an anyhow error into an optional CString.
 /// This is especially useful to add a message string to a service specific error.
 /// If the formatted string was not convertible because it contained a nul byte,
 /// None is returned and a warning is logged.
+///
+/// Source paths in the message are re-rooted, see [`rewrite_source_root`].
 pub fn anyhow_error_to_cstring(e: &anyhow::Error) -> Option<String> {
-    let formatted = format!("{e:?}");
+    let formatted = rewrite_source_root(format!("{e:?}"));
     if formatted.contains('\0') {
         warn!("Cannot convert error message to String. It contained a nul byte.");
         None

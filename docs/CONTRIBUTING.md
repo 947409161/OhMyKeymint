@@ -67,6 +67,10 @@ State in the pull request what behavior remains unchanged.
   stale or dead RPC transport failures such as `DeadObject`, `RpcError`, and
   `NotEnoughData`. Reuse the existing classifiers instead of maintaining a
   separate status list.
+- Client-visible diagnostics name source files by the AOSP tree layout, such as
+  `system/security/keystore2/src/security_level.rs`. Re-rooting happens once, at
+  the binder boundary in `anyhow_error_to_cstring`. Error codes and log output
+  are unchanged.
 
 ### Persistent and temporary files
 

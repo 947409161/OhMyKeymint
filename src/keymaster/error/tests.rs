@@ -167,6 +167,32 @@ fn keystore_error_test() -> anyhow::Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn client_message_re_roots_source_paths() {
+    let local = format!("{LOCAL_SOURCE_ROOT}security_level.rs:331 Malformed KeyParameter.");
+    let rewritten = rewrite_source_root(local);
+    assert_eq!(
+        format!("{STOCK_SOURCE_ROOT}security_level.rs:331 Malformed KeyParameter."),
+        rewritten
+    );
+    assert!(!rewritten.contains(LOCAL_SOURCE_ROOT));
+
+    // A diagnostic that carries no source path is passed through untouched.
+    let plain = String::from("Error::Km(INVALID_ARGUMENT)");
+    assert_eq!(plain, rewrite_source_root(plain.clone()));
+}
+
+#[test]
+fn service_specific_message_hides_the_local_source_root() {
+    let e: anyhow::Result<()> = Err(Error::Km(ErrorCode::INVALID_ARGUMENT))
+        .context(format!("{LOCAL_SOURCE_ROOT}security_level.rs:331 Malformed KeyParameter."));
+
+    let message = anyhow_error_to_cstring(&e.unwrap_err()).expect("message is a valid string");
+
+    assert!(message.contains(&format!("{STOCK_SOURCE_ROOT}security_level.rs:331")));
+    assert!(!message.contains(LOCAL_SOURCE_ROOT));
+}
+
 //Helper function to test whether error cases are handled as expected.
 pub fn check_result_contains_error_string<T>(
     result: anyhow::Result<T>,
