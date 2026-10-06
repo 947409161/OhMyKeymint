@@ -32,14 +32,8 @@ fn service_request_needs_identity(
             .is_some_and(|key| omk_grant_descriptor_needs_probe(key, decision))
 }
 
-// Keystore2 shares each security-level Binder between `getSecurityLevel` and `getKeyEntry`, so
-// either service method can hand a caller an OMK-backed security level. Key deletion, however,
-// travels through `IKeystoreService::deleteKey`, which `intercept.delete_key` gates on its own.
-// Routing key creation to OMK while that delete stays on System would leave OMK the only owner of
-// keys the caller can no longer delete through its own API, so creation is only routed when
-// deletion is routed as well.
 pub(super) fn security_level_scoop_enabled(intercept: &config::InterceptConfig) -> bool {
-    (intercept.get_security_level || intercept.get_key_entry) && intercept.delete_key
+    intercept.get_security_level || intercept.get_key_entry
 }
 
 fn is_known_keystore_interface(interface: &str) -> bool {
