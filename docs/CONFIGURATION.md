@@ -1079,6 +1079,13 @@ allowed by the filter, `true` routes that operation to OMK and `false` leaves
 that operation on System. These switches do not migrate existing keys or make
 System-created key references usable by OMK.
 
+Creating a key, deleting it, and every call that reports which keys exist must
+reach the same backend, so `delete_key` participates in a shared gate. While it
+is `false`, OMK serves no key state for that caller: the security-level handle,
+key entries, key listings, entry counts, subcomponent updates, grants, and
+ungrants stay on System even where their own switch is `true`. Only
+`get_supplementary_attestation_info` keeps its switch. See `delete_key` below.
+
 Service, maintenance, and authorization requests must match the actual Binder
 object registered for their interface before OMK dispatch or state mirroring.
 An interface token naming a different Binder service is left to the system
@@ -1129,7 +1136,10 @@ These limits do not change request routing or provide hardware isolation.
 
 Controls the request for a TEE or StrongBox KeyStore security-level handle.
 Apps use this handle for later operations such as creating, importing, and
-using keys.
+using keys. Together with `get_key_entry` it decides whether that handle is the
+OMK-backed one, because Keystore2 shares a single security-level Binder between
+those two service methods and either call can hand it to an app. The handle is
+OMK-backed only while `delete_key` is enabled as well.
 
 #### `get_key_entry`
 
@@ -1148,7 +1158,17 @@ Controls listing key aliases in a requested namespace.
 #### `delete_key`
 
 Controls deletion of a named key. The selected backend is authoritative; OMK
-does not delete a matching System key as a substitute.
+does not delete a matching System key as a substitute. Disabling it stops OMK
+from serving this caller's key state altogether: the security-level handle, key
+entries, key listings, entry counts, subcomponent updates, grants, and ungrants
+stay on System even where their own switch is `true`, while
+`get_supplementary_attestation_info` keeps its switch.
+
+Keys created through an OMK security level are deleted through this method. If
+only the creation were routed to OMK, OMK would remain the sole owner of keys
+the caller can no longer remove: the caller's own delete would be answered by
+System, which never had the key, and would leave OMK's copy in place while
+reporting the alias as deleted.
 
 #### `grant`
 

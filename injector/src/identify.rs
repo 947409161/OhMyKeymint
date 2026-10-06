@@ -277,6 +277,13 @@ pub fn operation_method_from_code(code: u32) -> Option<OperationMethod> {
 }
 
 pub fn is_omk_service_route_enabled(method: ServiceMethod, intercept: &InterceptConfig) -> bool {
+    // Creating a key, deleting it, and every call that reports which keys exist must reach one
+    // backend. A disabled `delete_key` leaves the caller's own deletes on System, where the key is
+    // unknown, so OMK must not own or report key state for that caller either: every key-state
+    // service stays on System, and only the platform-information call keeps its own switch.
+    if !intercept.delete_key && method != ServiceMethod::GetSupplementaryAttestationInfo {
+        return false;
+    }
     match method {
         ServiceMethod::GetSecurityLevel => intercept.get_security_level,
         ServiceMethod::GetKeyEntry => intercept.get_key_entry,

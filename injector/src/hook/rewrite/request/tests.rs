@@ -131,12 +131,48 @@ fn service_route_respects_intercept_configuration() {
     }
 
     let mut intercept = disabled_intercept_config();
+    intercept.delete_key = true;
     intercept.get_key_entry = true;
     assert!(security_level_scoop_enabled(&intercept));
     intercept.get_key_entry = false;
     intercept.get_security_level = true;
     assert!(security_level_scoop_enabled(&intercept));
     intercept.get_security_level = false;
+    assert!(!security_level_scoop_enabled(&intercept));
+
+    // A security level that would create OMK keys is not handed out while key deletion stays on
+    // System: the caller deletes through IKeystoreService::deleteKey, which intercept.delete_key
+    // gates on its own.
+    intercept.get_security_level = true;
+    intercept.get_key_entry = true;
+    intercept.delete_key = false;
+    assert!(!security_level_scoop_enabled(&intercept));
+}
+
+#[test]
+fn omk_serves_no_key_state_while_delete_key_is_disabled() {
+    let _guard = route_state_test_guard();
+    let mut intercept = config::InterceptConfig::default();
+    intercept.delete_key = false;
+
+    for request in sample_service_requests() {
+        let platform_info = matches!(
+            request.method(),
+            crate::identify::ServiceMethod::GetSupplementaryAttestationInfo
+        );
+        let expected = if platform_info {
+            RouteTarget::Omk
+        } else {
+            RouteTarget::System
+        };
+        assert_eq!(
+            route_for_service_request(&request, &intercept),
+            expected,
+            "{:?} must reach the backend that owns key deletion",
+            request.method()
+        );
+    }
+
     assert!(!security_level_scoop_enabled(&intercept));
 }
 
