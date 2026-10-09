@@ -792,6 +792,8 @@ impl KeystoreSecurityLevel {
         // Must return on error for security reasons.
         check_key_permission(KeyPerm::Rebind, &key, None, ctx).context(ks_err!())?;
 
+        let started = std::time::Instant::now();
+
         // Temporary diagnostic: the alias binding is only replaced when store_new_key commits, so
         // an alias that already resolves here belongs to a key the caller has not removed and
         // stays visible for the whole operation. Remove after the report is collected.
@@ -882,14 +884,26 @@ impl KeystoreSecurityLevel {
         .context(ks_err!())?;
 
         let user = caller_uid.owning_user();
-        self.store_new_key(
-            key,
-            creation_result,
-            user,
-            Some(flags),
-            keybox_attestation_allowed,
-        )
-        .context(ks_err!())
+        let log_alias =
+            log::log_enabled!(log::Level::Debug).then(|| key.alias.clone().unwrap_or_default());
+        let stored = self
+            .store_new_key(
+                key,
+                creation_result,
+                user,
+                Some(flags),
+                keybox_attestation_allowed,
+            )
+            .context(ks_err!());
+        if let Some(alias) = log_alias {
+            log::debug!(
+                "event=generate alias={:?} us_until_commit={} ok={}",
+                alias,
+                started.elapsed().as_micros(),
+                stored.is_ok()
+            );
+        }
+        stored
     }
 
     fn import_key(
@@ -1454,6 +1468,7 @@ impl IOhMySecurityLevel for OmkSecurityLevelWrapper {
         entropy: &[u8],
     ) -> Result<KeyMetadata, Status> {
         let ctx = Some(require_omk_ctx(ctx, "IOhMySecurityLevel::generateKey")?);
+        let started = std::time::Instant::now();
         let _wp = self.watch_millis("IOhMySecurityLevel::generateKey", 5000);
         security_level_manager::notify_operation_performed(self.security_level);
         let (latency, result) = crate::timed_call!(self.generate_key(
@@ -1464,6 +1479,13 @@ impl IOhMySecurityLevel for OmkSecurityLevelWrapper {
             flags,
             entropy
         ));
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "event=generate alias={:?} us_omk_total={}",
+                key.alias.as_deref().unwrap_or_default(),
+                started.elapsed().as_micros()
+            );
+        }
         log_key_creation_event_stats(
             caller_uid(ctx).0 as i32,
             self.security_level,
