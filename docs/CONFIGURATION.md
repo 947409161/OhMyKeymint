@@ -530,15 +530,16 @@ fields in the existing active file while preserving its other values. OMK
 generates `config.toml` on the device; the module does not ship a reusable main
 configuration template.
 
-These waits are independent of the fixed
-[`attestation_generation_delay_ms`](#attestation_generation_delay_ms) and
-[`operation_start_delay_ms`](#operation_start_delay_ms) settings in
+These waits are independent of the
+[`attestation_generation_delay_ms`](#attestation_generation_delay_ms) range and
+the [`operation_start_delay_ms`](#operation_start_delay_ms) setting in
 `injector.toml`. An applicable nonzero injector delay is added as well. For
 example, `operation_start_delay_ms = 12` plus the default TA operation range
 adds a 12 ms wait before the RPC and a separately sampled 9-21 ms wait before
-the TA `begin` call. Set both injector delays to `0` if only the TA ranges are
-wanted. Changing software timing does not provide hardware security, constrain
-total calls to a hardware timing interval, or guarantee a detector result.
+the TA `begin` call. Set the injector delays to `0`, or the challenged
+generation range to `[0, 0]`, if only the TA ranges are wanted. Changing
+software timing does not provide hardware security, constrain total calls to a
+hardware timing interval, or guarantee a detector result.
 
 ### `[crypto]`
 
@@ -868,8 +869,8 @@ scoop = [
 enabled = true
 # Injector log detail: off, error, warn, info, debug, or trace.
 log_level = "debug"
-# Optional delay before challenged OMK generation, 0..250 ms.
-attestation_generation_delay_ms = 0
+# Extra delay before challenged OMK generation, [minimum, maximum] ms; [0, 0] disables it.
+attestation_generation_delay_ms = [20, 30]
 # Optional delay before two-way OMK createOperation calls, 0..250 ms.
 operation_start_delay_ms = 0
 
@@ -970,26 +971,35 @@ unrecognized string does not make the TOML file invalid; the injector uses
 
 #### `attestation_generation_delay_ms`
 
-Optional timing workaround, an integer from `0` to `250` milliseconds. The
-default `0` disables it. A nonzero value delays OMK `generateKey` requests
-containing `ATTESTATION_CHALLENGE` before the generation RPC starts. Both
-two-way and one-way requests receive this delay, including calls that return
-OMK business errors. Plain generation, imports, operations, System requests,
-and failures before generation dispatch do not receive this delay.
+Inclusive extra delay range in milliseconds for challenged generation: two
+integers with `0 <= minimum <= maximum <= 250`. Each affected generation samples
+the range afresh. A challenged generation has to cost measurably more than a
+plain one, because the challenge forces an extra round trip in a real security
+level, and that extra cost varies rather than staying constant. The default
+`[20, 30]` keeps the difference without turning the wait into a fixed value of
+its own; devices report roughly 12 to 62 ms of extra cost for the challenged
+path, so values near the default are enough. `[0, 0]` disables the delay and
+lets both paths cost the same, which is the shape of a backend that only adds
+synthetic waits.
 
-This can mitigate clients that classify software KeyMint by generation
-timing. It does not provide hardware security or guarantee a detector result.
-For example, `25` adds at least 25 ms before each affected generation;
-scheduling can add more. The wait occurs before creating or storing the new
-key, without holding the RPC connection or KeyMint/database locks. The Binder
-worker stays occupied, so concurrent requests can delay unrelated callers.
-Key storage and reply delivery remain separate steps; this setting does not
-promise that a concurrent reader cannot observe a key before the generation
-reply arrives. Leave it at `0` unless needed.
-This fixed wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
+A nonzero range delays OMK `generateKey` requests containing
+`ATTESTATION_CHALLENGE` before the generation RPC starts. Both two-way and
+one-way requests receive this delay, including calls that return OMK business
+errors. Plain generation, imports, operations, System requests, and failures
+before generation dispatch do not receive this delay.
 
-Valid changes apply without a restart. Out-of-range or non-integer values
-reject the configuration; on reload, the previous valid settings remain active.
+Every affected generation takes at least the minimum; scheduling can add more.
+The wait occurs before creating or storing the new key, without holding the RPC
+connection or KeyMint/database locks. The Binder worker stays occupied, so
+concurrent requests can delay unrelated callers. Key storage and reply delivery
+remain separate steps; this setting does not promise that a concurrent reader
+cannot observe a key before the generation reply arrives. Lower the range when
+the added latency matters more than the difference.
+This wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
+
+Valid changes apply without a restart. A range with reversed endpoints,
+out-of-range values, or a different number of elements rejects the
+configuration; on reload, the previous valid settings remain active.
 
 #### `operation_start_delay_ms`
 

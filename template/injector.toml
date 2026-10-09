@@ -16,8 +16,10 @@ scoop = [
 [main]
 enabled = true
 log_level = "debug"
-# Optional delay before challenged OMK generation, 0..250 ms; 0 disables it.
-attestation_generation_delay_ms = 0
+# Extra delay before challenged OMK generation, [minimum, maximum] ms each 0..250;
+# [0, 0] disables it. Kept on so a challenged generation costs measurably more than
+# a plain one, and sampled per call so that extra cost varies.
+attestation_generation_delay_ms = [20, 30]
 # Optional delay before two-way OMK createOperation calls, 0..250 ms; 0 disables it.
 operation_start_delay_ms = 0
 

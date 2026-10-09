@@ -39,7 +39,7 @@ fn temp_config_path(name: &str) -> TempConfigPath {
 fn config_defaults_and_log_levels_match_contract() {
     let config = InjectorConfig::default();
     assert!(config.main.enabled);
-    assert_eq!(config.main.attestation_generation_delay_ms, 0);
+    assert_eq!(config.main.attestation_generation_delay_ms, [20, 30]);
     assert_eq!(config.main.operation_start_delay_ms, 0);
     assert_eq!(config.scoop, default_scoop());
     assert!(config.scoop_details.is_empty());
@@ -70,23 +70,32 @@ fn attestation_generation_delay_is_optional_bounded_and_preserved() {
             .unwrap()
             .main
             .attestation_generation_delay_ms,
-        0
+        [20, 30]
     );
-    for delay in [0, 25, 250] {
-        let config = parse_config(&format!(
-            "[main]\nattestation_generation_delay_ms = {delay}\n"
-        ))
-        .unwrap();
+    for delay in ["[0, 0]", "[20, 30]", "[25, 25]", "[250, 250]"] {
+        let config =
+            parse_config(&format!("[main]\nattestation_generation_delay_ms = {delay}\n")).unwrap();
         let rendered = render_config(&config).unwrap();
         assert_eq!(
             parse_config(&rendered)
                 .unwrap()
                 .main
                 .attestation_generation_delay_ms,
-            delay
+            config.main.attestation_generation_delay_ms,
+            "range {delay} must survive a render and reparse round trip"
         );
     }
-    for delay in ["-1", "251", "65536", "1.5", "true", "\"25\""] {
+    for delay in [
+        "25",
+        "true",
+        "\"25\"",
+        "[25]",
+        "[25, 30, 40]",
+        "[30, 20]",
+        "[0, 251]",
+        "[-1, 25]",
+        "[1.5, 2]",
+    ] {
         assert!(parse_config(&format!(
             "[main]\nattestation_generation_delay_ms = {delay}\n"
         ))

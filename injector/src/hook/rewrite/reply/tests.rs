@@ -18,10 +18,10 @@ fn generation_delay_precedes_key_publication_and_preserves_metadata() {
         tag: Tag::APPLICATION_DATA,
         value: KeyParameterValue::Blob(vec![7]),
     }];
-    for (params, delay, expected) in [
-        (&challenge, 25, Some(Duration::from_millis(25))),
-        (&challenge, 0, None),
-        (&plain, 25, None),
+    for (params, delay, expects_wait) in [
+        (&challenge, [20u16, 30u16], true),
+        (&challenge, [0u16, 0u16], false),
+        (&plain, [20u16, 30u16], false),
     ] {
         let waited = Cell::new(None);
         let generation_calls = Cell::new(0);
@@ -30,10 +30,18 @@ fn generation_delay_precedes_key_publication_and_preserves_metadata() {
             delay,
             |duration| {
                 assert_eq!(generation_calls.get(), 0, "key must not exist during wait");
+                assert!(
+                    duration >= Duration::from_millis(20) && duration <= Duration::from_millis(30),
+                    "sampled wait must stay inside the configured range, got {duration:?}"
+                );
                 waited.set(Some(duration));
             },
             || {
-                assert_eq!(waited.get(), expected, "wait must precede generation");
+                assert_eq!(
+                    waited.get().is_some(),
+                    expects_wait,
+                    "a wait must precede generation exactly when a range is configured"
+                );
                 generation_calls.set(generation_calls.get() + 1);
                 Ok(KeyMetadata {
                     key: KeyDescriptor {
@@ -47,7 +55,7 @@ fn generation_delay_precedes_key_publication_and_preserves_metadata() {
             },
         )
         .unwrap();
-        assert_eq!(waited.get(), expected);
+        assert_eq!(waited.get().is_some(), expects_wait);
         assert_eq!(generation_calls.get(), 1);
         let mut reply = parcel::build_plain_reply(&generated).unwrap();
         let decoded: KeyMetadata = parcel::parse_owned_success_reply(&mut reply).unwrap();
@@ -74,10 +82,13 @@ fn generation_delay_precedes_failure_and_preserves_error() {
         let generation_calls = Cell::new(0);
         let error = generate_key_with_delay(
             &challenge,
-            25,
+            [20, 30],
             |duration| {
                 assert_eq!(generation_calls.get(), 0);
-                assert_eq!(duration, Duration::from_millis(25));
+                assert!(
+                    duration >= Duration::from_millis(20) && duration <= Duration::from_millis(30),
+                    "sampled wait must stay inside the configured range, got {duration:?}"
+                );
                 waited.set(true);
             },
             || {

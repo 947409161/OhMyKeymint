@@ -1,6 +1,7 @@
 use super::*;
 use crate::android::hardware::security::keymint::{KeyParameter::KeyParameter, Tag::Tag};
 use crate::android::system::keystore2::KeyMetadata::KeyMetadata;
+use rand::RngExt;
 
 mod dispatch;
 mod operation;
@@ -644,19 +645,28 @@ pub(super) fn build_omk_security_level_reply(
 
 fn generate_key_with_delay(
     params: &[KeyParameter],
-    delay_ms: u16,
+    delay_ms: [u16; 2],
     wait: impl FnOnce(Duration),
     generate: impl FnOnce() -> Result<KeyMetadata, Status>,
 ) -> Result<KeyMetadata, Status> {
-    if delay_ms > 0
+    if delay_ms != [0, 0]
         && params
             .iter()
             .any(|param| param.tag == Tag::ATTESTATION_CHALLENGE)
     {
+        // Sample a fresh wait per call, like the TA delay ranges do, so the extra
+        // cost of a challenge varies instead of being a fixed value.
+        let min_us = u64::from(delay_ms[0]) * 1000;
+        let max_us = u64::from(delay_ms[1]) * 1000;
+        let micros = if min_us == max_us {
+            min_us
+        } else {
+            rand::rng().random_range(min_us..=max_us)
+        };
         // Wait before the RPC so no new key is published during this extra wait.
         // No config, RPC connection, or KeyMint/database lock is held here. The
         // Binder worker stays occupied; challenged business errors also wait.
-        wait(Duration::from_millis(u64::from(delay_ms)));
+        wait(Duration::from_micros(micros));
     }
     generate()
 }

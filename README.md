@@ -49,9 +49,13 @@ Optional `injector.toml` settings under `[main]` can mitigate timing-based clien
 heuristics: `attestation_generation_delay_ms` delays successful challenged key
 generation replies, and `operation_start_delay_ms` delays two-way OMK
 `createOperation` calls before the RPC, including calls that return business
-errors. Both default to `0` (disabled), accept `0..250` milliseconds, and occupy
-a Binder worker while waiting. They do not provide hardware security or
-guarantee a detector result. See the Configuration Guide before enabling them.
+errors. `attestation_generation_delay_ms` defaults to `[20, 30]` so that a
+challenged generation stays measurably more expensive than a plain one, as it is
+on a device with a real security level, while the sampled range keeps the wait
+from becoming a fixed value of its own; `operation_start_delay_ms` defaults to
+`0`. Both accept values up to `250` milliseconds and occupy a Binder worker while
+waiting. They do not provide hardware security or guarantee a detector result.
+See the Configuration Guide before changing them.
 
 In `injector.toml`, keep the `scoop = [` and closing `]` lines, then add each
 exact package name on its own line. Bare entries omit both quotes and commas;

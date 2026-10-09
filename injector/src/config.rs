@@ -35,10 +35,27 @@ pub struct InjectorConfig {
 pub struct MainConfig {
     pub enabled: bool,
     pub log_level: String,
-    /// Optional delay before challenged key generation, in milliseconds.
-    pub attestation_generation_delay_ms: u16,
+    /// Inclusive extra delay range in milliseconds for challenged key generation.
+    ///
+    /// A challenged generation has to cost measurably more than a plain one: a real security level
+    /// pays an extra round trip for the challenge, and that extra cost varies rather than staying
+    /// constant. Each affected generation samples the range afresh, so the delay itself is not a
+    /// fixed signature. `[0, 0]` disables it.
+    #[serde(deserialize_with = "deserialize_delay_range")]
+    pub attestation_generation_delay_ms: [u16; 2],
     /// Optional delay before a two-way OMK createOperation call, in milliseconds.
     pub operation_start_delay_ms: u16,
+}
+
+fn deserialize_delay_range<'de, D>(deserializer: D) -> Result<[u16; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<u16>::deserialize(deserializer)?.try_into().map_err(|_| {
+        serde::de::Error::custom(
+            "main.attestation_generation_delay_ms must contain exactly two integers",
+        )
+    })
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,7 +115,7 @@ impl Default for MainConfig {
         Self {
             enabled: true,
             log_level: "debug".to_string(),
-            attestation_generation_delay_ms: 0,
+            attestation_generation_delay_ms: [20, 30],
             operation_start_delay_ms: 0,
         }
     }
@@ -499,7 +516,13 @@ fn parse_versioned_config(
     let preprocessed = preprocess_config(candidate)?;
     let parsed: InjectorConfig =
         toml::from_str(&preprocessed).map_err(|error| error.to_string())?;
-    if parsed.main.attestation_generation_delay_ms > 250 {
+    let attestation_delay = parsed.main.attestation_generation_delay_ms;
+    if attestation_delay[0] > attestation_delay[1] {
+        return Err(
+            "main.attestation_generation_delay_ms must be an ordered [minimum, maximum]".into(),
+        );
+    }
+    if attestation_delay[1] > 250 {
         return Err("main.attestation_generation_delay_ms must be in 0..=250".into());
     }
     if parsed.main.operation_start_delay_ms > 250 {
