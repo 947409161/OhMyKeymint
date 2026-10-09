@@ -379,13 +379,14 @@ fn stops_on_native_write_errors_and_rejects_unknown_codes_without_output() {
             panic!("write after failure")
         }
     }
+    const UID: u32 = 10123;
     for code in 1..=13 {
         assert_eq!(wire::write_reply(code, UID, &mut Reject), Err(-12));
     }
     for code in [0, 14, u32::MAX] {
         let mut output = Buffer::default();
         assert_eq!(
-            wire::write_reply(code, &mut output),
+            wire::write_reply(code, UID, &mut output),
             Err(UNKNOWN_TRANSACTION)
         );
         assert!(output.0.is_empty());

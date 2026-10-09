@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn embedded_pair_is_consistent_and_signs_new_salts() {
         let der = BASE64.decode(ATTK_PRIVATE_B64).unwrap();
-        let (modulus, public, private) = parse_pkcs8_private(&der).unwrap();
+        let (modulus, public, _) = parse_pkcs8_private(&der).unwrap();
         assert_eq!(modulus.bits(), MODULUS_BYTES * 8);
         let signature = sign_export_json(KNOWN_JSON.as_bytes()).unwrap();
         assert!(verifies(&signature, KNOWN_JSON.as_bytes(), &modulus, &public));
