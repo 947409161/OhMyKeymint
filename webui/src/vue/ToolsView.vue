@@ -7,7 +7,7 @@ import {
   MiuixSmallTitle,
   MiuixTopAppBar,
 } from 'miuix-vue'
-import { AddCircle, Replace, Reset, Update } from 'miuix-vue/icons'
+import { AddCircle, Replace, Reset, Tune, Update } from 'miuix-vue/icons'
 import { i18n } from '../i18n'
 
 export type ToolEvent =
@@ -15,6 +15,7 @@ export type ToolEvent =
   | 'installKeybox'
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
+  | 'openSoterBeta'
 
 type BusyPatch = 'sync' | 'restore' | null
 
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   installKeybox: []
   syncSecurityPatch: []
   restoreSecurityPatch: []
+  openSoterBeta: []
 }>()
 
 function runTool(event: ToolEvent): void {
@@ -35,6 +37,7 @@ function runTool(event: ToolEvent): void {
     case 'installKeybox': emit('installKeybox'); break
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
+    case 'openSoterBeta': emit('openSoterBeta'); break
   }
 }
 
@@ -56,6 +59,12 @@ const groups = [
   {
     title: tr('tools_key_management', 'Key management'),
     items: [
+      {
+        event: 'openSoterBeta' as const,
+        icon: Tune,
+        title: tr('tools_soter_beta', 'Tencent Soter compatibility (Beta)'),
+        summary: tr('tools_soter_beta_desc', 'Experimental compatibility for Tencent SoterServer. Requires Zygisk Next.'),
+      },
       {
         event: 'installKeybox' as const,
         icon: Replace,

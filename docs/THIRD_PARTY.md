@@ -61,6 +61,25 @@ That project is licensed under GPL-3.0. Oh My Keymint does not include or run
 Specter's WebUI or shell scripts. Its WebUI and Rust implementation are
 independent.
 
+## D-soter compatibility experiment
+
+The optional Tencent Soter compatibility (Beta) reply contract is adapted from
+[D-soter](https://github.com/947409161/D-soter), `module/jni/dsoter.cpp` and
+`module/jni/soter_attk.h`, licensed under Apache-2.0. The implementation mirrors that
+reference: a real RSA-2048 key pair signs the exported JSON with RSASSA-PSS
+(SHA-256, MGF1-SHA256, salt length 20, `emBits` 2047), and `cpu_id` and the device
+identifier are derived from the unit serial instead of fixed placeholders. The Rust
+implementation in `soter-spoof/src/soter.rs` and `soter-spoof/src/soter/` implements all
+13 reply contracts with a separate native Binder stub and bounded descriptor matching,
+and `soter-spoof/src/attk.rs` reproduces the reference signing parameters exactly.
+Android 12/12L retain the NDK platform's standard AIDL header check. No upstream prebuilt
+library or C++ runtime component is bundled.
+It does not alter KeyMint or injector routing. The replies are software-generated mock
+responses: they are not genuine attestation or payment credentials.
+
+The release includes this attribution in `THIRD_PARTY_LICENSES/D-soter.txt` and
+the Apache-2.0 terms in `AOSP.Apache-license-2.0.txt`.
+
 ## Native HTTPS client
 
 The security-patch WebUI action uses the Rust

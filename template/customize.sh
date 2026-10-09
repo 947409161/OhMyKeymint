@@ -90,11 +90,13 @@ chmod 0644 "$MODPATH/webroot.manifest"
 if [ "$ARCH" = "x64" ] || [ "$ARCH" = "x86_64" ]; then
   ui_print "- Using packaged x64 binaries"
   BINDIR="$MODPATH/libs/x86_64"
+  ZYGISK_ABI="x86_64"
   extract "$ZIPFILE" 'libs/x86_64/keymint' "$MODPATH"
   extract "$ZIPFILE" 'libs/x86_64/inject'  "$MODPATH"
 elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "arm64-v8a" ]; then
   ui_print "- Using packaged arm64 binaries"
   BINDIR="$MODPATH/libs/arm64-v8a"
+  ZYGISK_ABI="arm64-v8a"
   extract "$ZIPFILE" 'libs/arm64-v8a/keymint' "$MODPATH"
   extract "$ZIPFILE" 'libs/arm64-v8a/inject'  "$MODPATH"
 else
@@ -111,6 +113,11 @@ chmod 755 "$BINDIR/keymint" "$BINDIR/inject"
 pkill -9 -f 'soterta?-svc --mode=' 2>/dev/null || true
 setprop ctl.stop vendor.soter 2>/dev/null || true
 setprop ctl.start vendor.soter 2>/dev/null || true
+
+ui_print "- Extracting Zygisk Soter payload"
+extract "$ZIPFILE" "zygisk/$ZYGISK_ABI.so" "$MODPATH"
+[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk Soter payload"
+chmod 755 "$MODPATH/zygisk/$ZYGISK_ABI.so"
 
 CONFIG_DIR=/data/adb/omk
 mkdir -p "$CONFIG_DIR"

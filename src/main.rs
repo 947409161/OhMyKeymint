@@ -35,6 +35,7 @@ pub mod macros;
 pub mod plat;
 pub mod proto;
 pub mod security_patch;
+pub mod soter_beta;
 pub mod selinux;
 pub mod utils;
 pub mod watchdog;
@@ -368,6 +369,43 @@ fn handle_webui_keybox_command() -> Option<Result<String, String>> {
     }
 }
 
+fn handle_webui_soter_beta_command(
+    mut args: impl Iterator<Item = String>,
+) -> Option<Result<String, String>> {
+    match args.next()?.as_str() {
+        "--webui-get-soter-beta" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-get-soter-beta does not accept arguments".to_string()
+                ));
+            }
+            Some(soter_beta::state_json().map_err(|error| format!("{error:#}")))
+        }
+        "--webui-set-soter-beta" => {
+            let value = args.next();
+            if value.is_none() || args.next().is_some() {
+                return Some(Err(
+                    "--webui-set-soter-beta requires exactly one argument: 0 or 1".to_string(),
+                ));
+            }
+            let enabled = match soter_common::parse(value.unwrap().as_bytes()) {
+                Ok(enabled) => enabled,
+                Err(error) => return Some(Err(error.to_string())),
+            };
+            if let Err(error) = soter_beta::require_root() {
+                return Some(Err(format!("{error:#}")));
+            }
+            prepare_android_storage();
+            Some(
+                soter_beta::save(enabled)
+                    .map(|()| "soter_beta_saved".to_string())
+                    .map_err(|error| format!("{error:#}")),
+            )
+        }
+        _ => None,
+    }
+}
+
 fn handle_webui_security_patch_command() -> Option<Result<String, String>> {
     let mut args = std::env::args();
     let _program = args.next();
@@ -493,6 +531,17 @@ fn handle_webui_activity_command() -> Option<Result<String, String>> {
 }
 
 fn main() {
+    if let Some(result) = handle_webui_soter_beta_command(std::env::args().skip(1)) {
+        match result {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
     if let Some(result) = handle_webui_activity_command() {
         match result {
             Ok(output) => println!("{output}"),
@@ -676,6 +725,23 @@ fn run() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webui_soter_beta_rejects_invalid_arguments_before_storage_setup() {
+        for arguments in [
+            vec!["--webui-get-soter-beta", "1"],
+            vec!["--webui-set-soter-beta"],
+            vec!["--webui-set-soter-beta", "true"],
+            vec!["--webui-set-soter-beta", "1", "0"],
+            vec!["--webui-set-soter-beta", "1\n"],
+        ] {
+            assert!(
+                handle_webui_soter_beta_command(arguments.into_iter().map(str::to_string))
+                    .unwrap()
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn webui_keybox_payload_decodes_multiple_chunks() {

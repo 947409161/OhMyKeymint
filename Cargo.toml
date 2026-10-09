@@ -45,6 +45,7 @@ base64 = "0.23.1"
 quick-xml = { version = "0.42.0", features = ["serialize"] }
 ring = "0.17.14"
 ureq = { version = "3.4.0", default-features = false, features = ["rustls"] }
+soter-common = { path = "soter-common" }
 android_logger = "0.15.1"
 multi_log = "0.1.2"
 zip = { version = "8.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
@@ -71,6 +72,8 @@ members = [
   "wire",
   "watchdog",
   "injector",
+  "soter-common",
+  "soter-spoof",
 ]
 
 [patch.crates-io]

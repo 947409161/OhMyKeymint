@@ -65,8 +65,9 @@ comma-separated TOML form remains accepted.
 ## Embedded WebUI
 
 The module includes a WebUI for choosing the exact packages in `scoop`,
-installing a local keybox, and managing the Android security patch level. It
-also provides an ADB Disabler with independent controls for developer options,
+installing a local keybox, managing the Android security patch level, and enabling
+an optional Tencent Soter compatibility (Beta) simulation. It also provides an ADB
+Disabler with independent controls for developer options,
 USB debugging, and OEM unlocking:
 
 - In KernelSU, open Oh My Keymint from the module list and select its WebUI.

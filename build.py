@@ -45,6 +45,9 @@ BINARY_SPECS = (
     {"package": None, "bin": "keymint", "output_name": "keymint"},
     {"package": "injector", "bin": "inject", "output_name": "inject"},
 )
+
+SOTER_SPOOF_PACKAGE = "soter-spoof"
+SOTER_SPOOF_LIBRARY = "libsoter_spoof.so"
 REQUIRED_TEMPLATE_FILES = (
     "customize.sh",
     "daemon",
@@ -64,6 +67,7 @@ MODULE_TEXT_FILES = (
     "LICENSE.md",
     "README.md",
     "THIRD_PARTY_LICENSES/Tricky-Addon-Update-Target-List.txt",
+    "THIRD_PARTY_LICENSES/D-soter.txt",
     "customize.sh",
     "daemon",
     "daemon-injector",
@@ -203,6 +207,37 @@ def copy_binary(binary: Path, output_name: str, abi: str, stage_dir: Path) -> No
     print(f"Copied {binary} to {dest_path}")
 
 
+def build_cdylib(
+    *,
+    abi: str,
+    target: str,
+    release: bool,
+    package: str,
+    library_name: str,
+) -> Path:
+    build_type = "release" if release else "debug"
+    print(f"Building {package} cdylib for {abi} ({target}, {build_type})...")
+
+    env, cargo_patch = cargo_context_for_target(target)
+    cmd = ["cargo", "--config", cargo_patch, "build", "--target", target, "-p", package, "--lib"]
+    if release:
+        cmd.append("--release")
+    run(cmd, env=env)
+
+    library_path = TARGET_ROOT / target / build_type / library_name
+    if not library_path.exists():
+        raise FileNotFoundError(f"Built cdylib not found at {library_path}")
+    return library_path
+
+
+def copy_zygisk_payload(library: Path, abi: str, stage_dir: Path) -> None:
+    payload_dir = stage_dir / "zygisk"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+    destination = payload_dir / f"{abi}.so"
+    shutil.copy2(library, destination)
+    print(f"Copied {library} to {destination}")
+
+
 def copy_template_files(stage_dir: Path) -> None:
     template_dir = REPO_ROOT / "template"
     if not template_dir.exists():
@@ -226,6 +261,10 @@ def copy_project_documents(stage_dir: Path) -> None:
         (REPO_ROOT / "README.md", stage_dir / "README.md"),
         (REPO_ROOT / "LICENSE.md", stage_dir / "LICENSE.md"),
         (REPO_ROOT / "LICENSE-2", stage_dir / "LICENSE-2"),
+        (
+            REPO_ROOT / "soter-spoof" / "D-soter.NOTICE",
+            stage_dir / "THIRD_PARTY_LICENSES" / "D-soter.txt",
+        ),
         (
             REPO_ROOT / "webui" / "LICENSE.upstream",
             stage_dir / "THIRD_PARTY_LICENSES" / "Tricky-Addon-Update-Target-List.txt",
@@ -410,6 +449,13 @@ def build_package_for_abi(
                 package=spec["package"],
                 bin_name=spec["bin"],
             )
+        soter_payload = build_cdylib(
+            abi=abi,
+            target=target,
+            release=release,
+            package=SOTER_SPOOF_PACKAGE,
+            library_name=SOTER_SPOOF_LIBRARY,
+        )
         copy_template_files(stage_dir)
         copy_project_documents(stage_dir)
         normalize_module_text_files(stage_dir)
@@ -421,6 +467,8 @@ def build_package_for_abi(
                 abi,
                 stage_dir,
             )
+        copy_zygisk_payload(soter_payload, abi, stage_dir)
+
         modify_module_prop(stage_dir, version, git_count, git_hash, release)
         normalize_module_text_files(stage_dir)
         generate_webroot_manifest(stage_dir)
