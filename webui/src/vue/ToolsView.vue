@@ -7,7 +7,7 @@ import {
   MiuixSmallTitle,
   MiuixTopAppBar,
 } from 'miuix-vue'
-import { AddCircle, Replace, Reset, Tune, Update } from 'miuix-vue/icons'
+import { AddCircle, Replace, Reset, Update } from 'miuix-vue/icons'
 import { i18n } from '../i18n'
 
 export type ToolEvent =
@@ -15,9 +15,6 @@ export type ToolEvent =
   | 'installKeybox'
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
-  | 'openSoterBeta'
-  | 'openSoterHal'
-  | 'spoofPif'
 
 type BusyPatch = 'sync' | 'restore' | null
 
@@ -30,9 +27,6 @@ const emit = defineEmits<{
   installKeybox: []
   syncSecurityPatch: []
   restoreSecurityPatch: []
-  openSoterBeta: []
-  openSoterHal: []
-  spoofPif: []
 }>()
 
 function runTool(event: ToolEvent): void {
@@ -41,9 +35,6 @@ function runTool(event: ToolEvent): void {
     case 'installKeybox': emit('installKeybox'); break
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
-    case 'openSoterBeta': emit('openSoterBeta'); break
-    case 'openSoterHal': emit('openSoterHal'); break
-    case 'spoofPif': emit('spoofPif'); break
   }
 }
 
@@ -71,28 +62,7 @@ const groups = [
         title: tr('menu_replace_keybox', 'Change Keybox'),
         summary: tr('tools_keybox_desc', 'Choose a Keybox.xml file and install it for Oh My Keymint.'),
       },
-      {
-        event: 'openSoterBeta' as const,
-        icon: Tune,
-        title: tr('tools_soter_beta', 'Tencent Soter compatibility (Beta)'),
-        summary: tr('tools_soter_beta_desc', 'Experimental compatibility for Tencent SoterServer. Requires Zygisk Next.'),
-      },
-      {
-        event: 'openSoterHal' as const,
-        icon: Tune,
-        title: tr('tools_wechat_soter', 'Fix WeChat payment fingerprint'),
-        summary: tr('tools_wechat_soter_desc', 'Configure the Qualcomm Soter service.'),
-      },
     ],
-  },
-  {
-    title: tr('tools_fingerprint_spoofing', 'Fingerprint spoofing'),
-    items: [{
-      event: 'spoofPif' as const,
-      icon: Tune,
-      title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
-      summary: tr('tools_pif_desc', 'Fetch and apply a Pixel fingerprint for Play Integrity.'),
-    }],
   },
   {
     title: tr('tools_security_patch', 'Set security patch'),

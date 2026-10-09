@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Keybox'ı değiştir</string>
     <string name="menu_sync_security_patch">Güvenlik yamasını eşitle</string>
     <string name="menu_restore_default_security_patch">Varsayılan güvenlik yamasını geri yükle</string>
-    <string name="menu_spoof_pif_fingerprint">PIF parmak izini taklit et</string>
     <string name="menu_language">Dil</string>
     <string name="menu_more_options">Diğer seçenekler</string>
     <string name="menu_select_all">Önerilen uygulamaları seç</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Bu klasöre erişilemiyor.</string>
     <string name="replace_keybox_storage_parent">Üst klasör</string>
     <string name="replace_keybox_storage_root">Paylaşılan depolama</string>
-    <string name="pif_fingerprint_title">PIF parmak izi taklidi</string>
-    <string name="pif_enable_spoofing">PIF parmak izi taklidini etkinleştir</string>
-    <string name="pif_zygisk_next_required">Zygisk Next'i ayrıca yükleyip etkinleştirin. OMK bu modülü içermez, indirmez veya yüklemez.</string>
-    <string name="pif_current_config">Mevcut yapılandırma</string>
-    <string name="pif_security_patch">Güvenlik yaması: %s</string>
-    <string name="pif_disabled">Devre dışı</string>
-    <string name="pif_loading_config">PIF yapılandırması yükleniyor…</string>
-    <string name="pif_config_load_error">PIF yapılandırması yüklenemedi</string>
-    <string name="pif_loading_devices">Pixel cihazları yükleniyor…</string>
-    <string name="pif_devices_load_error">Pixel cihazları yüklenemedi</string>
-    <string name="pif_choose_device">Bir Pixel cihazı seçin</string>
-    <string name="pif_random_device">Rastgele</string>
-    <string name="pif_applying">Uygulanıyor…</string>
-    <string name="prompt_pif_applied">%1$s cihazının PIF parmak izi uygulandı; güvenlik yaması: %2$s.</string>
-    <string name="prompt_pif_disabled">PIF parmak izi taklidi devre dışı bırakıldı.</string>
-    <string name="prompt_pif_apply_error">PIF parmak izi taklidi güncellenemedi: %s</string>
     <string name="nav_main_aria">Ana gezinme</string>
     <string name="nav_home">Ana Sayfa</string>
     <string name="nav_tools">Araçlar</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Güvenlik yaması</string>
     <string name="home_tee_status">TEE durumu</string>
     <string name="home_tee_normal">Normal</string>
-    <string name="home_spoofed_device">Taklit edilen cihaz parmak izi</string>
     <string name="home_module_status">Modül durumu</string>
     <string name="home_status_loading">Denetleniyor</string>
     <string name="home_status_running">Çalışıyor</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Güvenlik yaması ayarları</string>
     <string name="tools_sync_patch_desc">En yeni Google güvenlik yaması tarihiyle eşitleyin</string>
     <string name="tools_restore_patch_desc">Cihazın varsayılan güvenlik yamasını geri yükleyin</string>
-    <string name="tools_pif_desc">PIF sahteciliği için bir Pixel parmak izi alıp uygulayın</string>
-    <string name="tools_fingerprint_spoofing">Parmak izi taklidi</string>
     <string name="settings_title">Ayarlar</string>
     <string name="settings_language">Dil</string>
     <string name="settings_language_auto">Sistem dilini kullan</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">Gezinmeyi yüzen bir panel olarak göster</string>
     <string name="settings_liquid_glass">Sıvı cam</string>
     <string name="settings_liquid_glass_desc">Yüzeylere yarı saydam cam derinliği ekle</string>
-    <string name="tools_soter_beta">Tencent Soter uyumluluğu (Beta)</string>
-    <string name="tools_soter_beta_desc">Tencent SoterServer için deneysel uyumluluk. Zygisk Next gerektirir.</string>
-    <string name="soter_beta_warning">Yalnızca Beta simülasyonu: sabit bir açık anahtar ve sıfırlarla doldurulmuş imzalar döndürür. Bu, gerçek TEE doğrulaması değildir ve ödemeleri veya kriptografik imzaları onarmaz. Yalnızca Tencent SoterServer için geçerlidir, KeyMint için değil.</string>
-    <string name="soter_beta_enabled">Soter uyumluluğunu etkinleştir</string>
-    <string name="soter_beta_enabled_desc">Varsayılan olarak kapalıdır. Değişiklikler yalnızca Uygula'ya dokunduktan sonra kaydedilir.</string>
-    <string name="soter_beta_reboot">Zygisk Next'i ayrıca yükleyip etkinleştirin. Etkinleştirdikten veya devre dışı bıraktıktan sonra cihazı yeniden başlatın. Uyumluluk doğrulanmadı.</string>
-    <string name="soter_beta_saved">Soter Beta ayarı kaydedildi. Uygulamak için cihazı yeniden başlatın. Uyumluluk doğrulanmadı.</string>
-    <string name="soter_beta_preview">Yalnızca önizleme. Cihaz ayarları burada kaydedilemez.</string>
 </resources>

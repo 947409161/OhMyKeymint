@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">เปลี่ยน Keybox</string>
     <string name="menu_sync_security_patch">ซิงค์แพตช์ความปลอดภัย</string>
     <string name="menu_restore_default_security_patch">คืนค่าแพตช์ความปลอดภัยเริ่มต้น</string>
-    <string name="menu_spoof_pif_fingerprint">ปลอมแปลงลายนิ้วมือ PIF</string>
     <string name="menu_language">ภาษา</string>
     <string name="menu_more_options">ตัวเลือกเพิ่มเติม</string>
     <string name="menu_select_all">เลือกแอปที่แนะนำ</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">ไม่สามารถเข้าถึงโฟลเดอร์นี้ได้</string>
     <string name="replace_keybox_storage_parent">โฟลเดอร์หลัก</string>
     <string name="replace_keybox_storage_root">พื้นที่เก็บข้อมูลที่ใช้ร่วมกัน</string>
-    <string name="pif_fingerprint_title">ปลอมแปลงลายนิ้วมือ PIF</string>
-    <string name="pif_enable_spoofing">เปิดใช้การปลอมแปลงลายนิ้วมือ PIF</string>
-    <string name="pif_zygisk_next_required">ติดตั้งและเปิดใช้ Zygisk Next แยกต่างหาก OMK ไม่ได้รวม ดาวน์โหลด หรือติดตั้งโมดูลนี้</string>
-    <string name="pif_current_config">การตั้งค่าปัจจุบัน</string>
-    <string name="pif_security_patch">แพตช์ความปลอดภัย: %s</string>
-    <string name="pif_disabled">ปิดใช้งานแล้ว</string>
-    <string name="pif_loading_config">กำลังโหลดการตั้งค่า PIF…</string>
-    <string name="pif_config_load_error">ไม่สามารถโหลดการตั้งค่า PIF ได้</string>
-    <string name="pif_loading_devices">กำลังโหลดอุปกรณ์ Pixel…</string>
-    <string name="pif_devices_load_error">ไม่สามารถโหลดอุปกรณ์ Pixel ได้</string>
-    <string name="pif_choose_device">เลือกอุปกรณ์ Pixel</string>
-    <string name="pif_random_device">สุ่ม</string>
-    <string name="pif_applying">กำลังใช้…</string>
-    <string name="prompt_pif_applied">ใช้ลายนิ้วมือ PIF ของ %1$s แล้ว แพตช์ความปลอดภัย: %2$s</string>
-    <string name="prompt_pif_disabled">ปิดใช้การปลอมแปลงลายนิ้วมือ PIF แล้ว</string>
-    <string name="prompt_pif_apply_error">อัปเดตการปลอมแปลงลายนิ้วมือ PIF ไม่สำเร็จ: %s</string>
     <string name="nav_main_aria">การนำทางหลัก</string>
     <string name="nav_home">หน้าหลัก</string>
     <string name="nav_tools">เครื่องมือ</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">แพตช์ความปลอดภัย</string>
     <string name="home_tee_status">สถานะ TEE</string>
     <string name="home_tee_normal">ปกติ</string>
-    <string name="home_spoofed_device">ลายนิ้วมืออุปกรณ์ที่ปลอมแปลง</string>
     <string name="home_module_status">สถานะโมดูล</string>
     <string name="home_status_loading">กำลังตรวจสอบ</string>
     <string name="home_status_running">กำลังทำงาน</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">การตั้งค่าแพตช์ความปลอดภัย</string>
     <string name="tools_sync_patch_desc">ซิงค์เป็นวันที่แพตช์ความปลอดภัยล่าสุดของ Google</string>
     <string name="tools_restore_patch_desc">คืนค่าแพตช์ความปลอดภัยเริ่มต้นของอุปกรณ์</string>
-    <string name="tools_pif_desc">ดึงและใช้ลายนิ้วมือ Pixel สำหรับการปลอมแปลง PIF</string>
-    <string name="tools_fingerprint_spoofing">การปลอมแปลงลายนิ้วมือ</string>
     <string name="settings_title">การตั้งค่า</string>
     <string name="settings_language">ภาษา</string>
     <string name="settings_language_auto">ใช้ภาษาของระบบ</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">แสดงแถบนำทางเป็นแผงแบบลอย</string>
     <string name="settings_liquid_glass">กระจกเหลว</string>
     <string name="settings_liquid_glass_desc">เพิ่มมิติแบบกระจกโปร่งแสงให้พื้นผิว</string>
-    <string name="tools_soter_beta">ความเข้ากันได้กับ Tencent Soter (เบตา)</string>
-    <string name="tools_soter_beta_desc">ความเข้ากันได้แบบทดลองสำหรับ Tencent SoterServer ต้องใช้ Zygisk Next</string>
-    <string name="soter_beta_warning">เป็นการจำลองเบตาเท่านั้น: ส่งคืนกุญแจสาธารณะแบบตายตัวและลายเซ็นที่มีแต่ค่าเป็นศูนย์ ไม่ใช่การรับรอง TEE จริง และไม่ซ่อมแซมการชำระเงินหรือลายเซ็นเข้ารหัส ใช้กับ Tencent SoterServer เท่านั้น ไม่ใช้กับ KeyMint</string>
-    <string name="soter_beta_enabled">เปิดความเข้ากันได้กับ Soter</string>
-    <string name="soter_beta_enabled_desc">ปิดไว้โดยค่าเริ่มต้น การเปลี่ยนแปลงจะบันทึกเมื่อแตะนำไปใช้เท่านั้น</string>
-    <string name="soter_beta_reboot">ติดตั้งและเปิดใช้งาน Zygisk Next แยกต่างหาก รีสตาร์ทอุปกรณ์หลังจากเปิดหรือปิดฟังก์ชันนี้ ยังไม่ได้ยืนยันความเข้ากันได้</string>
-    <string name="soter_beta_saved">บันทึกการตั้งค่า Soter เบตาแล้ว รีสตาร์ทอุปกรณ์เพื่อนำไปใช้ ยังไม่ได้ยืนยันความเข้ากันได้</string>
-    <string name="soter_beta_preview">ตัวอย่างเท่านั้น ไม่สามารถบันทึกการตั้งค่าอุปกรณ์ที่นี่ได้</string>
 </resources>

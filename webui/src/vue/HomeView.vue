@@ -29,8 +29,6 @@ const props = defineProps<{
   keyboxLevel: KeyboxLevel
   keyboxRevocation: KeyboxRevocationStatus
   teeStatus: TeeStatus
-  securityPatch: string | null
-  spoofedDevice: string | null | undefined
   activities: ActivityEntry[]
   activityStatus: ActivityStatus
   activityClearBusy: boolean
@@ -124,10 +122,12 @@ function describeActivity(entry: ActivityEntry): { title: string, detail: string
         detail: tr('prompt_keybox_replaced', 'Keybox was changed and will reload automatically.'),
       }
     case 'widevine_installed':
+    case 'pif_enabled':
+    case 'pif_disabled':
       return {
-        // Keep historical records readable after the retired vendor action was
-        // removed.  Do not expose the old feature name or suggest that it is
-        // still available in the current WebUI.
+        // Keep historical records readable after the retired actions were
+        // removed.  Do not expose the old feature names or suggest that they
+        // are still available in the current WebUI.
         title: tr('home_legacy_key_provisioning', 'Legacy key provisioning'),
         detail: tr(
           'home_legacy_key_provisioning_detail',
@@ -150,31 +150,6 @@ function describeActivity(entry: ActivityEntry): { title: string, detail: string
           'prompt_security_patch_restored_default',
           'Default security patch restored. Please reboot the device.',
         ),
-      }
-    case 'pif_enabled': {
-      let model = entry.detail
-      let securityPatch = ''
-      try {
-        const detail = JSON.parse(entry.detail) as { model?: unknown, securityPatch?: unknown }
-        if (typeof detail.model === 'string') model = detail.model
-        if (typeof detail.securityPatch === 'string') securityPatch = detail.securityPatch
-      } catch {
-        // Plain-text records created outside the current WebUI remain readable.
-      }
-      return {
-        title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
-        detail: tr(
-          'prompt_pif_applied',
-          'PIF fingerprint applied: %s, security patch %s.',
-          model,
-          securityPatch,
-        ),
-      }
-    }
-    case 'pif_disabled':
-      return {
-        title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
-        detail: tr('prompt_pif_disabled', 'PIF fingerprint spoofing disabled.'),
       }
     case 'adb_disabler_changed':
       // Preserve existing history without restoring the retired tool.
@@ -253,10 +228,6 @@ async function copyActivity(entry: ActivityEntry): Promise<void> {
         <div class="identity-field">
           <span>{{ tr('home_tee_status', 'TEE status') }}</span>
           <strong :data-tone="teeState.tone">{{ teeState.label }}</strong>
-        </div>
-        <div class="identity-field">
-          <span>{{ tr('home_spoofed_device', 'Spoofed device fingerprint') }}</span>
-          <strong>{{ spoofedDevice === null ? tr('pif_disabled', 'Disabled') : (spoofedDevice ?? '\u2014') }}</strong>
         </div>
       </MiuixCard>
     </div>

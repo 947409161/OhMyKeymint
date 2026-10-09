@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Keybox পরিবর্তন করুন</string>
     <string name="menu_sync_security_patch">নিরাপত্তা প্যাচ সিঙ্ক করুন</string>
     <string name="menu_restore_default_security_patch">ডিফল্ট নিরাপত্তা প্যাচ পুনরুদ্ধার করুন</string>
-    <string name="menu_spoof_pif_fingerprint">PIF ফিঙ্গারপ্রিন্ট স্পুফ করুন</string>
     <string name="menu_language">ভাষা</string>
     <string name="menu_more_options">আরও বিকল্প</string>
     <string name="menu_select_all">প্রস্তাবিত অ্যাপ নির্বাচন করুন</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">এই ফোল্ডারে প্রবেশ করা যাচ্ছে না।</string>
     <string name="replace_keybox_storage_parent">মূল ফোল্ডার</string>
     <string name="replace_keybox_storage_root">শেয়ার করা স্টোরেজ</string>
-    <string name="pif_fingerprint_title">PIF ফিঙ্গারপ্রিন্ট স্পুফ করুন</string>
-    <string name="pif_enable_spoofing">PIF ফিঙ্গারপ্রিন্ট স্পুফিং চালু করুন</string>
-    <string name="pif_zygisk_next_required">Zygisk Next আলাদাভাবে ইনস্টল ও চালু করুন। OMK এটি অন্তর্ভুক্ত, ডাউনলোড বা ইনস্টল করে না।</string>
-    <string name="pif_current_config">বর্তমান কনফিগারেশন</string>
-    <string name="pif_security_patch">নিরাপত্তা প্যাচ: %s</string>
-    <string name="pif_disabled">নিষ্ক্রিয়</string>
-    <string name="pif_loading_config">PIF কনফিগারেশন লোড হচ্ছে…</string>
-    <string name="pif_config_load_error">PIF কনফিগারেশন লোড করা যায়নি</string>
-    <string name="pif_loading_devices">Pixel ডিভাইস লোড হচ্ছে…</string>
-    <string name="pif_devices_load_error">Pixel ডিভাইস লোড করা যায়নি</string>
-    <string name="pif_choose_device">Pixel ডিভাইস বেছে নিন</string>
-    <string name="pif_random_device">যেকোনো একটি</string>
-    <string name="pif_applying">প্রয়োগ করা হচ্ছে…</string>
-    <string name="prompt_pif_applied">PIF ফিঙ্গারপ্রিন্ট প্রয়োগ করা হয়েছে: %1$s · নিরাপত্তা প্যাচ %2$s।</string>
-    <string name="prompt_pif_disabled">PIF ফিঙ্গারপ্রিন্ট স্পুফিং বন্ধ করা হয়েছে।</string>
-    <string name="prompt_pif_apply_error">PIF ফিঙ্গারপ্রিন্ট স্পুফিং আপডেট করা যায়নি: %s</string>
     <string name="nav_main_aria">প্রধান নেভিগেশন</string>
     <string name="nav_home">হোম</string>
     <string name="nav_tools">টুলস</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">নিরাপত্তা প্যাচ</string>
     <string name="home_tee_status">TEE স্থিতি</string>
     <string name="home_tee_normal">স্বাভাবিক</string>
-    <string name="home_spoofed_device">স্পুফ করা ডিভাইস ফিঙ্গারপ্রিন্ট</string>
     <string name="home_module_status">মডিউলের অবস্থা</string>
     <string name="home_status_loading">যাচাই করা হচ্ছে</string>
     <string name="home_status_running">চলছে</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">নিরাপত্তা প্যাচ সেটিংস</string>
     <string name="tools_sync_patch_desc">Google-এর সর্বশেষ নিরাপত্তা প্যাচের তারিখের সঙ্গে সিঙ্ক করুন</string>
     <string name="tools_restore_patch_desc">ডিভাইসের ডিফল্ট নিরাপত্তা প্যাচ পুনরুদ্ধার করুন</string>
-    <string name="tools_pif_desc">PIF স্পুফিংয়ের জন্য একটি Pixel ফিঙ্গারপ্রিন্ট এনে প্রয়োগ করুন</string>
-    <string name="tools_fingerprint_spoofing">ফিঙ্গারপ্রিন্ট স্পুফিং</string>
     <string name="settings_title">সেটিংস</string>
     <string name="settings_language">ভাষা</string>
     <string name="settings_language_auto">সিস্টেমের ভাষা অনুসরণ করুন</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">নেভিগেশন বারটি ভাসমান প্যানেল হিসেবে দেখান</string>
     <string name="settings_liquid_glass">লিকুইড গ্লাস</string>
     <string name="settings_liquid_glass_desc">পৃষ্ঠগুলোতে স্বচ্ছ কাচের গভীরতা যোগ করুন</string>
-    <string name="tools_soter_beta">Tencent Soter সামঞ্জস্য (বেটা)</string>
-    <string name="tools_soter_beta_desc">Tencent SoterServer-এর জন্য পরীক্ষামূলক সামঞ্জস্য। Zygisk Next প্রয়োজন।</string>
-    <string name="soter_beta_warning">শুধু বেটা সিমুলেশন: একটি স্থির পাবলিক কী এবং শূন্য দিয়ে পূর্ণ স্বাক্ষর ফেরত দেয়। এটি প্রকৃত TEE প্রত্যয়ন নয় এবং পেমেন্ট বা ক্রিপ্টোগ্রাফিক স্বাক্ষর মেরামত করে না। শুধু Tencent SoterServer-এর ক্ষেত্রে প্রযোজ্য, KeyMint-এর ক্ষেত্রে নয়।</string>
-    <string name="soter_beta_enabled">Soter সামঞ্জস্য চালু করুন</string>
-    <string name="soter_beta_enabled_desc">ডিফল্টভাবে বন্ধ। প্রয়োগ করুন চাপার পরেই পরিবর্তন সংরক্ষিত হবে।</string>
-    <string name="soter_beta_reboot">Zygisk Next আলাদাভাবে ইনস্টল ও চালু করুন। চালু বা বন্ধ করার পরে ডিভাইস পুনরায় চালু করুন। সামঞ্জস্য যাচাই করা হয়নি।</string>
-    <string name="soter_beta_saved">Soter বেটা সেটিং সংরক্ষিত হয়েছে। প্রয়োগ করতে ডিভাইস পুনরায় চালু করুন। সামঞ্জস্য যাচাই করা হয়নি।</string>
-    <string name="soter_beta_preview">শুধু প্রিভিউ। এখানে ডিভাইসের সেটিং সংরক্ষণ করা যাবে না।</string>
 </resources>

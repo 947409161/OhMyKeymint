@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Keybox-u dəyişdir</string>
     <string name="menu_sync_security_patch">Təhlükəsizlik yamasını sinxronlaşdır</string>
     <string name="menu_restore_default_security_patch">Standart təhlükəsizlik yamasını bərpa et</string>
-    <string name="menu_spoof_pif_fingerprint">PIF barmaq izini saxtalaşdır</string>
     <string name="menu_language">Dil</string>
     <string name="menu_more_options">Daha çox seçim</string>
     <string name="menu_select_all">Tövsiyə edilənləri seç</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Bu qovluğa daxil olmaq mümkün deyil.</string>
     <string name="replace_keybox_storage_parent">Üst qovluq</string>
     <string name="replace_keybox_storage_root">Paylaşılan yaddaş</string>
-    <string name="pif_fingerprint_title">PIF barmaq izini saxtalaşdır</string>
-    <string name="pif_enable_spoofing">PIF barmaq izi saxtalaşdırmasını aktivləşdir</string>
-    <string name="pif_zygisk_next_required">Zygisk Next-i ayrıca quraşdırın və aktivləşdirin. OMK onu paketə daxil etmir, endirmir və ya quraşdırmır.</string>
-    <string name="pif_current_config">Cari konfiqurasiya</string>
-    <string name="pif_security_patch">Təhlükəsizlik yaması: %s</string>
-    <string name="pif_disabled">Deaktivdir</string>
-    <string name="pif_loading_config">PIF konfiqurasiyası yüklənir…</string>
-    <string name="pif_config_load_error">PIF konfiqurasiyasını yükləmək mümkün olmadı</string>
-    <string name="pif_loading_devices">Pixel cihazları yüklənir…</string>
-    <string name="pif_devices_load_error">Pixel cihazlarını yükləmək mümkün olmadı</string>
-    <string name="pif_choose_device">Pixel cihazı seçin</string>
-    <string name="pif_random_device">Təsadüfi</string>
-    <string name="pif_applying">Tətbiq edilir…</string>
-    <string name="prompt_pif_applied">PIF barmaq izi tətbiq edildi: %1$s · təhlükəsizlik yaması %2$s.</string>
-    <string name="prompt_pif_disabled">PIF barmaq izi saxtalaşdırması deaktiv edildi.</string>
-    <string name="prompt_pif_apply_error">PIF barmaq izi saxtalaşdırmasını yeniləmək mümkün olmadı: %s</string>
     <string name="nav_main_aria">Əsas naviqasiya</string>
     <string name="nav_home">Ana səhifə</string>
     <string name="nav_tools">Alətlər</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Təhlükəsizlik yaması</string>
     <string name="home_tee_status">TEE statusu</string>
     <string name="home_tee_normal">Normal</string>
-    <string name="home_spoofed_device">Saxtalaşdırılmış cihaz barmaq izi</string>
     <string name="home_module_status">Modulun vəziyyəti</string>
     <string name="home_status_loading">Yoxlanılır</string>
     <string name="home_status_running">İşləyir</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Təhlükəsizlik yaması ayarları</string>
     <string name="tools_sync_patch_desc">Google-un ən son təhlükəsizlik yaması tarixi ilə sinxronlaşdırın</string>
     <string name="tools_restore_patch_desc">Cihazın standart təhlükəsizlik yamasını bərpa edin</string>
-    <string name="tools_pif_desc">PIF saxtalaşdırması üçün Pixel barmaq izini əldə edib tətbiq edin</string>
-    <string name="tools_fingerprint_spoofing">Barmaq izi saxtalaşdırması</string>
     <string name="settings_title">Parametrlər</string>
     <string name="settings_language">Dil</string>
     <string name="settings_language_auto">Sistem dilini izlə</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">Naviqasiya panelini üzən lövhə kimi göstərin</string>
     <string name="settings_liquid_glass">Maye şüşə effekti</string>
     <string name="settings_liquid_glass_desc">Səthlərə yarımşəffaf şüşə dərinliyi əlavə edin</string>
-    <string name="tools_soter_beta">Tencent Soter uyğunluğu (Beta)</string>
-    <string name="tools_soter_beta_desc">Tencent SoterServer üçün eksperimental uyğunluq. Zygisk Next tələb olunur.</string>
-    <string name="soter_beta_warning">Yalnız Beta simulyasiyası: sabit açıq açar və sıfırlarla doldurulmuş imzalar qaytarır. Bu, həqiqi TEE təsdiqi deyil və ödənişləri və ya kriptoqrafik imzaları düzəltmir. Yalnız Tencent SoterServer üçün keçərlidir, KeyMint üçün deyil.</string>
-    <string name="soter_beta_enabled">Soter uyğunluğunu aktivləşdir</string>
-    <string name="soter_beta_enabled_desc">Standart olaraq söndürülüb. Dəyişikliklər yalnız Tətbiq et düyməsinə toxunduqdan sonra saxlanılır.</string>
-    <string name="soter_beta_reboot">Zygisk Next-i ayrıca quraşdırın və aktivləşdirin. Aktivləşdirdikdən və ya söndürdükdən sonra cihazı yenidən başladın. Uyğunluq yoxlanılmayıb.</string>
-    <string name="soter_beta_saved">Soter Beta ayarı saxlanıldı. Tətbiq etmək üçün cihazı yenidən başladın. Uyğunluq yoxlanılmayıb.</string>
-    <string name="soter_beta_preview">Yalnız önbaxışdır. Cihaz ayarları burada saxlanıla bilməz.</string>
 </resources>

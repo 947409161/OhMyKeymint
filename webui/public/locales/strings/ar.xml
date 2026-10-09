@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">تغيير Keybox</string>
     <string name="menu_sync_security_patch">مزامنة تصحيح الأمان</string>
     <string name="menu_restore_default_security_patch">استعادة تصحيح الأمان الافتراضي</string>
-    <string name="menu_spoof_pif_fingerprint">انتحال بصمة PIF</string>
     <string name="menu_language">اللغة</string>
     <string name="menu_more_options">المزيد من الخيارات</string>
     <string name="menu_select_all">تحديد التطبيقات المقترحة</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">يتعذر الوصول إلى هذا المجلد.</string>
     <string name="replace_keybox_storage_parent">المجلد الرئيسي</string>
     <string name="replace_keybox_storage_root">وحدة التخزين المشتركة</string>
-    <string name="pif_fingerprint_title">انتحال بصمة PIF</string>
-    <string name="pif_enable_spoofing">تمكين انتحال بصمة PIF</string>
-    <string name="pif_zygisk_next_required">ثبّت Zygisk Next وفعّله بشكل منفصل. لا يضمّن OMK هذه الوحدة أو ينزّلها أو يثبّتها.</string>
-    <string name="pif_current_config">التكوين الحالي</string>
-    <string name="pif_security_patch">تصحيح الأمان: %s</string>
-    <string name="pif_disabled">معطّل</string>
-    <string name="pif_loading_config">جارٍ تحميل تكوين PIF…</string>
-    <string name="pif_config_load_error">تعذّر تحميل تكوين PIF</string>
-    <string name="pif_loading_devices">جارٍ تحميل أجهزة Pixel…</string>
-    <string name="pif_devices_load_error">تعذّر تحميل أجهزة Pixel</string>
-    <string name="pif_choose_device">اختر جهاز Pixel</string>
-    <string name="pif_random_device">عشوائي</string>
-    <string name="pif_applying">جارٍ التطبيق…</string>
-    <string name="prompt_pif_applied">تم تطبيق بصمة PIF: %1$s · تصحيح الأمان %2$s.</string>
-    <string name="prompt_pif_disabled">تم تعطيل انتحال بصمة PIF.</string>
-    <string name="prompt_pif_apply_error">تعذّر تحديث انتحال بصمة PIF: %s</string>
     <string name="nav_main_aria">التنقل الرئيسي</string>
     <string name="nav_home">الرئيسية</string>
     <string name="nav_tools">الأدوات</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">تصحيح الأمان</string>
     <string name="home_tee_status">حالة TEE</string>
     <string name="home_tee_normal">طبيعي</string>
-    <string name="home_spoofed_device">بصمة الجهاز المنتحلة</string>
     <string name="home_module_status">حالة الوحدة</string>
     <string name="home_status_loading">جارٍ التحقق</string>
     <string name="home_status_running">قيد التشغيل</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">إعدادات تصحيح الأمان</string>
     <string name="tools_sync_patch_desc">مزامنة تاريخ أحدث تصحيح أمان من Google</string>
     <string name="tools_restore_patch_desc">استعادة تصحيح الأمان الافتراضي للجهاز</string>
-    <string name="tools_pif_desc">جلب بصمة Pixel وتطبيقها لانتحال PIF</string>
-    <string name="tools_fingerprint_spoofing">انتحال بصمة الجهاز</string>
     <string name="settings_title">الإعدادات</string>
     <string name="settings_language">اللغة</string>
     <string name="settings_language_auto">اتباع لغة النظام</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">عرض شريط التنقل كلوحة عائمة</string>
     <string name="settings_liquid_glass">تأثير الزجاج السائل</string>
     <string name="settings_liquid_glass_desc">إضافة عمق زجاجي شفاف للأسطح</string>
-    <string name="tools_soter_beta">توافق Tencent Soter (تجريبي)</string>
-    <string name="tools_soter_beta_desc">توافق تجريبي مع Tencent SoterServer. يتطلب Zygisk Next.</string>
-    <string name="soter_beta_warning">محاكاة تجريبية فقط: تُرجع مفتاحًا عامًا ثابتًا وتوقيعات مملوءة بالأصفار. ليست مصادقة TEE حقيقية ولا تصلح المدفوعات أو التوقيعات التشفيرية. تنطبق على Tencent SoterServer فقط، وليس KeyMint.</string>
-    <string name="soter_beta_enabled">تفعيل توافق Soter</string>
-    <string name="soter_beta_enabled_desc">معطّل افتراضيًا. لا تُحفظ التغييرات إلا بعد الضغط على تطبيق.</string>
-    <string name="soter_beta_reboot">ثبّت Zygisk Next وفعّله بشكل منفصل. أعد تشغيل الجهاز بعد التفعيل أو التعطيل. لم يتم التحقق من التوافق.</string>
-    <string name="soter_beta_saved">تم حفظ إعداد Soter التجريبي. أعد تشغيل الجهاز للتطبيق. لم يتم التحقق من التوافق.</string>
-    <string name="soter_beta_preview">معاينة فقط. لا يمكن حفظ إعدادات الجهاز هنا.</string>
 </resources>

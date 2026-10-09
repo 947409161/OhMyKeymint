@@ -8,14 +8,12 @@ case "${KSU:-}" in
   *) exit 0 ;;
 esac
 
-# Release the Qualcomm Soter service name before removing the module. The
-# watchdog restores vendor.soter when disabled; this is best-effort because the
-# data tree is removed below even if the service was already gone.
-MODDIR=${0%/*}
-if [ -x "$MODDIR/soterta.sh" ]; then
-  "$MODDIR/soterta.sh" disable >/dev/null 2>&1 || true
-fi
+# Release the Qualcomm Soter HAL if an earlier module version took the service
+# name over. The stock HAL is restarted so it is never left unanswered; both
+# calls are best-effort because the HAL may already be the stock one.
 pkill -9 -f 'soterta?-svc --mode=' 2>/dev/null || true
+setprop ctl.stop vendor.soter 2>/dev/null || true
+setprop ctl.start vendor.soter 2>/dev/null || true
 
 remove_omk_directory() {
   target="$1"

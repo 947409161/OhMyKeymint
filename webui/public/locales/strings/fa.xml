@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">تغییر Keybox</string>
     <string name="menu_sync_security_patch">همگام‌سازی وصله امنیتی</string>
     <string name="menu_restore_default_security_patch">بازیابی وصله امنیتی پیش‌فرض</string>
-    <string name="menu_spoof_pif_fingerprint">جعل اثر انگشت PIF</string>
     <string name="menu_language">زبان</string>
     <string name="menu_more_options">گزینه‌های بیشتر</string>
     <string name="menu_select_all">انتخاب برنامه‌های پیشنهادی</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">دسترسی به این پوشه ممکن نیست.</string>
     <string name="replace_keybox_storage_parent">پوشه والد</string>
     <string name="replace_keybox_storage_root">حافظه اشتراکی</string>
-    <string name="pif_fingerprint_title">جعل اثر انگشت PIF</string>
-    <string name="pif_enable_spoofing">فعال‌سازی جعل اثر انگشت PIF</string>
-    <string name="pif_zygisk_next_required">Zygisk Next را جداگانه نصب و فعال کنید. OMK آن را همراه خود ارائه، دانلود یا نصب نمی‌کند.</string>
-    <string name="pif_current_config">پیکربندی فعلی</string>
-    <string name="pif_security_patch">وصله امنیتی: %s</string>
-    <string name="pif_disabled">غیرفعال</string>
-    <string name="pif_loading_config">در حال بارگیری پیکربندی PIF…</string>
-    <string name="pif_config_load_error">بارگیری پیکربندی PIF ناموفق بود</string>
-    <string name="pif_loading_devices">در حال بارگیری دستگاه‌های Pixel…</string>
-    <string name="pif_devices_load_error">بارگیری دستگاه‌های Pixel ناموفق بود</string>
-    <string name="pif_choose_device">یک دستگاه Pixel انتخاب کنید</string>
-    <string name="pif_random_device">تصادفی</string>
-    <string name="pif_applying">در حال اعمال…</string>
-    <string name="prompt_pif_applied">اثر انگشت PIF اعمال شد: %1$s · وصله امنیتی %2$s.</string>
-    <string name="prompt_pif_disabled">جعل اثر انگشت PIF غیرفعال شد.</string>
-    <string name="prompt_pif_apply_error">به‌روزرسانی جعل اثر انگشت PIF ناموفق بود: %s</string>
     <string name="nav_main_aria">پیمایش اصلی</string>
     <string name="nav_home">خانه</string>
     <string name="nav_tools">ابزارها</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">وصله امنیتی</string>
     <string name="home_tee_status">وضعیت TEE</string>
     <string name="home_tee_normal">عادی</string>
-    <string name="home_spoofed_device">اثر انگشت جعلی دستگاه</string>
     <string name="home_module_status">وضعیت ماژول</string>
     <string name="home_status_loading">در حال بررسی</string>
     <string name="home_status_running">در حال اجرا</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">تنظیمات وصله امنیتی</string>
     <string name="tools_sync_patch_desc">همگام‌سازی با تاریخ جدیدترین وصله امنیتی Google</string>
     <string name="tools_restore_patch_desc">بازگردانی وصله امنیتی پیش‌فرض دستگاه</string>
-    <string name="tools_pif_desc">دریافت و اعمال اثر انگشت Pixel برای جعل PIF</string>
-    <string name="tools_fingerprint_spoofing">جعل اثر انگشت</string>
     <string name="settings_title">تنظیمات</string>
     <string name="settings_language">زبان</string>
     <string name="settings_language_auto">استفاده از زبان سیستم</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">نمایش پیمایش به‌صورت یک پنل شناور</string>
     <string name="settings_liquid_glass">شیشهٔ مایع</string>
     <string name="settings_liquid_glass_desc">افزودن عمق شیشه‌ای نیمه‌شفاف به سطوح</string>
-    <string name="tools_soter_beta">سازگاری Tencent Soter (بتا)</string>
-    <string name="tools_soter_beta_desc">سازگاری آزمایشی با Tencent SoterServer. به Zygisk Next نیاز دارد.</string>
-    <string name="soter_beta_warning">فقط شبیه‌سازی بتا: یک کلید عمومی ثابت و امضاهای پرشده با صفر برمی‌گرداند. این گواهی TEE واقعی نیست و پرداخت‌ها یا امضاهای رمزنگاری را تعمیر نمی‌کند. فقط برای Tencent SoterServer اعمال می‌شود، نه KeyMint.</string>
-    <string name="soter_beta_enabled">فعال‌سازی سازگاری Soter</string>
-    <string name="soter_beta_enabled_desc">به‌طور پیش‌فرض غیرفعال است. تغییرات فقط پس از لمس اعمال ذخیره می‌شوند.</string>
-    <string name="soter_beta_reboot">Zygisk Next را جداگانه نصب و فعال کنید. پس از فعال یا غیرفعال کردن، دستگاه را راه‌اندازی مجدد کنید. سازگاری تأیید نشده است.</string>
-    <string name="soter_beta_saved">تنظیم Soter بتا ذخیره شد. برای اعمال، دستگاه را راه‌اندازی مجدد کنید. سازگاری تأیید نشده است.</string>
-    <string name="soter_beta_preview">فقط پیش‌نمایش است. تنظیمات دستگاه را نمی‌توان اینجا ذخیره کرد.</string>
 </resources>

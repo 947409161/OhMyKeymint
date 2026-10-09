@@ -42,25 +42,6 @@ properties with `resetprop`, and records the original values for restore. Its
 separate restore action restores those properties and resets the four fields to
 `auto` without network access.
 
-## Pixel PIF profile feed
-
-The WebUI's PIF fingerprint field mapping follows the documented
-Build-variable contract from
-[TrickyStore](https://github.com/5ec1cff/TrickyStore/tree/master#build-vars-spoofing).
-The field contract was checked against TrickyStore commit
-[`3a515c5fe1ce4c94d5424305afe2eaf4812a635d`](https://github.com/5ec1cff/TrickyStore/commit/3a515c5fe1ce4c94d5424305afe2eaf4812a635d).
-No TrickyStore code or binary is included in or required by Oh My Keymint.
-
-Pixel model names and PIF profile values are downloaded at runtime from the
-`bot` branch of
-[KOWX712/PlayIntegrityFix](https://github.com/KOWX712/PlayIntegrityFix). The
-feed format and generation path were checked against its `inject_s` commit
-[`2f8199a90a150ad98921438608e1e0e951ba2d5f`](https://github.com/KOWX712/PlayIntegrityFix/commit/2f8199a90a150ad98921438608e1e0e951ba2d5f).
-That project is licensed under GPL-3.0. Oh My Keymint does not copy or execute
-its WebUI or Autopif implementation; it independently validates the generated
-`device_list.json` and `device_prop/*.prop` data protocol before rendering the
-OMK PIF profile.
-
 ## Google attestation status snapshot
 
 The module includes the public JSON snapshot used to seed the local
@@ -80,37 +61,9 @@ That project is licensed under GPL-3.0. Oh My Keymint does not include or run
 Specter's WebUI or shell scripts. Its WebUI and Rust implementation are
 independent.
 
-## D-soter compatibility experiment
-
-The optional Tencent Soter compatibility (Beta) reply contract and public-key
-placeholder are adapted from [ajfkdk/D-soter](https://github.com/ajfkdk/D-soter),
-`module/jni/dsoter.cpp` at commit
-[`6148e02ea5977cb95b5a162a405fc915e39c01db`](https://github.com/ajfkdk/D-soter/commit/6148e02ea5977cb95b5a162a405fc915e39c01db),
-licensed under Apache-2.0. The Rust implementation in `pif-spoof/src/soter.rs`
-and `pif-spoof/src/soter/` implements all 13 reply contracts with a separate
-native Binder stub and bounded descriptor matching. Android 12/12L retain the
-NDK platform's standard AIDL header check. No upstream prebuilt library or C++
-runtime component is bundled.
-It shares only the existing Zygisk loader entry with PIF and does not alter
-KeyMint or injector routing. The fixed public key and zero-filled signatures
-are mock responses, not genuine attestation or payment credentials.
-
-The release includes this attribution in `THIRD_PARTY_LICENSES/D-soter.txt` and
-the Apache-2.0 terms in `AOSP.Apache-license-2.0.txt`.
-
-## Qualcomm Soter software TA
-
-The Qualcomm Soter HAL software TA and Binder service are adapted from the
-`soter-ta` and `soterta-svc` components of
-[Andrea-lyz/ommega](https://github.com/Andrea-lyz/ommega), licensed under
-AGPL-3.0-or-later. The service is isolated behind
-`vendor.qti.hardware.soter.ISoter/default`, uses OMK's persistent data path,
-and retains the upstream remote-relay contract. It does not replace the OMK
-KeyMint route or the independent Tencent Soter compatibility experiment.
-
 ## Native HTTPS client
 
-The security-patch and PIF fingerprint WebUI actions use the Rust
+The security-patch WebUI action uses the Rust
 [ureq](https://github.com/algesten/ureq) HTTP client (version 3.4.0), licensed
 under the MIT or Apache License 2.0. Its HTTPS implementation uses
 [rustls](https://github.com/rustls/rustls) and

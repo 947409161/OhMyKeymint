@@ -68,7 +68,6 @@ extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'sepolicy.rule'   "$MODPATH"
 extract "$ZIPFILE" 'daemon'          "$MODPATH"
 extract "$ZIPFILE" 'daemon-injector' "$MODPATH"
-extract "$ZIPFILE" 'soterta.sh'      "$MODPATH"
 extract "$ZIPFILE" 'injector.toml'   "$MODPATH"
 extract "$ZIPFILE" 'keybox.xml'      "$MODPATH"
 extract "$ZIPFILE" 'webroot.manifest' "$MODPATH"
@@ -82,8 +81,7 @@ while IFS= read -r asset || [ -n "$asset" ]; do
 done < "$MODPATH/webroot.manifest"
 
 chmod 755 "$MODPATH/daemon" "$MODPATH/daemon-injector" \
-  "$MODPATH/post-fs-data.sh" "$MODPATH/service.sh" "$MODPATH/uninstall.sh" \
-  "$MODPATH/soterta.sh"
+  "$MODPATH/post-fs-data.sh" "$MODPATH/service.sh" "$MODPATH/uninstall.sh"
 find "$MODPATH/webroot" -type d -exec chmod 0755 {} \;
 find "$MODPATH/webroot" -type f -exec chmod 0644 {} \;
 chmod 0644 "$MODPATH/webroot.manifest"
@@ -92,30 +90,27 @@ chmod 0644 "$MODPATH/webroot.manifest"
 if [ "$ARCH" = "x64" ] || [ "$ARCH" = "x86_64" ]; then
   ui_print "- Using packaged x64 binaries"
   BINDIR="$MODPATH/libs/x86_64"
-  ZYGISK_ABI="x86_64"
   extract "$ZIPFILE" 'libs/x86_64/keymint' "$MODPATH"
   extract "$ZIPFILE" 'libs/x86_64/inject'  "$MODPATH"
-  extract "$ZIPFILE" 'libs/x86_64/soterta-svc' "$MODPATH"
 elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "arm64-v8a" ]; then
   ui_print "- Using packaged arm64 binaries"
   BINDIR="$MODPATH/libs/arm64-v8a"
-  ZYGISK_ABI="arm64-v8a"
   extract "$ZIPFILE" 'libs/arm64-v8a/keymint' "$MODPATH"
   extract "$ZIPFILE" 'libs/arm64-v8a/inject'  "$MODPATH"
-  extract "$ZIPFILE" 'libs/arm64-v8a/soterta-svc' "$MODPATH"
 else
   abort "! Unsupported platform: $ARCH"
 fi
 
 [ -f "$BINDIR/keymint" ] || abort "! Missing $BINDIR/keymint"
 [ -f "$BINDIR/inject" ] || abort "! Missing $BINDIR/inject"
-[ -f "$BINDIR/soterta-svc" ] || abort "! Missing $BINDIR/soterta-svc"
-chmod 755 "$BINDIR/keymint" "$BINDIR/inject" "$BINDIR/soterta-svc"
+chmod 755 "$BINDIR/keymint" "$BINDIR/inject"
 
-ui_print "- Extracting Zygisk PIF payload"
-extract "$ZIPFILE" "zygisk/$ZYGISK_ABI.so" "$MODPATH"
-[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk PIF payload"
-chmod 755 "$MODPATH/zygisk/$ZYGISK_ABI.so"
+# Release the Qualcomm Soter HAL if an earlier module version took the service
+# name over. The stock HAL is restarted so it is never left unanswered; both
+# calls are best-effort because the HAL may already be the stock one.
+pkill -9 -f 'soterta?-svc --mode=' 2>/dev/null || true
+setprop ctl.stop vendor.soter 2>/dev/null || true
+setprop ctl.start vendor.soter 2>/dev/null || true
 
 CONFIG_DIR=/data/adb/omk
 mkdir -p "$CONFIG_DIR"

@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Alterar Keybox</string>
     <string name="menu_sync_security_patch">Sincronizar patch de segurança</string>
     <string name="menu_restore_default_security_patch">Restaurar patch de segurança padrão</string>
-    <string name="menu_spoof_pif_fingerprint">Falsificar impressão digital do PIF</string>
     <string name="menu_language">Linguagem</string>
     <string name="menu_more_options">Mais opções</string>
     <string name="menu_select_all">Selecionar recomendados</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Não foi possível acessar esta pasta.</string>
     <string name="replace_keybox_storage_parent">Pasta pai</string>
     <string name="replace_keybox_storage_root">Armazenamento compartilhado</string>
-    <string name="pif_fingerprint_title">Falsificar impressão digital do PIF</string>
-    <string name="pif_enable_spoofing">Ativar falsificação da impressão digital do PIF</string>
-    <string name="pif_zygisk_next_required">Instale e ative o Zygisk Next separadamente. O OMK não inclui, baixa nem instala esse módulo.</string>
-    <string name="pif_current_config">Configuração atual</string>
-    <string name="pif_security_patch">Patch de segurança: %s</string>
-    <string name="pif_disabled">Desativado</string>
-    <string name="pif_loading_config">Carregando configuração do PIF…</string>
-    <string name="pif_config_load_error">Falha ao carregar a configuração do PIF</string>
-    <string name="pif_loading_devices">Carregando dispositivos Pixel…</string>
-    <string name="pif_devices_load_error">Falha ao carregar dispositivos Pixel</string>
-    <string name="pif_choose_device">Escolha um dispositivo Pixel</string>
-    <string name="pif_random_device">Aleatório</string>
-    <string name="pif_applying">Aplicando…</string>
-    <string name="prompt_pif_applied">A impressão digital do PIF de %1$s foi aplicada; patch de segurança: %2$s.</string>
-    <string name="prompt_pif_disabled">A falsificação da impressão digital do PIF foi desativada.</string>
-    <string name="prompt_pif_apply_error">Falha ao atualizar a falsificação da impressão digital do PIF: %s</string>
     <string name="nav_main_aria">Navegação principal</string>
     <string name="nav_home">Início</string>
     <string name="nav_tools">Ferramentas</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Patch de segurança</string>
     <string name="home_tee_status">Status do TEE</string>
     <string name="home_tee_normal">Normal</string>
-    <string name="home_spoofed_device">Impressão digital do dispositivo falsificada</string>
     <string name="home_module_status">Status do módulo</string>
     <string name="home_status_loading">Verificando</string>
     <string name="home_status_running">Em execução</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Configurações do patch de segurança</string>
     <string name="tools_sync_patch_desc">Sincronize com a data do patch de segurança mais recente do Google</string>
     <string name="tools_restore_patch_desc">Restaure o patch de segurança padrão do dispositivo</string>
-    <string name="tools_pif_desc">Obtenha e aplique uma impressão digital do Pixel para falsificação de PIF</string>
-    <string name="tools_fingerprint_spoofing">Falsificação de impressão digital</string>
     <string name="settings_title">Configurações</string>
     <string name="settings_language">Idioma</string>
     <string name="settings_language_auto">Usar idioma do sistema</string>
@@ -159,12 +139,4 @@
     <string name="settings_floating_bottom_bar_desc">Mostrar a navegação como um painel flutuante</string>
     <string name="settings_liquid_glass">Vidro líquido</string>
     <string name="settings_liquid_glass_desc">Adicionar profundidade de vidro translúcido às superfícies</string>
-    <string name="tools_soter_beta">Compatibilidade com Tencent Soter (Beta)</string>
-    <string name="tools_soter_beta_desc">Compatibilidade experimental com o Tencent SoterServer. Requer Zygisk Next.</string>
-    <string name="soter_beta_warning">Apenas simulação Beta: retorna uma chave pública fixa e assinaturas preenchidas com zeros. Não é uma atestação TEE real e não corrige pagamentos nem assinaturas criptográficas. Aplica-se somente ao Tencent SoterServer, não ao KeyMint.</string>
-    <string name="soter_beta_enabled">Ativar compatibilidade com Soter</string>
-    <string name="soter_beta_enabled_desc">Desativada por padrão. As alterações só são salvas após tocar em Aplicar.</string>
-    <string name="soter_beta_reboot">Instale e ative o Zygisk Next separadamente. Reinicie o dispositivo após ativar ou desativar. A compatibilidade não foi verificada.</string>
-    <string name="soter_beta_saved">Configuração do Soter Beta salva. Reinicie o dispositivo para aplicar. A compatibilidade não foi verificada.</string>
-    <string name="soter_beta_preview">Apenas prévia. As configurações do dispositivo não podem ser salvas aqui.</string>
 </resources>
