@@ -792,6 +792,39 @@ impl KeystoreSecurityLevel {
         // Must return on error for security reasons.
         check_key_permission(KeyPerm::Rebind, &key, None, ctx).context(ks_err!())?;
 
+        // Temporary diagnostic: the alias binding is only replaced when store_new_key commits, so
+        // an alias that already resolves here belongs to a key the caller has not removed and
+        // stays visible for the whole operation. Remove after the report is collected.
+        if log::log_enabled!(log::Level::Debug) && key.alias.is_some() {
+            let preexisting = DB
+                .with(|db| {
+                    db.borrow_mut().load_key_entry(
+                        &key,
+                        KeyType::Client,
+                        KeyEntryLoadBits::NONE,
+                        caller_uid,
+                        |_, _| Ok(()),
+                    )
+                })
+                .map(|_| true)
+                .or_else(|error| match error.root_cause().downcast_ref::<Error>() {
+                    Some(Error::Rc(ResponseCode::KEY_NOT_FOUND)) => Ok(false),
+                    _ => Err(error),
+                });
+            match preexisting {
+                Ok(preexisting) => log::debug!(
+                    "event=generate alias={:?} preexisting={}",
+                    key.alias.as_deref().unwrap_or_default(),
+                    preexisting
+                ),
+                Err(error) => log::debug!(
+                    "event=generate alias={:?} preexisting=unknown: {:#}",
+                    key.alias.as_deref().unwrap_or_default(),
+                    error
+                ),
+            }
+        }
+
         let attestation_key_info = match (key.domain, attest_key_descriptor) {
             (Domain::BLOB, _) => None,
             _ => DB
