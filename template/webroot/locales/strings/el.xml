@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Αλλαγή Keybox</string>
     <string name="menu_sync_security_patch">Συγχρονισμός ενημέρωσης ασφαλείας</string>
     <string name="menu_restore_default_security_patch">Επαναφορά προεπιλεγμένης ενημέρωσης ασφαλείας</string>
-    <string name="menu_spoof_pif_fingerprint">Παραποίηση αποτυπώματος PIF</string>
     <string name="menu_language">Γλώσσα</string>
     <string name="menu_more_options">Περισσότερες επιλογές</string>
     <string name="menu_select_all">Επιλογή προτεινόμενων</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Δεν είναι δυνατή η πρόσβαση σε αυτόν τον φάκελο.</string>
     <string name="replace_keybox_storage_parent">Γονικός φάκελος</string>
     <string name="replace_keybox_storage_root">Κοινόχρηστος χώρος αποθήκευσης</string>
-    <string name="pif_fingerprint_title">Παραποίηση αποτυπώματος PIF</string>
-    <string name="pif_enable_spoofing">Ενεργοποίηση παραποίησης αποτυπώματος PIF</string>
-    <string name="pif_zygisk_next_required">Εγκαταστήστε και ενεργοποιήστε το Zygisk Next ξεχωριστά. Το OMK δεν το ενσωματώνει, δεν το κατεβάζει και δεν το εγκαθιστά.</string>
-    <string name="pif_current_config">Τρέχουσα διαμόρφωση</string>
-    <string name="pif_security_patch">Ενημέρωση ασφαλείας: %s</string>
-    <string name="pif_disabled">Απενεργοποιημένο</string>
-    <string name="pif_loading_config">Φόρτωση διαμόρφωσης PIF…</string>
-    <string name="pif_config_load_error">Αποτυχία φόρτωσης της διαμόρφωσης PIF</string>
-    <string name="pif_loading_devices">Φόρτωση συσκευών Pixel…</string>
-    <string name="pif_devices_load_error">Αποτυχία φόρτωσης συσκευών Pixel</string>
-    <string name="pif_choose_device">Επιλέξτε συσκευή Pixel</string>
-    <string name="pif_random_device">Τυχαία</string>
-    <string name="pif_applying">Εφαρμογή…</string>
-    <string name="prompt_pif_applied">Εφαρμόστηκε το αποτύπωμα PIF: %1$s · ενημέρωση ασφαλείας %2$s.</string>
-    <string name="prompt_pif_disabled">Η παραποίηση αποτυπώματος PIF απενεργοποιήθηκε.</string>
-    <string name="prompt_pif_apply_error">Αποτυχία ενημέρωσης της παραποίησης αποτυπώματος PIF: %s</string>
     <string name="nav_main_aria">Κύρια πλοήγηση</string>
     <string name="nav_home">Αρχική</string>
     <string name="nav_tools">Εργαλεία</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Ενημέρωση ασφαλείας</string>
     <string name="home_tee_status">Κατάσταση TEE</string>
     <string name="home_tee_normal">Κανονικό</string>
-    <string name="home_spoofed_device">Παραποιημένο αποτύπωμα συσκευής</string>
     <string name="home_module_status">Κατάσταση μονάδας</string>
     <string name="home_status_loading">Έλεγχος</string>
     <string name="home_status_running">Εκτελείται</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Ρυθμίσεις ενημέρωσης κώδικα ασφαλείας</string>
     <string name="tools_sync_patch_desc">Συγχρονισμός με την πιο πρόσφατη ημερομηνία ενημέρωσης ασφαλείας της Google</string>
     <string name="tools_restore_patch_desc">Επαναφορά της προεπιλεγμένης ενημέρωσης ασφαλείας της συσκευής</string>
-    <string name="tools_pif_desc">Λήψη και εφαρμογή αποτυπώματος Pixel για πλαστογράφηση PIF</string>
-    <string name="tools_fingerprint_spoofing">Παραποίηση αποτυπώματος</string>
     <string name="settings_title">Ρυθμίσεις</string>
     <string name="settings_language">Γλώσσα</string>
     <string name="settings_language_auto">Χρήση γλώσσας συστήματος</string>
@@ -161,7 +141,6 @@
     <string name="settings_liquid_glass_desc">Προσθήκη ημιδιαφανούς γυάλινου βάθους στις επιφάνειες</string>
     <string name="tools_soter_beta">Συμβατότητα Tencent Soter (Beta)</string>
     <string name="tools_soter_beta_desc">Πειραματική συμβατότητα με το Tencent SoterServer. Απαιτεί Zygisk Next.</string>
-    <string name="soter_beta_warning">Μόνο προσομοίωση Beta: επιστρέφει ένα σταθερό δημόσιο κλειδί και υπογραφές γεμάτες μηδενικά. Δεν αποτελεί πραγματική πιστοποίηση TEE και δεν επιδιορθώνει πληρωμές ή κρυπτογραφικές υπογραφές. Ισχύει μόνο για το Tencent SoterServer, όχι για το KeyMint.</string>
     <string name="soter_beta_enabled">Ενεργοποίηση συμβατότητας Soter</string>
     <string name="soter_beta_enabled_desc">Απενεργοποιημένη από προεπιλογή. Οι αλλαγές αποθηκεύονται μόνο αφού πατήσετε Εφαρμογή.</string>
     <string name="soter_beta_reboot">Εγκαταστήστε και ενεργοποιήστε το Zygisk Next ξεχωριστά. Επανεκκινήστε τη συσκευή μετά την ενεργοποίηση ή απενεργοποίηση. Η συμβατότητα δεν έχει επαληθευτεί.</string>

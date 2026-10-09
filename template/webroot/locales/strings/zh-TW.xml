@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">更換Keybox</string>
     <string name="menu_sync_security_patch">同步安全性修補程式</string>
     <string name="menu_restore_default_security_patch">還原預設安全性修補程式</string>
-    <string name="menu_spoof_pif_fingerprint">偽裝 PIF 指紋</string>
     <string name="menu_language">語言</string>
     <string name="menu_more_options">更多選項</string>
     <string name="menu_select_all">推薦選取</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">無法存取此資料夾。</string>
     <string name="replace_keybox_storage_parent">上層資料夾</string>
     <string name="replace_keybox_storage_root">共用儲存空間</string>
-    <string name="pif_fingerprint_title">偽裝 PIF 指紋</string>
-    <string name="pif_enable_spoofing">啟用 PIF 指紋偽裝</string>
-    <string name="pif_zygisk_next_required">需自行安裝並啟用 Zygisk Next；OMK 不內建、下載或安裝該模組。</string>
-    <string name="pif_current_config">目前設定</string>
-    <string name="pif_security_patch">安全性修補程式：%s</string>
-    <string name="pif_disabled">已停用</string>
-    <string name="pif_loading_config">正在載入 PIF 設定…</string>
-    <string name="pif_config_load_error">載入 PIF 設定失敗</string>
-    <string name="pif_loading_devices">正在載入 Pixel 裝置…</string>
-    <string name="pif_devices_load_error">載入 Pixel 裝置失敗</string>
-    <string name="pif_choose_device">選擇 Pixel 裝置</string>
-    <string name="pif_random_device">隨機</string>
-    <string name="pif_applying">正在套用…</string>
-    <string name="prompt_pif_applied">已套用 %1$s 的 PIF 指紋，安全性修補程式為 %2$s。</string>
-    <string name="prompt_pif_disabled">已停用 PIF 指紋偽裝。</string>
-    <string name="prompt_pif_apply_error">更新 PIF 指紋偽裝失敗：%s</string>
     <string name="nav_main_aria">主要導覽</string>
     <string name="nav_home">首頁</string>
     <string name="nav_tools">工具</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">安全性修補程式</string>
     <string name="home_tee_status">TEE 狀態</string>
     <string name="home_tee_normal">正常</string>
-    <string name="home_spoofed_device">偽裝裝置指紋</string>
     <string name="home_module_status">模組狀態</string>
     <string name="home_status_loading">正在檢查</string>
     <string name="home_status_running">執行中</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">設定安全性修補程式</string>
     <string name="tools_sync_patch_desc">同步至 Google 最新安全性修補程式日期</string>
     <string name="tools_restore_patch_desc">還原裝置的預設安全性修補程式</string>
-    <string name="tools_pif_desc">擷取並套用 Pixel 指紋以偽裝 PIF</string>
-    <string name="tools_fingerprint_spoofing">指紋偽裝</string>
     <string name="settings_title">設定</string>
     <string name="settings_language">語言</string>
     <string name="settings_language_auto">跟隨系統</string>
@@ -161,7 +141,6 @@
     <string name="settings_liquid_glass_desc">為介面增加半透明玻璃層次</string>
     <string name="tools_soter_beta">騰訊 Soter 相容（Beta）</string>
     <string name="tools_soter_beta_desc">騰訊 SoterServer 的實驗性相容功能，需要 Zygisk Next。</string>
-    <string name="soter_beta_warning">僅限 Beta 模擬：傳回固定公鑰與全零簽章，並非真正的 TEE 認證，也無法修復支付或加密簽章。僅作用於騰訊 SoterServer，不影響 KeyMint。</string>
     <string name="soter_beta_enabled">啟用 Soter 相容</string>
     <string name="soter_beta_enabled_desc">預設關閉。點選套用後才會儲存變更。</string>
     <string name="soter_beta_reboot">請自行安裝並啟用 Zygisk Next。開啟或關閉後均需重新啟動裝置；相容效果尚未驗證。</string>

@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Zmień Keybox</string>
     <string name="menu_sync_security_patch">Synchronizuj poprawkę zabezpieczeń</string>
     <string name="menu_restore_default_security_patch">Przywróć domyślną poprawkę zabezpieczeń</string>
-    <string name="menu_spoof_pif_fingerprint">Fałszuj odcisk PIF</string>
     <string name="menu_language">Język</string>
     <string name="menu_more_options">Więcej opcji</string>
     <string name="menu_select_all">Zaznacz zalecane aplikacje</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Nie można uzyskać dostępu do tego folderu.</string>
     <string name="replace_keybox_storage_parent">Folder nadrzędny</string>
     <string name="replace_keybox_storage_root">Pamięć współdzielona</string>
-    <string name="pif_fingerprint_title">Fałszowanie odcisku PIF</string>
-    <string name="pif_enable_spoofing">Włącz fałszowanie odcisku PIF</string>
-    <string name="pif_zygisk_next_required">Zainstaluj i włącz osobno Zygisk Next. OMK nie zawiera, nie pobiera ani nie instaluje tego modułu.</string>
-    <string name="pif_current_config">Bieżąca konfiguracja</string>
-    <string name="pif_security_patch">Poprawka zabezpieczeń: %s</string>
-    <string name="pif_disabled">Wyłączone</string>
-    <string name="pif_loading_config">Wczytywanie konfiguracji PIF…</string>
-    <string name="pif_config_load_error">Nie udało się wczytać konfiguracji PIF</string>
-    <string name="pif_loading_devices">Wczytywanie urządzeń Pixel…</string>
-    <string name="pif_devices_load_error">Nie udało się wczytać urządzeń Pixel</string>
-    <string name="pif_choose_device">Wybierz urządzenie Pixel</string>
-    <string name="pif_random_device">Losowo</string>
-    <string name="pif_applying">Stosowanie…</string>
-    <string name="prompt_pif_applied">Zastosowano odcisk PIF urządzenia %1$s; poprawka zabezpieczeń: %2$s.</string>
-    <string name="prompt_pif_disabled">Wyłączono fałszowanie odcisku PIF.</string>
-    <string name="prompt_pif_apply_error">Nie udało się zaktualizować fałszowania odcisku PIF: %s</string>
     <string name="nav_main_aria">Główna nawigacja</string>
     <string name="nav_home">Strona główna</string>
     <string name="nav_tools">Narzędzia</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Poprawka zabezpieczeń</string>
     <string name="home_tee_status">Stan TEE</string>
     <string name="home_tee_normal">Prawidłowy</string>
-    <string name="home_spoofed_device">Sfałszowany odcisk urządzenia</string>
     <string name="home_module_status">Stan modułu</string>
     <string name="home_status_loading">Sprawdzanie</string>
     <string name="home_status_running">Działa</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Ustawienia poprawek zabezpieczeń</string>
     <string name="tools_sync_patch_desc">Zsynchronizuj z najnowszą datą poprawki zabezpieczeń Google</string>
     <string name="tools_restore_patch_desc">Przywróć domyślną poprawkę zabezpieczeń urządzenia</string>
-    <string name="tools_pif_desc">Pobierz i zastosuj odcisk Pixel do podszywania się PIF</string>
-    <string name="tools_fingerprint_spoofing">Fałszowanie odcisku</string>
     <string name="settings_title">Ustawienia</string>
     <string name="settings_language">Język</string>
     <string name="settings_language_auto">Użyj języka systemu</string>
@@ -161,7 +141,6 @@
     <string name="settings_liquid_glass_desc">Dodaj powierzchniom głębię półprzezroczystego szkła</string>
     <string name="tools_soter_beta">Zgodność z Tencent Soter (Beta)</string>
     <string name="tools_soter_beta_desc">Eksperymentalna zgodność z Tencent SoterServer. Wymaga Zygisk Next.</string>
-    <string name="soter_beta_warning">Wyłącznie symulacja Beta: zwraca stały klucz publiczny i podpisy wypełnione zerami. Nie jest to prawdziwa atestacja TEE i nie naprawia płatności ani podpisów kryptograficznych. Dotyczy tylko Tencent SoterServer, nie KeyMint.</string>
     <string name="soter_beta_enabled">Włącz zgodność z Soter</string>
     <string name="soter_beta_enabled_desc">Domyślnie wyłączona. Zmiany są zapisywane dopiero po dotknięciu przycisku Zastosuj.</string>
     <string name="soter_beta_reboot">Zainstaluj i włącz Zygisk Next osobno. Po włączeniu lub wyłączeniu uruchom urządzenie ponownie. Zgodność nie została zweryfikowana.</string>

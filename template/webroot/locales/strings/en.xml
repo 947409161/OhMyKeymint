@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Change Keybox</string>
     <string name="menu_sync_security_patch">Sync security patch</string>
     <string name="menu_restore_default_security_patch">Restore default security patch</string>
-    <string name="menu_spoof_pif_fingerprint">Spoof PIF fingerprint</string>
     <string name="menu_language">Language</string>
     <string name="menu_more_options">More options</string>
     <string name="menu_select_all">Select recommended apps</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Unable to access this folder.</string>
     <string name="replace_keybox_storage_parent">Parent folder</string>
     <string name="replace_keybox_storage_root">Shared storage</string>
-    <string name="pif_fingerprint_title">Spoof PIF fingerprint</string>
-    <string name="pif_enable_spoofing">Enable PIF fingerprint spoofing</string>
-    <string name="pif_zygisk_next_required">Install and enable Zygisk Next separately. OMK does not bundle, download, or install it.</string>
-    <string name="pif_current_config">Current configuration</string>
-    <string name="pif_security_patch">Security patch: %s</string>
-    <string name="pif_disabled">Disabled</string>
-    <string name="pif_loading_config">Loading PIF configuration…</string>
-    <string name="pif_config_load_error">Failed to load the PIF configuration</string>
-    <string name="pif_loading_devices">Loading Pixel devices…</string>
-    <string name="pif_devices_load_error">Failed to load Pixel devices</string>
-    <string name="pif_choose_device">Choose a Pixel device</string>
-    <string name="pif_random_device">Random</string>
-    <string name="pif_applying">Applying…</string>
-    <string name="prompt_pif_applied">PIF fingerprint applied: %1$s · security patch %2$s.</string>
-    <string name="prompt_pif_disabled">PIF fingerprint spoofing disabled.</string>
-    <string name="prompt_pif_apply_error">Failed to update PIF fingerprint spoofing: %s</string>
     <string name="nav_main_aria">Main navigation</string>
     <string name="nav_home">Home</string>
     <string name="nav_tools">Tools</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Security patch</string>
     <string name="home_tee_status">TEE status</string>
     <string name="home_tee_normal">Normal</string>
-    <string name="home_spoofed_device">Spoofed device fingerprint</string>
     <string name="home_module_status">Module status</string>
     <string name="home_status_loading">Checking</string>
     <string name="home_status_running">Running</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Security patch settings</string>
     <string name="tools_sync_patch_desc">Sync to the latest Google security patch date</string>
     <string name="tools_restore_patch_desc">Restore the device's default security patch</string>
-    <string name="tools_pif_desc">Fetch and apply a Pixel fingerprint for PIF spoofing</string>
-    <string name="tools_fingerprint_spoofing">Fingerprint spoofing</string>
     <string name="settings_title">Settings</string>
     <string name="settings_language">Language</string>
     <string name="settings_language_auto">Follow system language</string>
@@ -166,18 +146,10 @@
     <string name="settings_liquid_glass_desc">Add translucent glass depth to surfaces</string>
     <string name="tools_soter_beta">Tencent Soter compatibility (Beta)</string>
     <string name="tools_soter_beta_desc">Experimental compatibility for Tencent SoterServer. Requires Zygisk Next.</string>
-    <string name="soter_beta_warning">Beta simulation only: returns a fixed public key and zero-filled signatures. This is not real TEE attestation and does not repair payments or cryptographic signatures. Applies only to Tencent SoterServer, not KeyMint.</string>
     <string name="soter_beta_enabled">Enable Soter compatibility</string>
     <string name="soter_beta_enabled_desc">Disabled by default. Changes are saved only after you tap Apply.</string>
     <string name="soter_beta_reboot">Install and enable Zygisk Next separately. Restart the device after enabling or disabling. Compatibility is not verified.</string>
     <string name="soter_beta_saved">Soter Beta preference saved. Restart the device to apply. Compatibility is not verified.</string>
     <string name="soter_beta_preview">Preview only. Device settings cannot be saved here.</string>
-    <string name="tools_wechat_soter">Fix WeChat payment fingerprint</string>
-    <string name="tools_wechat_soter_desc">Configure the Qualcomm Soter service.</string>
-    <string name="tools_soter_hal">Soter HAL configuration</string>
-    <string name="soter_hal_desc">Configure the Qualcomm Soter service.</string>
-    <string name="soter_hal_enabled">Enable feature</string>
-    <string name="soter_hal_saved">Feature enabled</string>
-    <string name="soter_hal_disabled">Feature disabled</string>
-    <string name="soter_hal_preview">Preview only. Device settings cannot be saved here.</string>
+    <string name="soter_beta_warning">Beta simulation only: replies carry a software-generated key pair and signature. This is not real TEE attestation and does not repair payments or cryptographic signatures. Applies only to Tencent SoterServer, not KeyMint.</string>
 </resources>

@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Cambia Keybox</string>
     <string name="menu_sync_security_patch">Sincronizza patch di sicurezza</string>
     <string name="menu_restore_default_security_patch">Ripristina patch di sicurezza predefinita</string>
-    <string name="menu_spoof_pif_fingerprint">Simula l'impronta PIF</string>
     <string name="menu_language">Lingua</string>
     <string name="menu_more_options">Altre opzioni</string>
     <string name="menu_select_all">Seleziona app consigliate</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Impossibile accedere a questa cartella.</string>
     <string name="replace_keybox_storage_parent">Cartella principale</string>
     <string name="replace_keybox_storage_root">Spazio di archiviazione condiviso</string>
-    <string name="pif_fingerprint_title">Simula l'impronta PIF</string>
-    <string name="pif_enable_spoofing">Abilita la simulazione dell'impronta PIF</string>
-    <string name="pif_zygisk_next_required">Installa e abilita Zygisk Next separatamente. OMK non lo include, scarica o installa.</string>
-    <string name="pif_current_config">Configurazione attuale</string>
-    <string name="pif_security_patch">Patch di sicurezza: %s</string>
-    <string name="pif_disabled">Disabilitato</string>
-    <string name="pif_loading_config">Caricamento della configurazione PIF…</string>
-    <string name="pif_config_load_error">Impossibile caricare la configurazione PIF</string>
-    <string name="pif_loading_devices">Caricamento dei dispositivi Pixel…</string>
-    <string name="pif_devices_load_error">Impossibile caricare i dispositivi Pixel</string>
-    <string name="pif_choose_device">Scegli un dispositivo Pixel</string>
-    <string name="pif_random_device">Casuale</string>
-    <string name="pif_applying">Applicazione…</string>
-    <string name="prompt_pif_applied">Impronta PIF applicata: %1$s · patch di sicurezza %2$s.</string>
-    <string name="prompt_pif_disabled">Simulazione dell'impronta PIF disabilitata.</string>
-    <string name="prompt_pif_apply_error">Impossibile aggiornare la simulazione dell'impronta PIF: %s</string>
     <string name="nav_main_aria">Navigazione principale</string>
     <string name="nav_home">Home</string>
     <string name="nav_tools">Strumenti</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Patch di sicurezza</string>
     <string name="home_tee_status">Stato TEE</string>
     <string name="home_tee_normal">Normale</string>
-    <string name="home_spoofed_device">Impronta dispositivo simulata</string>
     <string name="home_module_status">Stato del modulo</string>
     <string name="home_status_loading">Verifica in corso</string>
     <string name="home_status_running">In esecuzione</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Impostazioni patch di sicurezza</string>
     <string name="tools_sync_patch_desc">Sincronizza con la data dell'ultima patch di sicurezza Google</string>
     <string name="tools_restore_patch_desc">Ripristina la patch di sicurezza predefinita del dispositivo</string>
-    <string name="tools_pif_desc">Scarica e applica un'impronta Pixel per lo spoofing PIF</string>
-    <string name="tools_fingerprint_spoofing">Simulazione dell'impronta</string>
     <string name="settings_title">Impostazioni</string>
     <string name="settings_language">Lingua</string>
     <string name="settings_language_auto">Usa la lingua di sistema</string>
@@ -161,7 +141,6 @@
     <string name="settings_liquid_glass_desc">Aggiunge profondità in vetro traslucido alle superfici</string>
     <string name="tools_soter_beta">Compatibilità Tencent Soter (Beta)</string>
     <string name="tools_soter_beta_desc">Compatibilità sperimentale con Tencent SoterServer. Richiede Zygisk Next.</string>
-    <string name="soter_beta_warning">Solo simulazione Beta: restituisce una chiave pubblica fissa e firme riempite di zeri. Non è una vera attestazione TEE e non ripara pagamenti o firme crittografiche. Si applica solo a Tencent SoterServer, non a KeyMint.</string>
     <string name="soter_beta_enabled">Abilita compatibilità Soter</string>
     <string name="soter_beta_enabled_desc">Disabilitata per impostazione predefinita. Le modifiche vengono salvate solo dopo aver toccato Applica.</string>
     <string name="soter_beta_reboot">Installa e abilita Zygisk Next separatamente. Riavvia il dispositivo dopo l'abilitazione o la disabilitazione. La compatibilità non è stata verificata.</string>

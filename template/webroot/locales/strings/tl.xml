@@ -13,7 +13,6 @@
     <string name="menu_replace_keybox">Palitan ang Keybox</string>
     <string name="menu_sync_security_patch">I-sync ang security patch</string>
     <string name="menu_restore_default_security_patch">Ibalik ang default na security patch</string>
-    <string name="menu_spoof_pif_fingerprint">I-spoof ang PIF fingerprint</string>
     <string name="menu_language">Wika</string>
     <string name="menu_more_options">Higit pang opsyon</string>
     <string name="menu_select_all">Piliin ang mga inirerekomenda</string>
@@ -42,22 +41,6 @@
     <string name="replace_keybox_storage_error">Hindi ma-access ang folder na ito.</string>
     <string name="replace_keybox_storage_parent">Parent folder</string>
     <string name="replace_keybox_storage_root">Shared storage</string>
-    <string name="pif_fingerprint_title">I-spoof ang PIF fingerprint</string>
-    <string name="pif_enable_spoofing">I-enable ang PIF fingerprint spoofing</string>
-    <string name="pif_zygisk_next_required">I-install at i-enable nang hiwalay ang Zygisk Next. Hindi ito kasama sa OMK at hindi ito dina-download o ini-install ng OMK.</string>
-    <string name="pif_current_config">Kasalukuyang config</string>
-    <string name="pif_security_patch">Patch sa seguridad: %s</string>
-    <string name="pif_disabled">Naka-disable</string>
-    <string name="pif_loading_config">Nilo-load ang PIF config…</string>
-    <string name="pif_config_load_error">Hindi ma-load ang PIF config</string>
-    <string name="pif_loading_devices">Nilo-load ang mga Pixel device…</string>
-    <string name="pif_devices_load_error">Hindi ma-load ang mga Pixel device</string>
-    <string name="pif_choose_device">Pumili ng Pixel device</string>
-    <string name="pif_random_device">Sapalaran</string>
-    <string name="pif_applying">Inilalapat…</string>
-    <string name="prompt_pif_applied">Nailapat ang PIF fingerprint ng %1$s; security patch: %2$s.</string>
-    <string name="prompt_pif_disabled">Naka-disable ang PIF fingerprint spoofing.</string>
-    <string name="prompt_pif_apply_error">Hindi ma-update ang PIF fingerprint spoofing: %s</string>
     <string name="nav_main_aria">Pangunahing nabigasyon</string>
     <string name="nav_home">Home</string>
     <string name="nav_tools">Mga Tool</string>
@@ -86,7 +69,6 @@
     <string name="home_security_patch">Patch sa seguridad</string>
     <string name="home_tee_status">Status ng TEE</string>
     <string name="home_tee_normal">Normal</string>
-    <string name="home_spoofed_device">Na-spoof na fingerprint ng device</string>
     <string name="home_module_status">Katayuan ng module</string>
     <string name="home_status_loading">Sinusuri</string>
     <string name="home_status_running">Gumagana</string>
@@ -119,8 +101,6 @@
     <string name="tools_security_patch">Mga setting ng security patch</string>
     <string name="tools_sync_patch_desc">I-sync sa pinakabagong petsa ng security patch ng Google</string>
     <string name="tools_restore_patch_desc">Ibalik ang default na security patch ng device</string>
-    <string name="tools_pif_desc">Kunin at ilapat ang Pixel fingerprint para sa PIF spoofing</string>
-    <string name="tools_fingerprint_spoofing">Pag-spoof ng fingerprint</string>
     <string name="settings_title">Mga Setting</string>
     <string name="settings_language">Wika</string>
     <string name="settings_language_auto">Gamitin ang wika ng system</string>
@@ -161,7 +141,6 @@
     <string name="settings_liquid_glass_desc">Magdagdag ng translucent na lalim ng salamin sa mga surface</string>
     <string name="tools_soter_beta">Pagiging tugma sa Tencent Soter (Beta)</string>
     <string name="tools_soter_beta_desc">Eksperimental na pagiging tugma sa Tencent SoterServer. Kailangan ang Zygisk Next.</string>
-    <string name="soter_beta_warning">Beta simulation lamang: nagbabalik ng nakapirming public key at mga lagdang puno ng zero. Hindi ito tunay na TEE attestation at hindi nito inaayos ang mga pagbabayad o cryptographic signature. Para lamang sa Tencent SoterServer, hindi sa KeyMint.</string>
     <string name="soter_beta_enabled">Paganahin ang pagiging tugma sa Soter</string>
     <string name="soter_beta_enabled_desc">Naka-off bilang default. Mase-save lamang ang mga pagbabago pagkatapos pindutin ang Ilapat.</string>
     <string name="soter_beta_reboot">Hiwalay na i-install at paganahin ang Zygisk Next. I-restart ang device pagkatapos itong i-on o i-off. Hindi pa nabeberipika ang pagiging tugma.</string>
