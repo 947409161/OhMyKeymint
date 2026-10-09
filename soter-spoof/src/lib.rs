@@ -13,7 +13,7 @@ use zygisk_api::{
     },
 };
 
-use libc::{c_char, c_void};
+use libc::c_void;
 
 mod attk;
 mod ids;

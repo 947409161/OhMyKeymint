@@ -107,7 +107,7 @@ fn parse_pkcs8_private(der: &[u8]) -> Option<(BigUint, BigUint, BigUint)> {
     }
     let mut field = 0;
     let (_, _) = der_tlv(sequence, &mut field)?;
-    let mut read_integer = |field: &mut usize| -> Option<BigUint> {
+    let read_integer = |field: &mut usize| -> Option<BigUint> {
         let (tag, bytes) = der_tlv(sequence, field)?;
         if tag != 0x02 || bytes.is_empty() {
             return None;
@@ -283,6 +283,6 @@ mod tests {
         hash_input.extend_from_slice(&[0u8; 8]);
         hash_input.extend_from_slice(&Sha256::digest(json));
         hash_input.extend_from_slice(salt);
-        Sha256::digest(&hash_input)[..] == *hash
+        Sha256::digest(&hash_input)[..] == hash[..]
     }
 }

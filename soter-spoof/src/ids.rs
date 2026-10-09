@@ -40,19 +40,19 @@ fn property(name: &str) -> Option<String> {
         Some(unsafe { std::mem::transmute::<*mut c_void, GetProperty>(address) })
     }))?;
     let name = CString::new(name).ok()?;
-    let mut value = [0i8; PROPERTY_VALUE_MAX];
+    let mut value = [0u8; PROPERTY_VALUE_MAX];
     let length = unsafe { get(name.as_ptr(), value.as_mut_ptr()) };
     if length <= 0 || length as usize >= PROPERTY_VALUE_MAX {
         return None;
     }
-    let bytes = value[..length as usize].iter().map(|byte| *byte as u8).collect::<Vec<_>>();
+    let bytes = value[..length as usize].to_vec();
     String::from_utf8(bytes).ok().filter(|value| !value.trim().is_empty())
 }
 
 /// Read a small text file and trim surrounding whitespace, keeping any other byte as the
 /// reference implementation does.
 fn read_trimmed(path: &str) -> Option<String> {
-    let mut file = std::fs::File::open(path).ok()?;
+    let file = std::fs::File::open(path).ok()?;
     let mut buffer = Vec::with_capacity(256);
     file.take(256).read_to_end(&mut buffer).ok()?;
     let value = String::from_utf8_lossy(&buffer).trim().to_string();

@@ -521,19 +521,6 @@ watch(soterOpen, open => {
   if (open) trackSoterOverlay()
   else if (overlayHistory.delete('soter-beta')) history.consume('soter-beta')
 })
-function trackSoterHalOverlay(): void {
-  const key = 'soter-hal'
-  if (!soterHalOpen.value || overlayHistory.has(key)) return
-  overlayHistory.add(key)
-  history.push(key, () => {
-    overlayHistory.delete(key)
-    if (soterHalDialog.value?.requestClose() === false) void nextTick(trackSoterHalOverlay)
-  })
-}
-watch(soterHalOpen, open => {
-  if (open) trackSoterHalOverlay()
-  else if (overlayHistory.delete('soter-hal')) history.consume('soter-hal')
-})
 watch(keyboxOpen, open => {
   if (open && !overlayHistory.has('keybox')) {
     overlayHistory.add('keybox')
