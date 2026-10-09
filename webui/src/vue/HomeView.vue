@@ -29,6 +29,7 @@ const props = defineProps<{
   keyboxLevel: KeyboxLevel
   keyboxRevocation: KeyboxRevocationStatus
   teeStatus: TeeStatus
+  securityPatch: string | null
   activities: ActivityEntry[]
   activityStatus: ActivityStatus
   activityClearBusy: boolean

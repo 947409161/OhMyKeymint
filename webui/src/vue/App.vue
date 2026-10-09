@@ -316,6 +316,11 @@ async function refreshIdentity(force = false): Promise<void> {
     return
   }
   try {
+    const [keybox, patch, tee] = await Promise.allSettled([
+      cli.getKeyboxState(),
+      cli.getSystemSecurityPatch(),
+      cli.getTeeStatus(),
+    ])
     if (keybox.status === 'fulfilled') {
       const value = keybox.value
       keyboxStatus.value = value.valid ? (value.bundled ? 'bundled' : 'custom') : 'invalid'
