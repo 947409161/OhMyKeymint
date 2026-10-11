@@ -2,12 +2,11 @@
 //!
 //! Reply values follow the D-Soter reference implementation (Apache-2.0),
 //! <https://github.com/947409161/D-soter>, `module/jni/dsoter.cpp` and
-//! `module/jni/soter_attk.h`: the export blob carries a real RSA-2048 key pair with an
-//! RSASSA-PSS/SHA-256 signature, `cpu_id` and the device identifier are derived from the unit
-//! serial, and the exported `uid` is the calling process.
+//! `module/jni/soter_attk.h`: exports carry independent RSA-2048 public keys with
+//! ATTK -> ASK -> AuthKey RSASSA-PSS/SHA-256 parent signatures. The `cpu_id` and device
+//! identifier are derived from the unit serial, and the exported `uid` is the Binder caller.
 
 use std::{
-    cell::Cell,
     ffi::{CStr, c_char, c_void},
     mem::{align_of, size_of},
     panic::{AssertUnwindSafe, catch_unwind},
@@ -19,13 +18,6 @@ use std::{
 };
 
 use zygisk_api::api::{V4, ZygiskApi};
-
-thread_local! {
-    /// The uid the driver recorded for the transaction being answered. The driver delivers a
-    /// retargeted transaction to the local stub on the same thread, so concurrent callers cannot
-    /// mix their uids up.
-    static CALLING_UID: Cell<u32> = const { Cell::new(0) };
-}
 
 mod wire;
 
@@ -78,7 +70,6 @@ type OnDestroy = unsafe extern "C" fn(*mut c_void);
 type OnTransact = unsafe extern "C" fn(*mut c_void, u32, *const c_void, *mut c_void) -> i32;
 type ClassDefine =
     unsafe extern "C" fn(*const c_char, OnCreate, OnDestroy, OnTransact) -> *mut c_void;
-type DisableInterfaceHeader = unsafe extern "C" fn(*mut c_void);
 type BinderNew = unsafe extern "C" fn(*const c_void, *mut c_void) -> *mut c_void;
 type BinderRef = unsafe extern "C" fn(*mut c_void);
 type ParcelCreate = unsafe extern "C" fn() -> *mut c_void;
@@ -104,6 +95,8 @@ struct LegacyParcel {
 
 struct NativeApi {
     parcel_size: ParcelSize,
+    parcel_position: ParcelSize,
+    calling_uid: unsafe extern "C" fn() -> u32,
     view_platform: Option<ViewPlatform>,
     legacy_layout: bool,
     platform_data: PlatformData,
@@ -203,10 +196,14 @@ pub(crate) fn install(api: &mut ZygiskApi<'_, V4>) -> Result<(), String> {
 
 /// No Zygisk API is used here. Binder state is initialized only after Android
 /// has assigned the app's UID, SELinux context and file-descriptor state.
-pub(crate) fn activate() {
+pub(crate) fn activate(env: &jni::JNIEnv<'_>) {
     let Some(Ok((ndk, binder))) = INSTALL.get() else {
         return;
     };
+    if !crate::attk::initialize_vm(env) {
+        log("Soter Beta cannot access the Java VM for RSA generation");
+        return;
+    }
     match NATIVE.get_or_init(|| load_native(*ndk, *binder)) {
         Ok(_) => {
             ACTIVE.store(true, Ordering::Release);
@@ -266,7 +263,6 @@ unsafe fn inspect_read(argument: *const WriteRead) {
                 transaction.data_size as usize,
             )
         };
-        CALLING_UID.set(transaction.sender_euid);
         if retarget(transaction, data, native.target) {
             log_code_once(
                 &MATCHED_CODES,
@@ -289,7 +285,7 @@ fn candidate(transaction: &Transaction) -> bool {
     (1..=13).contains(&transaction.code)
         && transaction.target != 0
         // The kernel owns and validates the payload and its object offsets.
-        // D-soter ignores argument objects and accepts all transaction flags.
+        // Descriptor routing preserves argument objects and all transaction flags.
         && transaction.data_size <= MAX_REQUEST_BYTES as u64
         && valid_pointer_range(transaction.buffer, transaction.data_size)
 }
@@ -385,6 +381,8 @@ fn load_native(ndk: usize, binder: usize) -> Result<NativeStub, String> {
     }
     let api = NativeApi {
         parcel_size: symbol(ndk, c"AParcel_getDataSize")?,
+        parcel_position: symbol(ndk, c"AParcel_getDataPosition")?,
+        calling_uid: symbol(ndk, c"AIBinder_getCallingUid")?,
         view_platform,
         legacy_layout: matches!(sdk, 31..=33),
         platform_data: symbol(binder, c"_ZNK7android6Parcel4dataEv")?,
@@ -405,14 +403,8 @@ fn load_native(ndk: usize, binder: usize) -> Result<NativeStub, String> {
     if class.is_null() {
         return Err("Soter Beta cannot define native Binder class".to_string());
     }
-    // Android 13+ supports legacy Binder interfaces without enforcing a
-    // particular header layout. Descriptor matching remains in our handler,
-    // as in D-soter. Android 12 retains the standard platform AIDL header check.
-    if sdk >= 33 {
-        let disable_header: DisableInterfaceHeader =
-            symbol(ndk, c"AIBinder_Class_disableInterfaceTokenHeader")?;
-        unsafe { disable_header(class) };
-    }
+    // Keep the standard header check on every supported Android version. The
+    // callback receives the cursor after checkInterface consumed the real header.
     let stub = unsafe { new(class, ptr::null_mut()) };
     if stub.is_null() {
         return Err("Soter Beta cannot allocate native Binder".to_string());
@@ -524,6 +516,13 @@ unsafe extern "C" fn on_transact(
         if !wire::valid_request(code, bytes) {
             return BAD_VALUE;
         }
+        let position = unsafe { (native.api.parcel_position)(input) };
+        let Ok(position) = usize::try_from(position) else {
+            return BAD_VALUE;
+        };
+        let Ok(alias) = wire::request_alias(code, bytes, position) else {
+            return BAD_VALUE;
+        };
         // A one-way call has no reply to deliver. The upstream stub accepts it
         // without invoking the original service.
         if output.is_null() {
@@ -537,7 +536,8 @@ unsafe extern "C" fn on_transact(
         }
         wire::write_reply(
             code,
-            CALLING_UID.get(),
+            unsafe { (native.api.calling_uid)() },
+            &alias,
             &mut NativeWriter {
                 api: &native.api,
                 output,

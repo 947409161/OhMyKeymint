@@ -1,16 +1,21 @@
 //! RSA-2048 RSASSA-PSS signing for the forged Soter key exports.
 //!
-//! The public half embedded in every export blob and the signing key are the same pair by
-//! construction, so the blob the Soter client verifies is self-consistent. The parameters mirror
+//! The reference ATTK signs ASK exports, and each ASK signs its AuthKey exports.
+//! ASK and AuthKey subjects use independent runtime-generated RSA key pairs. The parameters mirror
 //! the D-Soter reference implementation: SHA-256 with MGF1-SHA256, a 20-byte salt, and
 //! `emBits = 2047` over a 2048-bit modulus.
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use jni::{
+    JNIEnv, JavaVM,
+    objects::{JByteArray, JValue},
+};
 use num_bigint_dig::BigUint;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 
-/// ASK/ATTK public half. It travels inside the exported JSON, so clients verify the signature
-/// against the very key that produced it.
+/// Reference ATTK public half used to verify ASK signatures in tests.
+#[cfg(test)]
 pub(crate) const ATTK_PUBLIC_B64: &str = concat!(
     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2cJFTNvNSzXRZyD9qKWo",
     "DRWj/Np/a6MXIfzFKWBMBWbavCnrsxqHcEC1phAqibQ5HW+yNPWcbRGyHfrDsTw9",
@@ -21,7 +26,7 @@ pub(crate) const ATTK_PUBLIC_B64: &str = concat!(
     "wQIDAQAB",
 );
 
-/// Matching PKCS#8 private half. It only ever signs the export JSON above.
+/// Reference ATTK private half. It signs ASK exports; ASK keys sign AuthKey exports.
 const ATTK_PRIVATE_B64: &str = concat!(
     "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDZwkVM281LNdFn",
     "IP2opagNFaP82n9roxch/MUpYEwFZtq8KeuzGodwQLWmECqJtDkdb7I09ZxtEbId",
@@ -50,6 +55,72 @@ const ATTK_PRIVATE_B64: &str = concat!(
     "qG+O+9COZEsNfKpMDExpwj2YhsNSm3qGCNN1Wa60Km2NdB+O+KVHBGeoPzuXmFSO",
     "5y3G0apc5G+MHqfA0jITAIs=",
 );
+
+/// Only owned DER bytes cross the JNI local frame; Java objects are never cached.
+pub(crate) struct KeyPair {
+    pub(crate) public_der: Vec<u8>,
+    pub(crate) private_der: Vec<u8>,
+}
+
+static VM: OnceLock<JavaVM> = OnceLock::new();
+
+pub(crate) fn initialize_vm(env: &JNIEnv<'_>) -> bool {
+    match env.get_java_vm() {
+        Ok(vm) => VM.set(vm).is_ok() || VM.get().is_some(),
+        Err(_) => false,
+    }
+}
+
+/// Use Android's RSA provider, with no dependency on a platform libcrypto ABI.
+pub(crate) fn generate_keypair() -> Option<KeyPair> {
+    let mut env = VM.get()?.attach_current_thread().ok()?;
+    // Do not clear an exception belonging to the caller.
+    if env.exception_check().ok()? {
+        return None;
+    }
+    let result = env.with_local_frame(16, |env| -> jni::errors::Result<KeyPair> {
+        let algorithm = env.new_string("RSA")?;
+        let generator = env
+            .call_static_method(
+                "java/security/KeyPairGenerator",
+                "getInstance",
+                "(Ljava/lang/String;)Ljava/security/KeyPairGenerator;",
+                &[JValue::Object(algorithm.as_ref())],
+            )?
+            .l()?;
+        env.call_method(&generator, "initialize", "(I)V", &[JValue::Int(2048)])?;
+        let pair = env
+            .call_method(
+                &generator,
+                "generateKeyPair",
+                "()Ljava/security/KeyPair;",
+                &[],
+            )?
+            .l()?;
+        let public = env
+            .call_method(&pair, "getPublic", "()Ljava/security/PublicKey;", &[])?
+            .l()?;
+        let private = env
+            .call_method(&pair, "getPrivate", "()Ljava/security/PrivateKey;", &[])?
+            .l()?;
+        let public = JByteArray::from(env.call_method(public, "getEncoded", "()[B", &[])?.l()?);
+        let private = JByteArray::from(env.call_method(private, "getEncoded", "()[B", &[])?.l()?);
+        Ok(KeyPair {
+            public_der: env.convert_byte_array(public)?,
+            private_der: env.convert_byte_array(private)?,
+        })
+    });
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
+    result
+        .ok()
+        .filter(|key| !key.public_der.is_empty() && !key.private_der.is_empty())
+}
+
+pub(crate) fn attk_private_der() -> Option<Vec<u8>> {
+    BASE64.decode(ATTK_PRIVATE_B64).ok()
+}
 
 /// Real installs persist a monotonically increasing key counter, and the Soter client rejects a
 /// key whose counter is not positive, so a freshly minted ASK always reports at least one.
@@ -112,7 +183,11 @@ fn parse_pkcs8_private(der: &[u8]) -> Option<(BigUint, BigUint, BigUint)> {
         if tag != 0x02 || bytes.is_empty() {
             return None;
         }
-        let stripped = bytes.iter().skip_while(|byte| **byte == 0).copied().collect::<Vec<_>>();
+        let stripped = bytes
+            .iter()
+            .skip_while(|byte| **byte == 0)
+            .copied()
+            .collect::<Vec<_>>();
         (!stripped.is_empty()).then(|| BigUint::from_bytes_be(&stripped))
     };
     let modulus = read_integer(&mut field)?;
@@ -173,14 +248,17 @@ fn encode_pss(message_hash: &[u8], salt: &[u8; SALT_BYTES]) -> Option<Vec<u8>> {
 }
 
 /// Sign the exact bytes of an export JSON, mirroring the D-Soter reference parameters.
-pub(crate) fn sign_export_json(json: &[u8]) -> Option<[u8; MODULUS_BYTES]> {
+pub(crate) fn sign_export_json(private_der: &[u8], json: &[u8]) -> Option<[u8; MODULUS_BYTES]> {
     let salt = random_salt()?;
-    sign_export_json_with_salt(json, &salt)
+    sign_export_json_with_salt(private_der, json, &salt)
 }
 
-fn sign_export_json_with_salt(json: &[u8], salt: &[u8; SALT_BYTES]) -> Option<[u8; MODULUS_BYTES]> {
-    let der = BASE64.decode(ATTK_PRIVATE_B64).ok()?;
-    let (modulus, _, private) = parse_pkcs8_private(&der)?;
+fn sign_export_json_with_salt(
+    private_der: &[u8],
+    json: &[u8],
+    salt: &[u8; SALT_BYTES],
+) -> Option<[u8; MODULUS_BYTES]> {
+    let (modulus, _, private) = parse_pkcs8_private(private_der)?;
     if modulus.bits() != MODULUS_BYTES * 8 {
         return None;
     }
@@ -196,7 +274,7 @@ fn sign_export_json_with_salt(json: &[u8], salt: &[u8; SALT_BYTES]) -> Option<[u
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Fixed-salt signature over a fixed export JSON, produced by the D-Soter C++ reference
@@ -226,7 +304,9 @@ mod tests {
     #[test]
     fn matches_the_reference_implementation_byte_for_byte() {
         let salt = std::array::from_fn(|index| (0x11u32 * (index as u32 + 1)) as u8);
-        let signature = sign_export_json_with_salt(KNOWN_JSON.as_bytes(), &salt).unwrap();
+        let signature =
+            sign_export_json_with_salt(&attk_private_der().unwrap(), KNOWN_JSON.as_bytes(), &salt)
+                .unwrap();
         assert_eq!(hex(&signature), KNOWN_SIGNATURE);
     }
 
@@ -235,16 +315,29 @@ mod tests {
         let der = BASE64.decode(ATTK_PRIVATE_B64).unwrap();
         let (modulus, public, _) = parse_pkcs8_private(&der).unwrap();
         assert_eq!(modulus.bits(), MODULUS_BYTES * 8);
-        let signature = sign_export_json(KNOWN_JSON.as_bytes()).unwrap();
-        assert!(verifies(&signature, KNOWN_JSON.as_bytes(), &modulus, &public));
+        let signature = sign_export_json(&der, KNOWN_JSON.as_bytes()).unwrap();
+        assert!(verifies(
+            &signature,
+            KNOWN_JSON.as_bytes(),
+            &modulus,
+            &public
+        ));
     }
 
     #[test]
     fn rejects_a_different_message() {
         let der = BASE64.decode(ATTK_PRIVATE_B64).unwrap();
         let (modulus, public, _) = parse_pkcs8_private(&der).unwrap();
-        let signature = sign_export_json(KNOWN_JSON.as_bytes()).unwrap();
+        let signature = sign_export_json(&der, KNOWN_JSON.as_bytes()).unwrap();
         assert!(!verifies(&signature, b"{}", &modulus, &public));
+    }
+
+    pub(crate) fn verifies_export(blob: &[u8], private_der: &[u8]) -> bool {
+        let length = u32::from_le_bytes(blob[..4].try_into().unwrap()) as usize;
+        let json = &blob[4..4 + length];
+        let signature = blob[4 + length..].try_into().unwrap();
+        let (modulus, public, _) = parse_pkcs8_private(private_der).unwrap();
+        verifies(signature, json, &modulus, &public)
     }
 
     fn hex(bytes: &[u8]) -> String {
@@ -252,8 +345,15 @@ mod tests {
     }
 
     /// Textbook RSASSA-PSS verification, used only to prove the embedded pair is self-consistent.
-    fn verifies(signature: &[u8; MODULUS_BYTES], json: &[u8], modulus: &BigUint, public: &BigUint) -> bool {
-        let message = BigUint::from_bytes_be(signature).modpow(public, modulus).to_bytes_be();
+    pub(crate) fn verifies(
+        signature: &[u8; MODULUS_BYTES],
+        json: &[u8],
+        modulus: &BigUint,
+        public: &BigUint,
+    ) -> bool {
+        let message = BigUint::from_bytes_be(signature)
+            .modpow(public, modulus)
+            .to_bytes_be();
         if message.len() > MODULUS_BYTES {
             return false;
         }
@@ -271,7 +371,9 @@ mod tests {
             .collect::<Vec<_>>();
         block[0] &= 0xFF >> (8 * MODULUS_BYTES - EM_BITS);
         let separator = block.iter().position(|byte| *byte == 0x01);
-        let Some(separator) = separator else { return false };
+        let Some(separator) = separator else {
+            return false;
+        };
         if block[..separator].iter().any(|byte| *byte != 0) {
             return false;
         }

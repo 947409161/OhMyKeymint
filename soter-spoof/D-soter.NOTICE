@@ -1,13 +1,18 @@
 D-soter compatibility experiment
 
-Source: https://github.com/ajfkdk/D-soter
-Revision: 6148e02ea5977cb95b5a162a405fc915e39c01db
-Referenced source: module/jni/dsoter.cpp
+Source: https://github.com/947409161/D-soter
+Revision: 37c6e6a3c099326892883be7ae7eeb1b2c5801d2
+Referenced sources: module/jni/dsoter.cpp, module/jni/soter_attk.h,
+module/jni/soter_keys.h, module/jni/soter_jni.h
 License: Apache License, Version 2.0
 
-Oh My Keymint adapts the public reply contract and public-key placeholder in
-an independent Rust implementation. It does not bundle upstream C++ code or
-prebuilt binaries. The experiment uses simulated responses and cannot provide
-real TEE keys, valid cryptographic signatures, or payment authentication.
+Oh My Keymint adapts the public reply contract in an independent Rust
+implementation. Android's RSA provider generates independent ASK and AuthKey
+pairs per caller UID and exact UTF-16 alias. The reference ATTK signs ASK
+exports, and each ASK signs its AuthKey exports using RSASSA-PSS/SHA-256.
+Keys and signed exports are process-local. The cpu_id and device identifier
+are derived from the unit serial, with per-process fallback identifiers.
+No upstream C++ code or prebuilt binaries are bundled. Software-generated
+mock replies are not genuine TEE attestation or payment credentials.
 
 The Apache License 2.0 is included in AOSP.Apache-license-2.0.txt.

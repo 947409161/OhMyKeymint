@@ -65,10 +65,10 @@ impl ZygiskModule for SoterSpoofModule {
     fn post_app_specialize<'a>(
         &self,
         _api: ZygiskApi<'a, V4>,
-        _env: JNIEnv<'a>,
+        env: JNIEnv<'a>,
         _args: &'a AppSpecializeArgs<'a>,
     ) {
-        soter::activate();
+        soter::activate(&env);
     }
 
     fn pre_server_specialize<'a>(

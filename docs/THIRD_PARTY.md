@@ -64,15 +64,20 @@ independent.
 ## D-soter compatibility experiment
 
 The optional Tencent Soter compatibility (Beta) reply contract is adapted from
-[D-soter](https://github.com/947409161/D-soter), `module/jni/dsoter.cpp` and
-`module/jni/soter_attk.h`, licensed under Apache-2.0. The implementation mirrors that
-reference: a real RSA-2048 key pair signs the exported JSON with RSASSA-PSS
-(SHA-256, MGF1-SHA256, salt length 20, `emBits` 2047), and `cpu_id` and the device
-identifier are derived from the unit serial instead of fixed placeholders. The Rust
-implementation in `soter-spoof/src/soter.rs` and `soter-spoof/src/soter/` implements all
-13 reply contracts with a separate native Binder stub and bounded descriptor matching,
-and `soter-spoof/src/attk.rs` reproduces the reference signing parameters exactly.
-Android 12/12L retain the NDK platform's standard AIDL header check. No upstream prebuilt
+[D-soter](https://github.com/947409161/D-soter), revision
+`37c6e6a3c099326892883be7ae7eeb1b2c5801d2`, `module/jni/dsoter.cpp`,
+`module/jni/soter_attk.h`, `module/jni/soter_keys.h`, and `module/jni/soter_jni.h`,
+licensed under Apache-2.0. Android's RSA provider generates independent RSA-2048
+ASK and AuthKey pairs per caller UID and exact UTF-16 alias. The reference ATTK
+signs ASK exports; each ASK signs its AuthKey exports with RSASSA-PSS (SHA-256,
+MGF1-SHA256, salt length 20, `emBits` 2047). The `cpu_id` and device identifier
+are derived from the unit serial. Keys, stable exports, and their lifecycle are
+process-local.
+The Rust implementation in `soter-spoof/src/soter.rs` and
+`soter-spoof/src/soter/` implements all 13 reply contracts with a separate native
+Binder stub and bounded descriptor matching. The platform validates the AIDL header
+before argument parsing on Android 12-17, and `soter-spoof/src/attk.rs` implements
+JNI key generation and the reference signing parameters. No upstream prebuilt
 library or C++ runtime component is bundled.
 It does not alter KeyMint or injector routing. The replies are software-generated mock
 responses: they are not genuine attestation or payment credentials.

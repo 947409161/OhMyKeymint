@@ -1,7 +1,7 @@
 use super::{wire::Writer, *};
 
 #[derive(Default)]
-struct Buffer(Vec<u8>);
+pub(super) struct Buffer(pub(super) Vec<u8>);
 
 impl Buffer {
     fn align(&mut self) {
@@ -83,8 +83,7 @@ fn accepts_all_tencent_aidl_requests_and_oem_argument_extensions() {
         let mut trailing = bytes;
         trailing.extend_from_slice(&[0xff; 17]);
         assert!(wire::valid_request(code, &trailing));
-        // Upstream replies never consume arguments, even when an OEM changes
-        // the signature or passes an empty/null name.
+        // Routing scans the descriptor; argument validation happens in the callback.
         assert!(wire::valid_request(code, &request(12)));
     }
     for code in [0, 14, u32::MAX] {
@@ -305,17 +304,17 @@ fn int32(bytes: &[u8], position: usize) -> i32 {
 }
 
 #[test]
-fn encodes_all_d_soter_reply_shapes_without_session_queues() {
+fn encodes_non_key_reply_shapes_without_session_queues() {
     const UID: u32 = 10123;
-    for code in 1..=13 {
+    for code in [5, 7, 10, 11, 12, 9, 13] {
         let mut output = Buffer::default();
-        wire::write_reply(code, UID, &mut output).unwrap();
+        wire::write_reply(code, UID, &[], &mut output).unwrap();
         let bytes = output.0;
         assert_eq!(int32(&bytes, 0), 0);
         match code {
-            1 | 4 | 5 | 7 => assert_eq!(bytes, [0; 8]),
-            3 | 8 | 12 => assert_eq!(bytes, [0, 0, 0, 0, 1, 0, 0, 0]),
-            2 | 6 | 10 | 11 => {
+            5 | 7 => assert_eq!(bytes, [0; 8]),
+            12 => assert_eq!(bytes, [0, 0, 0, 0, 1, 0, 0, 0]),
+            10 | 11 => {
                 assert_eq!(int32(&bytes, 4), 1);
                 assert_eq!(int32(&bytes, 8), 0);
                 let length = int32(&bytes, 12) as usize;
@@ -324,17 +323,6 @@ fn encodes_all_d_soter_reply_shapes_without_session_queues() {
                 assert_eq!(bytes.len(), 20 + padded);
                 let payload = &bytes[16..16 + length];
                 match code {
-                    2 | 6 => {
-                        let json_length = int32(payload, 0) as usize;
-                        assert_eq!(payload.len(), 4 + json_length + 256);
-                        let json = std::str::from_utf8(&payload[4..4 + json_length]).unwrap();
-                        assert!(json.starts_with("{\"pub_key\":\""));
-                        assert!(json.ends_with(&format!("\"uid\":{UID}}}")));
-                        assert!(json.contains("\"counter\":1,"));
-                        assert!(json.contains("\"cpu_id\":\""));
-                        // A zero signature is what the retired placeholder emitted.
-                        assert!(payload[4 + json_length..].iter().any(|byte| *byte != 0));
-                    }
                     10 => assert_eq!(payload, [0; 256]),
                     11 => {
                         assert_eq!(payload.len(), 16);
@@ -381,14 +369,55 @@ fn stops_on_native_write_errors_and_rejects_unknown_codes_without_output() {
     }
     const UID: u32 = 10123;
     for code in 1..=13 {
-        assert_eq!(wire::write_reply(code, UID, &mut Reject), Err(-12));
+        assert_eq!(wire::write_reply(code, UID, &[], &mut Reject), Err(-12));
     }
     for code in [0, 14, u32::MAX] {
         let mut output = Buffer::default();
         assert_eq!(
-            wire::write_reply(code, UID, &mut output),
+            wire::write_reply(code, UID, &[], &mut output),
             Err(UNKNOWN_TRANSACTION)
         );
         assert!(output.0.is_empty());
     }
+}
+
+#[test]
+fn parses_arguments_after_the_platform_header_and_preserves_utf16_aliases() {
+    let alias: [u16; 7] = [0x61, 0, 0x62, 0x4e2d, 0xd83d, 0xdd11, 0xd800];
+    for prefix in [0, 8, 12, 16] {
+        let mut bytes = Buffer(vec![0; prefix]);
+        bytes.int32(-123).unwrap(); // A declared UID never supplies the caller identity.
+        bytes.int32(alias.len() as i32).unwrap();
+        for unit in alias.into_iter().chain([0]) {
+            bytes.0.extend_from_slice(&unit.to_le_bytes());
+        }
+        bytes.align();
+        let end = bytes.0.len();
+        for code in [4, 5, 6, 8, 9] {
+            assert_eq!(wire::request_alias(code, &bytes.0, prefix).unwrap(), alias);
+            for length in prefix..end {
+                assert_eq!(
+                    wire::request_alias(code, &bytes.0[..length], prefix),
+                    Err(BAD_VALUE)
+                );
+            }
+        }
+        bytes.0.extend_from_slice(&[0xff; 17]);
+        assert_eq!(wire::request_alias(4, &bytes.0, prefix).unwrap(), alias);
+    }
+    for length in [-1, 0, i32::MAX] {
+        let mut bytes = Buffer::default();
+        bytes.int32(1).unwrap();
+        bytes.int32(length).unwrap();
+        assert_eq!(wire::request_alias(4, &bytes.0, 0), Err(BAD_VALUE));
+    }
+    let mut bytes = Buffer::default();
+    bytes.int32(1).unwrap();
+    bytes.string("a").unwrap();
+    bytes.0[10] = 1; // Missing UTF-16 terminator.
+    assert_eq!(wire::request_alias(4, &bytes.0, 0), Err(BAD_VALUE));
+    assert_eq!(wire::request_alias(1, &[0; 3], 0), Err(BAD_VALUE));
+    assert_eq!(wire::request_alias(1, &[0; 4], 0), Ok(vec![]));
+    assert_eq!(wire::request_alias(4, &bytes.0, 1), Err(BAD_VALUE));
+    assert_eq!(wire::request_alias(12, &[], 0), Ok(vec![]));
 }

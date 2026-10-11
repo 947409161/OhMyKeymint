@@ -212,20 +212,33 @@ one strict `0` or `1` byte in
 does not write this file. The native commands are `--webui-get-soter-beta` and
 `--webui-set-soter-beta 0|1`; both run as short-lived root helpers without
 starting the daemon. Read failures are reported to the WebUI, and the payload
-does not enable the experiment when configuration cannot be validated. Because a real install mints its ASK in the vendor TA, the simulated reply reconstructs what
-the client expects: the exported JSON carries a real RSA-2048 key pair, a positive key
-counter, a `cpu_id` derived from the unit serial, and the calling uid, and the export blob is
-signed with RSASSA-PSS (SHA-256, MGF1-SHA256, salt length 20). One blob is built per requesting
-uid, and a unit without a readable serial mints a per-process value instead of a fixed one.
+does not enable the experiment when configuration cannot be validated. The simulated reply exports
+independent RSA-2048 public keys for each caller's ASK and each exact UTF-16 AuthKey
+alias. Android's RSA provider generates the key pairs in memory. The reference ATTK
+signs ASK exports, and the caller's ASK signs its AuthKey exports with RSASSA-PSS
+(SHA-256, MGF1-SHA256, salt length 20). The exported JSON contains the subject public
+key, counter `1`, a `cpu_id` derived from the unit serial, and the actual Binder caller
+UID; the UID supplied as an AIDL argument does not select another caller's keys.
+A unit without a readable serial mints a per-process identifier.
+
+Keys and their signed export blobs live only in the SoterServer process. Queries
+and exports report missing keys until creation succeeds. Removing an AuthKey affects
+only that caller's exact alias. Recreating an ASK clears that caller's AuthKeys, and
+`removeAllAuthKey` removes both ASK and AuthKeys for the caller. Generation or signing
+failure reports failure and preserves existing keys. Exports remain stable until a
+key is replaced or removed; a process restart discards all simulated keys.
 
 The 13 upstream reply contracts are implemented: ASK and auth-key creation, export, existence
 and removal; signing sessions and signature results; device ID, version, and extra parameters.
 `finishSign` keeps the reference shape and answers with a fixed zero buffer, because no session
 state is kept between `initSigh` and `finishSign`.
 
-Android 13 and newer use the NDK legacy-interface option to let the handler match the descriptor
-independently of the Parcel header layout. Android 12/12L retain the platform's standard AIDL
-interface-header check; nonstandard headerless requests are not supported on those versions.
+Android 12-17 retain the platform's standard AIDL interface-header check. The handler
+reads UID and AuthKey alias arguments at the cursor left by that check, without
+assuming a fixed header size. Required aliases must be nonempty, terminated UTF-16
+strings; embedded NULs and exact UTF-16 code units remain part of the alias. Malformed
+required arguments fail the transaction. Trailing OEM fields do not change key
+identity. Nonstandard headerless requests are unsupported.
 
 Diagnostics use the `OhMyKeymint-Soter` logcat tag. Loading, disabled state, companion failures
 and hook installation are logged separately. Each method logs its first intercepted request and
