@@ -163,7 +163,7 @@ fn unconfirmed_grant_readback_stays_rejected() {
     let _guard = route_state_test_guard();
     let decision = crate::filter::FilterDecision {
         allowed: false,
-        reason: crate::filter::FilterReason::RejectedNotInScope,
+        reason: crate::filter::FilterReason::RejectedUnknownPackage,
         packages: vec!["com.grantee".to_string()],
     };
     let caller = CallerInfo {
@@ -267,7 +267,7 @@ fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
     };
     let decision = crate::filter::FilterDecision {
         allowed: false,
-        reason: crate::filter::FilterReason::RejectedNotInScope,
+        reason: crate::filter::FilterReason::RejectedUnknownPackage,
         packages: vec!["com.grantee".to_string()],
     };
 

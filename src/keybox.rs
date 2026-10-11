@@ -1,22 +1,12 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs,
-    path::{Path, PathBuf},
-    str,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex, OnceLock, RwLock,
-    },
-    time::{Duration, SystemTime},
-};
+use std::{collections::BTreeSet, fs, path::Path, str, sync::RwLock};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use der::Encode;
+use kmr_common::runtime::fs::atomic_replace_preserving_metadata;
 use kmr_common::{
     consts::{KEYSTORE_GID, KEYSTORE_UID},
     crypto::{ec, rsa, KeyMaterial, OpaqueOr, Sha256},
-    runtime::fs::atomic_replace_preserving_metadata,
     Error,
 };
 use kmr_crypto_boring::{ec::BoringEc, mldsa::BoringMlDsa, rsa::BoringRsa, sha256::BoringSha256};
@@ -26,38 +16,15 @@ use kmr_ta::device::{
 use kmr_wire::keymint;
 use log::{debug, error, info, warn};
 use regex::Regex;
-use serde::Deserialize;
-use ureq::http::Uri;
 use x509_cert::der as x509_der;
 use x509_cert::{ext::pkix::name::DirectoryString, Certificate};
 use x509_parser::parse_x509_certificate;
 
-use crate::{
-    root_path,
-    webui_http::{self, DownloadPolicy},
-};
+use crate::root_path;
 
-pub const KEYBOX_PATH: &str = "/data/misc/keystore/omk/keybox.xml";
+#[cfg(test)]
 pub const MAX_KEYBOX_XML_BYTES: usize = 64 * 1024;
-pub const GOOGLE_ATTESTATION_STATUS_CACHE_PATH: &str =
-    root_path!("data/google_attestation_status.json");
-
-const GOOGLE_ATTESTATION_STATUS_URL: &str = "https://android.googleapis.com/attestation/status";
-const GOOGLE_ATTESTATION_STATUS_HOST: &str = "android.googleapis.com";
-const GOOGLE_ATTESTATION_STATUS_PATH: &str = "/attestation/status";
-const MAX_ATTESTATION_STATUS_BYTES: usize = 512 * 1024;
-const ATTESTATION_STATUS_TIMEOUT: Duration = Duration::from_secs(15);
-const ATTESTATION_STATUS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const GOOGLE_ATTESTATION_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
-const BUNDLED_GOOGLE_ATTESTATION_STATUS: &str =
-    include_str!("../template/google_attestation_status.json");
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyboxFileState {
-    Bundled,
-    Custom,
-    Invalid,
-}
+const KEYBOX_PATH: &str = root_path!("keybox.xml");
 
 /// Origin of the attestation key material represented by a keybox.
 ///
@@ -101,43 +68,6 @@ impl KeyboxLevel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyboxRevocationStatus {
-    NotChecked,
-    NotListed,
-    Suspended,
-    Revoked,
-}
-
-impl KeyboxRevocationStatus {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::NotChecked => "not_checked",
-            Self::NotListed => "not_listed",
-            Self::Suspended => "suspended",
-            Self::Revoked => "revoked",
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GoogleAttestationStatusList {
-    entries: BTreeMap<String, GoogleAttestationStatusEntry>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GoogleAttestationStatusEntry {
-    status: String,
-    #[serde(default, rename = "expires")]
-    _expires: Option<String>,
-    #[serde(default, rename = "reason")]
-    _reason: Option<String>,
-    #[serde(default, rename = "comment")]
-    _comment: Option<String>,
-}
-
 /// Non-sensitive information derived from the public certificate chains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct KeyboxMetadata {
@@ -145,12 +75,11 @@ pub struct KeyboxMetadata {
     pub level: KeyboxLevel,
 }
 
-const BUNDLED_KEYBOX_XML: &str = include_str!("../template/keybox.xml");
+#[cfg(test)]
+const TEST_KEYBOX_XML: &str = include_str!("../template/config/keybox.xml");
 
 lazy_static::lazy_static! {
     pub static ref KEYBOX: RwLock<KeyBox> = RwLock::new(KeyBox::new());
-    static ref KEYBOX_IO_LOCK: Mutex<()> = Mutex::new(());
-    static ref GOOGLE_ATTESTATION_STATUS_IO_LOCK: Mutex<()> = Mutex::new(());
     static ref KEY_BLOCK_RE: Regex =
         Regex::new(r#"(?s)<Key\s+algorithm="([^"]+)">\s*(.*?)\s*</Key>"#).unwrap();
     static ref PRIVATE_KEY_RE: Regex =
@@ -170,10 +99,6 @@ lazy_static::lazy_static! {
         .decode(GOOGLE_EC_ROOT_SPKI_B64)
         .expect("pinned Google EC root SPKI must be valid base64");
 }
-
-static KEYBOX_WATCHER: OnceLock<()> = OnceLock::new();
-static KEYBOX_DB_RETIRE_ALLOWED: AtomicBool = AtomicBool::new(false);
-static KEYBOX_RUNTIME_LOADED: AtomicBool = AtomicBool::new(false);
 
 const RKP_PROVISIONING_OID: x509_der::asn1::ObjectIdentifier =
     x509_der::asn1::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.11129.2.1.30");
@@ -236,7 +161,12 @@ struct ParsedKeyEntry {
 
 impl KeyBox {
     pub fn new() -> Self {
-        Self::from_xml_str(BUNDLED_KEYBOX_XML).expect("bundled keybox.xml must be valid")
+        #[cfg(test)]
+        let xml = TEST_KEYBOX_XML.to_string();
+        #[cfg(not(test))]
+        let xml = fs::read_to_string(KEYBOX_PATH)
+            .unwrap_or_else(|error| panic!("failed to read {KEYBOX_PATH}: {error}"));
+        Self::from_xml_str(&xml).expect("config/keybox.xml must be valid")
     }
 
     pub fn from_xml_str(xml: &str) -> Result<Self> {
@@ -723,7 +653,7 @@ fn metadata_for_chain_with_roots(
 ) -> ChainMetadata {
     // Keep certificate positions intact. Silently dropping a malformed middle
     // certificate could turn an invalid chain into a plausible leaf/root pair
-    // and produce misleading metadata in the WebUI.
+    // and produce misleading keybox metadata.
     let mut parsed_chain = Vec::with_capacity(chain.len());
     for certificate in chain {
         let Ok(parsed) =
@@ -747,7 +677,7 @@ fn metadata_for_chain_with_roots(
 
     // A pinned root key alone is not enough: an unrelated leaf can otherwise
     // be followed by a copied Google root certificate and look authentic in
-    // the WebUI. Verify every child signature with the next certificate's
+    // the keybox metadata. Verify every child signature with the next certificate's
     // public key before reporting a Google source. This is intentionally kept
     // in the informational metadata path; KeyMint's existing key/leaf
     // validation remains unchanged.
@@ -879,17 +809,7 @@ fn encode_pem_block(label: &str, der: &[u8]) -> String {
     pem
 }
 
-fn write_keybox_xml(path: &str, xml: &str) -> Result<()> {
-    atomic_replace_preserving_metadata(
-        Path::new(path),
-        xml.as_bytes(),
-        0o600,
-        KEYSTORE_UID,
-        KEYSTORE_GID,
-    )
-    .with_context(|| format!("failed to atomically replace keybox.xml at {path}"))
-}
-
+#[cfg(test)]
 fn validate_keybox_xml(contents: &[u8]) -> Result<()> {
     if contents.len() > MAX_KEYBOX_XML_BYTES {
         bail!("keybox.xml exceeds the {} byte limit", MAX_KEYBOX_XML_BYTES);
@@ -899,409 +819,7 @@ fn validate_keybox_xml(contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn classify_keybox_xml(contents: &[u8]) -> KeyboxFileState {
-    if validate_keybox_xml(contents).is_err() {
-        return KeyboxFileState::Invalid;
-    }
-    let xml = str::from_utf8(contents).expect("validated keybox.xml is UTF-8");
-    if is_bundled_keybox_xml(xml) {
-        KeyboxFileState::Bundled
-    } else {
-        KeyboxFileState::Custom
-    }
-}
-
-pub fn installed_keybox_state() -> Result<KeyboxFileState> {
-    let contents = fs::read(KEYBOX_PATH)
-        .with_context(|| format!("failed to read keybox.xml from {KEYBOX_PATH}"))?;
-    Ok(classify_keybox_xml(&contents))
-}
-
-/// Reads the installed keybox once and returns its validation state, public
-/// metadata, and the canonical serial numbers from every presented chain.
-/// Invalid XML is represented as `Invalid` with unknown metadata so an
-/// informational WebUI query cannot prevent the rest of the service from
-/// starting. A missing serial list means that at least one presented
-/// certificate could not be parsed, so an online revocation result must not
-/// be reported for that keybox.
-pub fn installed_keybox_state_and_metadata(
-) -> Result<(KeyboxFileState, KeyboxMetadata, Option<Vec<String>>)> {
-    let contents = fs::read(KEYBOX_PATH)
-        .with_context(|| format!("failed to read keybox.xml from {KEYBOX_PATH}"))?;
-    if contents.len() > MAX_KEYBOX_XML_BYTES {
-        return Ok((KeyboxFileState::Invalid, KeyboxMetadata::default(), None));
-    }
-    let Ok(xml) = str::from_utf8(&contents) else {
-        return Ok((KeyboxFileState::Invalid, KeyboxMetadata::default(), None));
-    };
-    let Ok(keybox) = KeyBox::from_xml_str(xml) else {
-        return Ok((KeyboxFileState::Invalid, KeyboxMetadata::default(), None));
-    };
-    let state = if is_bundled_keybox_xml(xml) {
-        KeyboxFileState::Bundled
-    } else {
-        KeyboxFileState::Custom
-    };
-    let metadata = keybox.metadata();
-    let serials = keybox.certificate_serials().ok();
-    Ok((state, metadata, serials))
-}
-
-/// Ensure a validated copy of Google's status list exists in the persistent
-/// OMK data directory.  The copy is seeded from the build-time snapshot only
-/// when no local file exists; an existing file is never replaced merely
-/// because it is old or temporarily unreachable.
-pub fn ensure_google_attestation_status_cache() -> Result<()> {
-    let path = Path::new(GOOGLE_ATTESTATION_STATUS_CACHE_PATH);
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.file_type().is_file() => {
-            bail!(
-                "Google attestation status cache is not a regular file: {}",
-                path.display()
-            )
-        }
-        Ok(metadata) => {
-            if metadata.len() <= MAX_ATTESTATION_STATUS_BYTES as u64 {
-                if let Ok(contents) = fs::read_to_string(path) {
-                    if parse_google_attestation_status(&contents).is_ok() {
-                        return Ok(());
-                    }
-                }
-            }
-            warn!(
-                "existing Google attestation status cache is invalid; replacing it with the bundled snapshot"
-            );
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to inspect the Google attestation status cache {}",
-                    path.display()
-                )
-            })
-        }
-    }
-
-    parse_google_attestation_status(BUNDLED_GOOGLE_ATTESTATION_STATUS)
-        .context("bundled Google attestation status snapshot failed validation")?;
-    persist_google_attestation_status_cache(BUNDLED_GOOGLE_ATTESTATION_STATUS)
-}
-
-pub fn check_google_attestation_status(serials: &[String]) -> Result<KeyboxRevocationStatus> {
-    if serials.is_empty() {
-        bail!("cannot check an empty certificate serial-number set");
-    }
-
-    // A successful download updates the cache mtime through the atomic replace
-    // path below. Reuse a validated cache for twelve hours, then refresh it
-    // from Google on the next status check. An expired cache remains a valid
-    // offline fallback if the endpoint is unavailable.
-    if google_attestation_status_cache_is_fresh() {
-        if let Ok(status) = read_and_classify_google_attestation_status_cache(serials) {
-            info!("using the validated Google attestation status cache");
-            return Ok(status);
-        }
-        warn!("fresh Google attestation status cache failed validation; refreshing it");
-    }
-
-    let online_error = match fetch_google_attestation_status() {
-        Ok(contents) => match classify_google_attestation_status(&contents, serials) {
-            Ok(status) => {
-                if let Err(error) = persist_google_attestation_status_cache(&contents) {
-                    warn!("Google attestation status was valid but could not be cached: {error:#}");
-                }
-                info!("checked Keybox certificate status using Google's live list");
-                return Ok(status);
-            }
-            Err(error) => {
-                anyhow!("downloaded Google attestation status list is invalid: {error:#}")
-            }
-        },
-        Err(error) => error,
-    };
-
-    match read_and_classify_google_attestation_status_cache(serials) {
-        Ok(status) => {
-            info!("Google status endpoint unavailable; using the validated local status cache");
-            Ok(status)
-        }
-        Err(cache_error) => {
-            match classify_google_attestation_status(BUNDLED_GOOGLE_ATTESTATION_STATUS, serials) {
-                Ok(status) => {
-                    if let Err(error) =
-                        persist_google_attestation_status_cache(BUNDLED_GOOGLE_ATTESTATION_STATUS)
-                    {
-                        warn!(
-                            "using bundled Google attestation status snapshot; could not seed local cache: {error:#}"
-                        );
-                    } else {
-                        info!(
-                            "Google status endpoint and local cache unavailable; using bundled status snapshot"
-                        );
-                    }
-                    Ok(status)
-                }
-                Err(snapshot_error) => {
-                    bail!(
-                        "Google attestation status lookup failed; live list: {online_error:#}; local cache: {cache_error:#}; bundled snapshot: {snapshot_error:#}"
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn google_attestation_status_cache_is_fresh() -> bool {
-    let path = Path::new(GOOGLE_ATTESTATION_STATUS_CACHE_PATH);
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-        return false;
-    }
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    let Ok(age) = SystemTime::now().duration_since(modified) else {
-        return false;
-    };
-    age < GOOGLE_ATTESTATION_STATUS_REFRESH_INTERVAL
-}
-
-fn fetch_google_attestation_status() -> Result<String> {
-    let requested_uri: Uri = GOOGLE_ATTESTATION_STATUS_URL
-        .parse()
-        .context("Google attestation status URL is invalid")?;
-    webui_http::download_https_utf8(
-        requested_uri,
-        &DownloadPolicy {
-            resource: "Google attestation status list",
-            redirect_allowlist: "the fixed Google attestation status endpoint",
-            max_bytes: MAX_ATTESTATION_STATUS_BYTES,
-            max_size_label: "512 KiB",
-            max_redirects: 0,
-            timeout: ATTESTATION_STATUS_TIMEOUT,
-            connect_timeout: ATTESTATION_STATUS_CONNECT_TIMEOUT,
-        },
-        is_allowed_attestation_status_uri,
-    )
-}
-
-fn read_and_classify_google_attestation_status_cache(
-    serials: &[String],
-) -> Result<KeyboxRevocationStatus> {
-    let contents = read_google_attestation_status_cache()?;
-    classify_google_attestation_status(&contents, serials)
-}
-
-fn read_google_attestation_status_cache() -> Result<String> {
-    let path = Path::new(GOOGLE_ATTESTATION_STATUS_CACHE_PATH);
-    let metadata = fs::symlink_metadata(path).with_context(|| {
-        format!(
-            "failed to inspect the Google attestation status cache {}",
-            path.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-        bail!(
-            "Google attestation status cache is not a regular file: {}",
-            path.display()
-        );
-    }
-    if metadata.len() > MAX_ATTESTATION_STATUS_BYTES as u64 {
-        bail!("Google attestation status cache exceeds the 512 KiB limit");
-    }
-    let contents = fs::read(path).with_context(|| {
-        format!(
-            "failed to read the Google attestation status cache {}",
-            path.display()
-        )
-    })?;
-    String::from_utf8(contents).context("Google attestation status cache is not UTF-8")
-}
-
-fn persist_google_attestation_status_cache(contents: &str) -> Result<()> {
-    if contents.len() > MAX_ATTESTATION_STATUS_BYTES {
-        bail!("Google attestation status cache exceeds the 512 KiB limit");
-    }
-    parse_google_attestation_status(contents)
-        .context("refusing to cache an invalid Google attestation status list")?;
-
-    let _io_guard = GOOGLE_ATTESTATION_STATUS_IO_LOCK.lock().unwrap();
-    let path = Path::new(GOOGLE_ATTESTATION_STATUS_CACHE_PATH);
-    validate_google_attestation_status_cache_target(path)?;
-    atomic_replace_preserving_metadata(
-        path,
-        contents.as_bytes(),
-        0o600,
-        KEYSTORE_UID,
-        KEYSTORE_GID,
-    )
-    .with_context(|| {
-        format!(
-            "failed to atomically replace Google attestation status cache {}",
-            path.display()
-        )
-    })?;
-
-    let saved = read_google_attestation_status_cache()?;
-    if saved != contents {
-        bail!("Google attestation status cache read-back does not match the downloaded list");
-    }
-    Ok(())
-}
-
-fn validate_google_attestation_status_cache_target(path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("Google attestation status cache has no parent directory"))?;
-    match fs::symlink_metadata(parent) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() => {
-            bail!(
-                "Google attestation status cache parent is not a real directory: {}",
-                parent.display()
-            )
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to inspect Google attestation status cache parent {}",
-                    parent.display()
-                )
-            })
-        }
-    }
-
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
-            bail!(
-                "Google attestation status cache is not a regular file: {}",
-                path.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn is_allowed_attestation_status_uri(uri: &Uri) -> bool {
-    if uri.scheme_str() != Some("https")
-        || uri.query().is_some()
-        || uri.path() != GOOGLE_ATTESTATION_STATUS_PATH
-    {
-        return false;
-    }
-    let Some(authority) = uri.authority() else {
-        return false;
-    };
-    let authority = authority.as_str();
-    if authority.contains('@') {
-        return false;
-    }
-    let host = match authority.strip_suffix(":443") {
-        Some(host) if !host.contains(':') => host,
-        Some(_) => return false,
-        None if authority.contains(':') => return false,
-        None => authority,
-    };
-    host.eq_ignore_ascii_case(GOOGLE_ATTESTATION_STATUS_HOST)
-}
-
-fn classify_google_attestation_status(
-    contents: &str,
-    serials: &[String],
-) -> Result<KeyboxRevocationStatus> {
-    let list = parse_google_attestation_status(contents)?;
-
-    let mut result = KeyboxRevocationStatus::NotListed;
-    for serial in serials {
-        let Some(entry) = certificate_status_entry(&list.entries, serial) else {
-            continue;
-        };
-        match entry.status.as_str() {
-            "REVOKED" => return Ok(KeyboxRevocationStatus::Revoked),
-            "SUSPENDED" => result = KeyboxRevocationStatus::Suspended,
-            status => bail!("unsupported Google attestation status `{status}`"),
-        }
-    }
-    Ok(result)
-}
-
-fn parse_google_attestation_status(contents: &str) -> Result<GoogleAttestationStatusList> {
-    if contents.len() > MAX_ATTESTATION_STATUS_BYTES {
-        bail!("Google attestation status list exceeds the 512 KiB limit");
-    }
-    let list: GoogleAttestationStatusList = serde_json::from_str(contents)
-        .context("failed to parse the Google attestation status list")?;
-    if list.entries.is_empty() {
-        bail!("Google attestation status list contains no entries");
-    }
-    let mut entries = BTreeMap::new();
-    for (serial, entry) in list.entries {
-        if !is_canonical_attestation_status_serial(&serial) {
-            bail!("Google attestation status list contains a non-canonical serial number");
-        }
-        match entry.status.as_str() {
-            "REVOKED" | "SUSPENDED" => {}
-            status => bail!("unsupported Google attestation status `{status}`"),
-        }
-        let normalized_serial = serial.to_ascii_lowercase();
-        if entries.insert(normalized_serial, entry).is_some() {
-            bail!("Google attestation status list contains duplicate serial numbers");
-        }
-    }
-    Ok(GoogleAttestationStatusList { entries })
-}
-
-fn certificate_status_entry<'a>(
-    entries: &'a BTreeMap<String, GoogleAttestationStatusEntry>,
-    serial: &str,
-) -> Option<&'a GoogleAttestationStatusEntry> {
-    // Google's verifier formats X.509 serial numbers in base 16 before the
-    // lookup. Entries containing only decimal digits are still hexadecimal
-    // strings and must not be treated as base-10 aliases.
-    entries.get(&serial.to_ascii_lowercase())
-}
-
-fn is_canonical_attestation_status_serial(serial: &str) -> bool {
-    !serial.is_empty()
-        && !serial.starts_with('0')
-        && serial.bytes().all(|byte| {
-            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte) || (b'A'..=b'F').contains(&byte)
-        })
-}
-
-pub fn install_keybox_xml(contents: &[u8]) -> Result<()> {
-    validate_keybox_xml(contents)?;
-    let xml = str::from_utf8(contents).expect("validated keybox.xml is UTF-8");
-    let _io_guard = KEYBOX_IO_LOCK.lock().unwrap();
-    write_keybox_xml(KEYBOX_PATH, xml)
-}
-
-fn write_bundled_keybox(path: &str) -> Result<()> {
-    write_keybox_xml(path, BUNDLED_KEYBOX_XML)
-}
-
-pub fn ensure_keybox_file(path: &str) -> Result<()> {
-    if Path::new(path).exists() {
-        return Ok(());
-    }
-    info!("keybox.xml missing at {}; seeding bundled template", path);
-    write_bundled_keybox(path)
-}
-
-fn is_bundled_keybox_xml(xml: &str) -> bool {
-    xml.trim() == BUNDLED_KEYBOX_XML.trim()
-}
-
 fn retire_stale_keybox_bound_entries(current_identity: [u8; 32]) {
-    if !db_retirement_allowed() {
-        warn!("skipping stale keybox-bound DB retirement while active keybox came from fallback");
-        return;
-    }
-
     match crate::global::DB.with(|db| {
         db.borrow_mut()
             .retire_stale_keybox_bound_entries(current_identity)
@@ -1312,11 +830,7 @@ fn retire_stale_keybox_bound_entries(current_identity: [u8; 32]) {
     }
 }
 
-fn install_keybox(
-    new_keybox: KeyBox,
-    retire_db_entries: bool,
-    db_retirement_allowed: bool,
-) -> bool {
+fn install_keybox(new_keybox: KeyBox, retire_db_entries: bool) -> bool {
     let new_identity = new_keybox.identity_digest();
     let changed = {
         let mut keybox = KEYBOX.write().unwrap();
@@ -1324,9 +838,6 @@ fn install_keybox(
         *keybox = new_keybox;
         changed
     };
-    KEYBOX_DB_RETIRE_ALLOWED.store(db_retirement_allowed, Ordering::Release);
-    KEYBOX_RUNTIME_LOADED.store(true, Ordering::Release);
-
     if changed {
         crate::keymaster::keymint_device::clear_initialized_attestation_caches();
     }
@@ -1338,130 +849,43 @@ fn install_keybox(
     changed
 }
 
-pub fn db_retirement_allowed() -> bool {
-    KEYBOX_DB_RETIRE_ALLOWED.load(Ordering::Acquire)
-}
-
-fn is_fallback_continuation(keybox: &KeyBox, contents: &str) -> bool {
-    let current_identity = KEYBOX
-        .read()
-        .map(|current| current.identity_digest())
-        .unwrap_or([0u8; 32]);
-    is_fallback_continuation_with_state(
-        keybox,
-        contents,
-        KEYBOX_RUNTIME_LOADED.load(Ordering::Acquire),
-        db_retirement_allowed(),
-        current_identity,
-    )
-}
-
-fn is_fallback_continuation_with_state(
-    keybox: &KeyBox,
-    contents: &str,
-    runtime_loaded: bool,
-    retirement_allowed: bool,
-    current_identity: [u8; 32],
-) -> bool {
-    runtime_loaded
-        && !retirement_allowed
-        && is_bundled_keybox_xml(contents)
-        && current_identity == keybox.identity_digest()
-}
-
-fn load_keybox_with_fallback(path: &str) -> Result<(KeyBox, bool)> {
-    match fs::read_to_string(path) {
-        Ok(contents) => match KeyBox::from_xml_str(&contents) {
-            Ok(keybox) => {
-                let fallback_origin = is_fallback_continuation(&keybox, &contents);
-                Ok((keybox, fallback_origin))
-            }
-            Err(error) => {
-                warn!(
-                    "invalid keybox.xml at {}: {:#}; rewriting bundled template",
-                    path, error
-                );
-                write_bundled_keybox(path)?;
-                Ok((KeyBox::new(), true))
-            }
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            info!("keybox.xml missing at {}; writing bundled template", path);
-            write_bundled_keybox(path)?;
-            Ok((KeyBox::new(), true))
-        }
-        Err(error) => Err(error).with_context(|| format!("failed to read keybox.xml from {path}")),
-    }
-}
-
-pub fn reload_from_disk() -> Result<bool> {
-    reload_from_disk_inner(true)
-}
-
-fn reload_from_disk_inner(retire_db_entries: bool) -> Result<bool> {
-    let _io_guard = KEYBOX_IO_LOCK.lock().unwrap();
-    let (keybox, used_fallback) = load_keybox_with_fallback(KEYBOX_PATH)?;
-    let changed = install_keybox(keybox, retire_db_entries, !used_fallback);
-    if changed {
-        info!(
-            "active keybox identity updated from {} (fallback={})",
-            KEYBOX_PATH, used_fallback
-        );
-    } else {
-        debug!(
-            "keybox reload completed without identity change (fallback={})",
-            used_fallback
-        );
-    }
-    Ok(changed)
-}
-
-pub fn initialize() -> Result<()> {
-    ensure_keybox_file(KEYBOX_PATH)?;
-    reload_from_disk_inner(false)?;
-    KEYBOX_WATCHER.get_or_init(|| {
-        if let Err(error) = kmr_common::runtime::file_watch::spawn_path_watcher(
-            "omk-keybox-watch",
-            PathBuf::from(KEYBOX_PATH),
-            |_trigger| {
-                if let Err(reload_error) = reload_from_disk() {
-                    error!("failed to reload keybox.xml after change: {reload_error:#}");
-                }
-            },
-        ) {
-            error!("failed to watch keybox.xml: {error:#}");
-        }
-    });
-    Ok(())
+pub fn initialize() {
+    let _keybox = KEYBOX.read().expect("keybox lock poisoned");
+    info!("initialized keybox identity from {KEYBOX_PATH}");
 }
 
 pub fn update_rsa_keybox(key_der: Vec<u8>, chain: Vec<keymint::Certificate>) -> Result<bool> {
-    update_keybox_file(KeyAlgorithm::Rsa, key_der, chain)
+    update_keybox_in_memory(KeyAlgorithm::Rsa, key_der, chain)
 }
 
 pub fn update_ec_keybox(key_der: Vec<u8>, chain: Vec<keymint::Certificate>) -> Result<bool> {
-    update_keybox_file(KeyAlgorithm::Ec, key_der, chain)
+    update_keybox_in_memory(KeyAlgorithm::Ec, key_der, chain)
 }
 
-fn update_keybox_file(
+fn update_keybox_in_memory(
     algorithm: KeyAlgorithm,
     key_der: Vec<u8>,
     chain: Vec<keymint::Certificate>,
 ) -> Result<bool> {
-    let _io_guard = KEYBOX_IO_LOCK.lock().unwrap();
     let mut keybox = KEYBOX.read().unwrap().clone();
     keybox.update_keybox(algorithm, key_der, chain)?;
-    write_keybox_xml(KEYBOX_PATH, &keybox.to_xml_string())?;
-    Ok(install_keybox(keybox, true, true))
+    atomic_replace_preserving_metadata(
+        Path::new(KEYBOX_PATH),
+        keybox.to_xml_string().as_bytes(),
+        0o660,
+        KEYSTORE_UID,
+        KEYSTORE_GID,
+    )
+    .with_context(|| format!("failed to persist updated keybox to {KEYBOX_PATH}"))?;
+    Ok(install_keybox(keybox, true))
 }
 
 pub fn current_identity_digest() -> [u8; 32] {
     KEYBOX.read().unwrap().identity_digest()
 }
 
-pub(crate) fn signing_certificate_ders_from_disk() -> Result<Vec<Vec<u8>>> {
-    let _io_guard = KEYBOX_IO_LOCK.lock().unwrap();
-    let (keybox, _) = load_keybox_with_fallback(KEYBOX_PATH)?;
+pub(crate) fn signing_certificate_ders() -> Result<Vec<Vec<u8>>> {
+    let keybox = KEYBOX.read().unwrap();
     Ok([keybox.rsa_info.as_ref(), keybox.ec_info.as_ref()]
         .into_iter()
         .flatten()
@@ -1489,16 +913,9 @@ mod tests {
         SerialNumber,
     };
 
-    fn write_temp_keybox(name: &str, contents: &str) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("omk-keybox-{name}-{}.xml", std::process::id()));
-        fs::write(&path, contents).unwrap();
-        path
-    }
-
     #[test]
     fn parses_bundled_template() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         assert_eq!(keybox.ec_info.as_ref().unwrap().chain.len(), 2);
         assert_eq!(keybox.rsa_info.as_ref().unwrap().chain.len(), 2);
         assert_ne!(keybox.identity_digest(), [0u8; 32]);
@@ -1510,18 +927,18 @@ mod tests {
     }
 
     #[test]
-    fn webui_import_accepts_bundled_keybox() {
-        validate_keybox_xml(BUNDLED_KEYBOX_XML.as_bytes()).unwrap();
+    fn keybox_import_accepts_bundled_keybox() {
+        validate_keybox_xml(TEST_KEYBOX_XML.as_bytes()).unwrap();
     }
 
     #[test]
-    fn webui_import_rejects_invalid_utf8() {
+    fn keybox_import_rejects_invalid_utf8() {
         let error = validate_keybox_xml(&[0xff]).unwrap_err();
         assert!(error.to_string().contains("not valid UTF-8"));
     }
 
     #[test]
-    fn webui_import_rejects_oversized_xml_before_parsing() {
+    fn keybox_import_rejects_oversized_xml_before_parsing() {
         let oversized = vec![b' '; MAX_KEYBOX_XML_BYTES + 1];
         let error = validate_keybox_xml(&oversized).unwrap_err();
         assert!(error.to_string().contains("exceeds"));
@@ -1542,7 +959,7 @@ mod tests {
 
     #[test]
     fn keybox_serials_cover_every_algorithm_chain_and_are_deduplicated() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         let expected = [keybox.ec_info.as_ref(), keybox.rsa_info.as_ref()]
             .into_iter()
             .flatten()
@@ -1559,95 +976,10 @@ mod tests {
 
     #[test]
     fn keybox_serials_fail_when_any_presented_certificate_is_malformed() {
-        let mut keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let mut keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         keybox.ec_info.as_mut().unwrap().chain[1].encoded_certificate = vec![0x01, 0x02];
 
         assert!(keybox.certificate_serials().is_err());
-    }
-
-    #[test]
-    fn attestation_status_reports_not_listed_suspended_and_revoked() {
-        let contents = r#"{"entries":{"abc":{"status":"SUSPENDED"},"def":{"status":"REVOKED","reason":"KEY_COMPROMISE"}}}"#;
-
-        assert_eq!(
-            classify_google_attestation_status(contents, &["123".to_string()]).unwrap(),
-            KeyboxRevocationStatus::NotListed
-        );
-        assert_eq!(
-            classify_google_attestation_status(contents, &["abc".to_string()]).unwrap(),
-            KeyboxRevocationStatus::Suspended
-        );
-        assert_eq!(
-            classify_google_attestation_status(contents, &["abc".to_string(), "def".to_string()])
-                .unwrap(),
-            KeyboxRevocationStatus::Revoked
-        );
-    }
-
-    #[test]
-    fn attestation_status_rejects_unknown_status_even_when_unmatched() {
-        let contents = r#"{"entries":{"abc":{"status":"UNKNOWN"}}}"#;
-        assert!(classify_google_attestation_status(contents, &["def".to_string()]).is_err());
-    }
-
-    #[test]
-    fn attestation_status_rejects_malformed_or_out_of_schema_responses() {
-        assert!(classify_google_attestation_status("not-json", &["abc".to_string()]).is_err());
-        assert!(
-            classify_google_attestation_status(r#"{"entries":{}}"#, &["abc".to_string()]).is_err()
-        );
-        assert!(classify_google_attestation_status(
-            r#"{"entries":{},"unexpected":true}"#,
-            &["abc".to_string()]
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn attestation_status_rejects_non_canonical_serial_numbers() {
-        for serial in ["", "0abc", "GABC", "ab-c", "\u{4e32}\u{53f7}"] {
-            let contents = format!(r#"{{"entries":{{"{serial}":{{"status":"REVOKED"}}}}}}"#);
-            assert!(classify_google_attestation_status(&contents, &["abc".to_string()]).is_err());
-        }
-    }
-
-    #[test]
-    fn attestation_status_normalizes_uppercase_hex_and_keeps_digit_keys_hexadecimal() {
-        let uppercase = r#"{"entries":{"ABCD":{"status":"REVOKED"}}}"#;
-        assert_eq!(
-            classify_google_attestation_status(uppercase, &["abcd".to_string()]).unwrap(),
-            KeyboxRevocationStatus::Revoked
-        );
-
-        let digit_only_hex = r#"{"entries":{"4660":{"status":"SUSPENDED"}}}"#;
-        assert_eq!(
-            classify_google_attestation_status(digit_only_hex, &["4660".to_string()]).unwrap(),
-            KeyboxRevocationStatus::Suspended
-        );
-        assert_eq!(
-            classify_google_attestation_status(digit_only_hex, &["1234".to_string()]).unwrap(),
-            KeyboxRevocationStatus::NotListed
-        );
-    }
-
-    #[test]
-    fn attestation_status_uri_is_exactly_scoped() {
-        for allowed in [
-            "https://android.googleapis.com/attestation/status",
-            "https://android.googleapis.com:443/attestation/status",
-        ] {
-            assert!(is_allowed_attestation_status_uri(&allowed.parse().unwrap()));
-        }
-        for denied in [
-            "http://android.googleapis.com/attestation/status",
-            "https://android.googleapis.com/attestation/status?x=1",
-            "https://android.googleapis.com/attestation/status/",
-            "https://android.googleapis.com.evil.example/attestation/status",
-            "https://user@android.googleapis.com/attestation/status",
-            "https://android.googleapis.com:444/attestation/status",
-        ] {
-            assert!(!is_allowed_attestation_status_uri(&denied.parse().unwrap()));
-        }
     }
 
     #[test]
@@ -2004,25 +1336,8 @@ w1IdYIg2Wxg7yHcQZemFQg==
     }
 
     #[test]
-    fn classifies_installed_keybox_contents_without_modifying_them() {
-        assert_eq!(
-            classify_keybox_xml(BUNDLED_KEYBOX_XML.as_bytes()),
-            KeyboxFileState::Bundled
-        );
-        let custom = format!("{BUNDLED_KEYBOX_XML}\n<!-- selected by user -->\n");
-        assert_eq!(
-            classify_keybox_xml(custom.as_bytes()),
-            KeyboxFileState::Custom
-        );
-        assert_eq!(
-            classify_keybox_xml(b"<AndroidAttestation/>"),
-            KeyboxFileState::Invalid
-        );
-    }
-
-    #[test]
     fn identity_changes_when_chain_changes() {
-        let original = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let original = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         let mut changed = original.clone();
         let ec_info = changed.ec_info.as_mut().unwrap();
         ec_info.chain.push(ec_info.chain[0].clone());
@@ -2034,7 +1349,7 @@ w1IdYIg2Wxg7yHcQZemFQg==
 
     #[test]
     fn rejects_mismatched_private_key_and_certificate_chain() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         let rsa_cert = encode_pem_block(
             "CERTIFICATE",
             &keybox.rsa_info.as_ref().unwrap().chain[0].encoded_certificate,
@@ -2043,12 +1358,12 @@ w1IdYIg2Wxg7yHcQZemFQg==
             "CERTIFICATE",
             &keybox.ec_info.as_ref().unwrap().chain[0].encoded_certificate,
         );
-        let modified_xml = BUNDLED_KEYBOX_XML.replacen(&rsa_cert, &ec_cert, 1);
+        let modified_xml = TEST_KEYBOX_XML.replacen(&rsa_cert, &ec_cert, 1);
         assert!(KeyBox::from_xml_str(&modified_xml).is_err());
     }
 
     fn single_algorithm_keybox(algorithm: KeyAlgorithm) -> KeyBox {
-        let mut keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let mut keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
         match algorithm {
             KeyAlgorithm::Ec => keybox.rsa_info = None,
             KeyAlgorithm::Rsa => keybox.ec_info = None,
@@ -2437,7 +1752,7 @@ w1IdYIg2Wxg7yHcQZemFQg==
 
     #[test]
     fn signing_snapshot_keeps_key_chain_and_digest_in_sync() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
+        let keybox = KeyBox::from_xml_str(TEST_KEYBOX_XML).unwrap();
 
         let rsa_snapshot = keybox
             .signing_info(SigningKeyType {
@@ -2468,60 +1783,5 @@ w1IdYIg2Wxg7yHcQZemFQg==
             KeyAlgorithm::Ec,
         )
         .unwrap();
-    }
-
-    #[test]
-    fn invalid_file_falls_back_to_bundled_template() {
-        let path = write_temp_keybox("invalid", "<not-xml>");
-        let (keybox, used_fallback) = load_keybox_with_fallback(path.to_str().unwrap()).unwrap();
-        assert!(used_fallback);
-        assert_eq!(keybox.identity_digest(), KeyBox::new().identity_digest());
-        let written = fs::read_to_string(&path).unwrap();
-        assert!(written.contains("<AndroidAttestation>"));
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn explicit_bundled_template_is_retirement_eligible_before_runtime_fallback() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
-
-        assert!(!is_fallback_continuation_with_state(
-            &keybox,
-            BUNDLED_KEYBOX_XML,
-            false,
-            false,
-            keybox.identity_digest(),
-        ));
-    }
-
-    #[test]
-    fn non_bundled_keybox_is_retirement_eligible() {
-        let modified_xml = format!("{BUNDLED_KEYBOX_XML}\n<!-- explicit local keybox -->\n");
-        let path = write_temp_keybox("modified", &modified_xml);
-
-        let (_, used_fallback) = load_keybox_with_fallback(path.to_str().unwrap()).unwrap();
-
-        assert!(!used_fallback);
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn rewritten_bundled_template_can_continue_runtime_fallback() {
-        let keybox = KeyBox::from_xml_str(BUNDLED_KEYBOX_XML).unwrap();
-
-        assert!(is_fallback_continuation_with_state(
-            &keybox,
-            BUNDLED_KEYBOX_XML,
-            true,
-            false,
-            keybox.identity_digest(),
-        ));
-        assert!(!is_fallback_continuation_with_state(
-            &keybox,
-            BUNDLED_KEYBOX_XML,
-            true,
-            true,
-            keybox.identity_digest(),
-        ));
     }
 }

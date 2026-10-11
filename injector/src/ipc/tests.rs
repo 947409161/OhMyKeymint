@@ -23,15 +23,17 @@ fn isolated_package_lookup_preserves_original_authorization_identity() {
     assert!(
         matches!(packages, PackageResolution::Known(ref names) if names == &["com.example.owner"])
     );
-    let mut config = crate::config::InjectorConfig {
-        scoop: vec!["com.example.owner".into()],
-        ..Default::default()
-    };
     assert!(
-        crate::filter::evaluate(&config.scoop, &config.filter, 99001, packages.clone()).allowed
+        crate::filter::evaluate(
+            &crate::config::FilterConfig::default(),
+            99001,
+            packages.clone()
+        )
+        .allowed
     );
-    config.filter.deny_packages.push("com.example.owner".into());
-    assert!(!crate::filter::evaluate(&config.scoop, &config.filter, 99001, packages).allowed);
+    let mut config = crate::config::FilterConfig::default();
+    config.deny_packages.push("com.example.owner".into());
+    assert!(!crate::filter::evaluate(&config, 99001, packages).allowed);
     assert_eq!(caller.uid, 99001);
 }
 
@@ -132,4 +134,30 @@ fn binder_status_classification() {
 
     let business = anyhow::Error::new(Status::new_service_specific_error(1, None));
     assert!(!is_rpc_cache_invalidating_error(&business));
+}
+
+#[test]
+fn runtime_package_classification_excludes_system_apps_and_keeps_google_exceptions() {
+    let packages = filter_user_installed_packages(
+        vec![
+            "com.example.user_app".into(),
+            "com.example.system_app".into(),
+            "com.google.android.gms".into(),
+        ],
+        |package| match package {
+            "com.example.user_app" => Ok(0),
+            "com.example.system_app" => Ok(LOCATION_SYSTEM),
+            _ => panic!("Google exception must not need package classification"),
+        },
+    );
+
+    assert_eq!(packages, ["com.example.user_app", "com.google.android.gms"]);
+}
+
+#[test]
+fn runtime_package_classification_fails_closed_when_location_is_unknown() {
+    let packages = filter_user_installed_packages(vec!["com.example.app".into()], |_| {
+        Err(anyhow::anyhow!("package_native unavailable"))
+    });
+    assert!(packages.is_empty());
 }

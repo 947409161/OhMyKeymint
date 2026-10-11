@@ -1,8 +1,4 @@
-use std::{
-    ffi::CStr,
-    io::{Read, Write},
-    time::Duration,
-};
+use std::ffi::CStr;
 
 use jni::{JNIEnv, objects::JString};
 use zygisk_api::{
@@ -20,8 +16,6 @@ mod ids;
 mod soter;
 
 const SOTER_PROCESS: &str = soter::PACKAGE;
-const IPC_TIMEOUT: Duration = Duration::from_secs(2);
-const MAX_PROFILE_BYTES: usize = 4 * 1024;
 
 #[derive(Default)]
 struct SoterSpoofModule;
@@ -39,23 +33,11 @@ impl ZygiskModule for SoterSpoofModule {
         let data_dir = read_java_string(&mut env, args.app_data_dir);
         if is_soter_target(process.as_deref(), data_dir.as_deref()) {
             soter::log("Soter Beta target selected: com.tencent.soter.soterserver");
-            match api.with_companion(read_soter_from_companion) {
-                Ok(Ok(true)) => {
-                    // Native Binder callbacks may outlive a partially installed
-                    // hook. Keep the payload mapped once installation is attempted.
-                    match soter::install(&mut api) {
-                        Ok(()) => soter::log("Soter Beta hook registered; awaiting specialization"),
-                        Err(error) => soter::log(&format!("Soter Beta hook unavailable: {error}")),
-                    }
-                }
-                result => {
-                    if matches!(result, Ok(Ok(false))) {
-                        soter::log("Soter Beta is disabled");
-                    } else {
-                        soter::log(&format!("Soter Beta companion unavailable: {result:?}"));
-                    }
-                    api.set_option(ZygiskOption::DlCloseModuleLibrary);
-                }
+            // Native Binder callbacks may outlive a partially installed hook.
+            // Keep the payload mapped once installation is attempted.
+            match soter::install(&mut api) {
+                Ok(()) => soter::log("Soter Beta hook registered; awaiting specialization"),
+                Err(error) => soter::log(&format!("Soter Beta hook unavailable: {error}")),
             }
             return;
         }
@@ -168,59 +150,6 @@ fn read_java_string(env: &mut JNIEnv<'_>, value: &JString<'_>) -> Option<String>
     env.get_string(value).ok().map(Into::into)
 }
 
-fn read_soter_from_companion(stream: &mut std::os::unix::net::UnixStream) -> std::io::Result<bool> {
-    stream.set_read_timeout(Some(IPC_TIMEOUT))?;
-    read_soter_frame(stream)
-}
-
-fn read_soter_frame(stream: &mut impl Read) -> std::io::Result<bool> {
-    let mut length = [0u8; 4];
-    stream.read_exact(&mut length)?;
-    let length = u32::from_be_bytes(length) as usize;
-    if length > MAX_PROFILE_BYTES {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "companion frame exceeds the 4 KiB limit",
-        ));
-    }
-    // The frame stays byte-for-byte compatible with the companion writer. The
-    // payload is ignored here; only the appended independent flag is read.
-    let mut contents = [0u8; MAX_PROFILE_BYTES];
-    stream.read_exact(&mut contents[..length])?;
-    let mut enabled = [0u8; 1];
-    match stream.read_exact(&mut enabled) {
-        Ok(()) if enabled[0] <= 1 => Ok(enabled[0] == 1),
-        Ok(()) => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid Soter Beta companion flag",
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-fn companion(stream: &mut std::os::unix::net::UnixStream) {
-    let soter_enabled = soter_common::read().unwrap_or_else(|error| {
-        soter::log(&format!(
-            "Soter Beta companion rejected configuration: {error}"
-        ));
-        false
-    });
-    // The payload is intentionally empty; the client parser accepts any length
-    // up to MAX_PROFILE_BYTES and reads the enable flag that follows it.
-    let payload: &[u8] = &[];
-    let mut frame = Vec::with_capacity(4 + payload.len() + 1);
-    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-    frame.extend_from_slice(payload);
-    frame.push(u8::from(soter_enabled));
-    if let Err(error) = stream
-        .set_write_timeout(Some(IPC_TIMEOUT))
-        .and_then(|()| stream.write_all(&frame))
-    {
-        soter::log(&format!("Soter Beta companion write failed: {error}"));
-    }
-}
-
 #[link(name = "log")]
 unsafe extern "C" {
     fn __android_log_write(
@@ -231,7 +160,6 @@ unsafe extern "C" {
 }
 
 zygisk_api::register_module!(SoterSpoofModule);
-zygisk_api::register_companion!(companion);
 
 #[cfg(test)]
 mod tests {
@@ -279,23 +207,5 @@ mod tests {
         ] {
             assert!(!is_soter_target(Some(SOTER_PROCESS), Some(path)), "{path}");
         }
-    }
-
-    #[test]
-    fn soter_companion_frame_is_independent_and_bounded() {
-        for payload in [b"".as_slice(), b"not a profile".as_slice()] {
-            let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
-            frame.extend_from_slice(payload);
-            assert!(!read_soter_frame(&mut frame.as_slice()).unwrap());
-            frame.push(1);
-            assert!(read_soter_frame(&mut frame.as_slice()).unwrap());
-            *frame.last_mut().unwrap() = 0;
-            assert!(!read_soter_frame(&mut frame.as_slice()).unwrap());
-            *frame.last_mut().unwrap() = 2;
-            assert!(read_soter_frame(&mut frame.as_slice()).is_err());
-        }
-        let oversized = (MAX_PROFILE_BYTES as u32 + 1).to_be_bytes();
-        assert!(read_soter_frame(&mut oversized.as_slice()).is_err());
-        assert!(read_soter_frame(&mut [0, 0, 0, 2, 0].as_slice()).is_err());
     }
 }

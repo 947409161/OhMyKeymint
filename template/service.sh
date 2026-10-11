@@ -1,5 +1,5 @@
 MODDIR=${0%/*}
-STATE_DIR=/data/adb/omk
+STATE_DIR=$MODDIR/config
 
 mkdir -p "$STATE_DIR"
 

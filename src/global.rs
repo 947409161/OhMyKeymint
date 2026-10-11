@@ -24,7 +24,7 @@ use crate::{
 };
 
 static DB_INIT: Once = Once::new();
-const OMK_DB_ROOT: &str = "/data/misc/keystore/omk/data";
+const OMK_DB_ROOT: &str = crate::root_path!("data");
 const DB_ORPHAN_LIMIT: usize = 100_000;
 
 pub fn db_root_path() -> &'static Path {

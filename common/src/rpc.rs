@@ -1,4 +1,4 @@
-pub const SOCKET: &str = "/data/misc/keystore/omk/rpc.sock";
+pub const SOCKET: &str = "/data/adb/modules/oh_my_keymint/config/rpc.sock";
 pub const WIRE_MAX_VERSION: u32 = 2;
 
 pub const SERVICE: &str = "omk";

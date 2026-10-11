@@ -68,25 +68,8 @@ extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'sepolicy.rule'   "$MODPATH"
 extract "$ZIPFILE" 'daemon'          "$MODPATH"
 extract "$ZIPFILE" 'daemon-injector' "$MODPATH"
-extract "$ZIPFILE" 'injector.toml'   "$MODPATH"
-extract "$ZIPFILE" 'keybox.xml'      "$MODPATH"
-extract "$ZIPFILE" 'webroot.manifest' "$MODPATH"
-
-while IFS= read -r asset || [ -n "$asset" ]; do
-  case "$asset" in
-    webroot/*) ;;
-    *) abort "! Invalid WebUI asset path: $asset" ;;
-  esac
-  extract "$ZIPFILE" "$asset" "$MODPATH"
-done < "$MODPATH/webroot.manifest"
-
 chmod 755 "$MODPATH/daemon" "$MODPATH/daemon-injector" \
   "$MODPATH/post-fs-data.sh" "$MODPATH/service.sh" "$MODPATH/uninstall.sh"
-find "$MODPATH/webroot" -type d -exec chmod 0755 {} \;
-find "$MODPATH/webroot" -type f -exec chmod 0644 {} \;
-chmod 0644 "$MODPATH/webroot.manifest"
-
-
 if [ "$ARCH" = "x64" ] || [ "$ARCH" = "x86_64" ]; then
   ui_print "- Using packaged x64 binaries"
   BINDIR="$MODPATH/libs/x86_64"
@@ -119,11 +102,22 @@ extract "$ZIPFILE" "zygisk/$ZYGISK_ABI.so" "$MODPATH"
 [ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk Soter payload"
 chmod 755 "$MODPATH/zygisk/$ZYGISK_ABI.so"
 
-CONFIG_DIR=/data/adb/omk
+CONFIG_DIR=$MODPATH/config
+OLD_CONFIG_DIR=/data/adb/modules/oh_my_keymint/config
 mkdir -p "$CONFIG_DIR"
-rm -f "$CONFIG_DIR/restart.keymint" "$CONFIG_DIR/restart.injector" "$CONFIG_DIR/restart.all"
-rm -f "$CONFIG_DIR/keymint" "$CONFIG_DIR/inject" "$CONFIG_DIR/injector" # clean up old hot-update binaries
-
-if [ ! -e "$CONFIG_DIR/omkdata" ] && [ ! -L "$CONFIG_DIR/omkdata" ]; then
-  ln -s /data/misc/keystore/omk "$CONFIG_DIR/omkdata"
+if [ -d "$OLD_CONFIG_DIR" ] && [ "$OLD_CONFIG_DIR" != "$CONFIG_DIR" ]; then
+  cp -an "$OLD_CONFIG_DIR"/. "$CONFIG_DIR"/ 2>/dev/null || true
 fi
+if [ ! -f "$CONFIG_DIR/keybox.xml" ] \
+  && [ -f /data/misc/keystore/omk/keybox.xml ]; then
+  cp -p /data/misc/keystore/omk/keybox.xml "$CONFIG_DIR/keybox.xml"
+fi
+if [ ! -f "$CONFIG_DIR/keybox.xml" ]; then
+  extract "$ZIPFILE" 'config/keybox.xml' "$MODPATH"
+fi
+rm -f "$CONFIG_DIR/keymint-daemon.pid" "$CONFIG_DIR/injector-daemon.pid"
+rm -f "$CONFIG_DIR/restart.keymint" "$CONFIG_DIR/restart.injector" "$CONFIG_DIR/restart.all"
+rm -f "$CONFIG_DIR/injector.payload"
+rm -f "$CONFIG_DIR/keymint" "$CONFIG_DIR/inject" "$CONFIG_DIR/injector"
+chmod 0770 "$CONFIG_DIR"
+chown 1017:1017 "$CONFIG_DIR"

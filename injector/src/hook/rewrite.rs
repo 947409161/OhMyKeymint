@@ -92,7 +92,7 @@ fn evaluate_caller(
     cfg: &config::InjectorConfig,
 ) -> crate::filter::FilterDecision {
     let uid = caller.uid as u32;
-    let preflight = filter::evaluate(&cfg.scoop, &cfg.filter, uid, PackageResolution::Unknown);
+    let preflight = filter::evaluate(&cfg.filter, uid, PackageResolution::Unknown);
     if preflight.reason == FilterReason::RejectedAndroidPackage {
         return preflight;
     }
@@ -101,7 +101,7 @@ fn evaluate_caller(
         let _guard = BypassGuard::enter();
         ipc::resolve_packages_for_caller(caller)
     };
-    let decision = filter::evaluate(&cfg.scoop, &cfg.filter, uid, package_resolution);
+    let decision = filter::evaluate(&cfg.filter, uid, package_resolution);
     if decision.reason == FilterReason::Disabled {
         debug!(
             "event=decision package filter disabled; routing still follows per-method intercept settings"
@@ -157,10 +157,7 @@ fn omk_grant_descriptor_needs_probe(
     decision: &filter::FilterDecision,
 ) -> bool {
     !decision.allowed
-        && matches!(
-            decision.reason,
-            FilterReason::RejectedUnknownPackage | FilterReason::RejectedNotInScope
-        )
+        && matches!(decision.reason, FilterReason::RejectedUnknownPackage)
         && grant.domain == Domain::GRANT
 }
 

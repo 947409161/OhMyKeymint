@@ -21,7 +21,7 @@ pub static CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
 static CONFIG_WATCHER_STARTED: OnceLock<()> = OnceLock::new();
 static CONFIG_FILE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-const CONFIG_PATH: &str = "/data/misc/keystore/omk/config.toml";
+const CONFIG_PATH: &str = crate::root_path!("config.toml");
 const CONFIG_VERSION_V1: u32 = 1;
 const CURRENT_CONFIG_VERSION: u32 = 2;
 
@@ -102,10 +102,9 @@ pub fn persist_config_file(config_file: &ConfigFile) -> Result<()> {
 
 /// Replace only the four trust patch-level fields with a validated value.
 ///
-/// This is intentionally separate from [`persist_config_file`]. The WebUI
-/// receives values from an external bulletin or requests the `auto` defaults
-/// but must not be able to overwrite generated secrets, device identity, or
-/// any unknown config data.
+/// This is intentionally separate from [`persist_config_file`]. Security-patch
+/// updates must not overwrite generated secrets, device identity, or unknown
+/// config data.
 pub fn sync_security_patch(value: &str) -> Result<()> {
     sync_security_patch_to_path(Path::new(CONFIG_PATH), value)
 }
@@ -234,7 +233,7 @@ fn bootstrap_config_file_to_path(path: &Path) -> Result<ConfigFile> {
         }
         Err(error) => {
             return Err(error)
-                .with_context(|| format!("failed to read config file {}", path.display()))
+                .with_context(|| format!("failed to read config file {}", path.display()));
         }
     };
 
@@ -282,7 +281,7 @@ fn persist_config_file_to_path(path: &Path, config_file: &ConfigFile) -> Result<
         Err(error) if error.kind() == io::ErrorKind::NotFound => toml::Table::new(),
         Err(error) => {
             return Err(error)
-                .with_context(|| format!("failed to read config file {}", path.display()))
+                .with_context(|| format!("failed to read config file {}", path.display()));
         }
     };
     merged.remove("trust_record");
@@ -412,13 +411,13 @@ fn parse_config_file(contents: &str, allow_migration: bool) -> Result<ParsedConf
         0 | CONFIG_VERSION_V1 => {
             return Err(anyhow!(
                 "config version {version} requires a keymint restart to migrate"
-            ))
+            ));
         }
         CURRENT_CONFIG_VERSION => false,
         version => {
             return Err(anyhow!(
                 "config version {version} is newer than supported version {CURRENT_CONFIG_VERSION}"
-            ))
+            ));
         }
     };
     let serialized =

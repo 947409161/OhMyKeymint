@@ -2,8 +2,8 @@
 """
 Build, deploy, and hot-restart OMK artifacts.
 
-The script never reboots the device. It updates /data/adb/omk/keymint and
-/data/adb/omk/inject, then requests the module daemons to restart through the
+The script never reboots the device. It updates the module config/keymint and
+config/inject binaries, then requests the module daemons to restart through the
 restart marker file path. With --full, it builds the full module package through
 build.py and installs it with ksud module install.
 """
@@ -39,7 +39,7 @@ RESTART_TARGETS = {
     "injector": "restart.injector",
 }
 
-REMOTE_DIR = "/data/adb/omk"
+REMOTE_DIR = "/data/adb/modules/oh_my_keymint/config"
 
 ANSI_WHITE = "\033[37m"
 ANSI_RESET = "\033[0m"
@@ -219,7 +219,7 @@ def deploy_binaries(
     command = (
         "set -eu; "
         f"mkdir -p {quote(REMOTE_DIR)}; "
-        f"rm -f /data/misc/keystore/omk/rpc.sock; "
+        f"rm -f {quote(REMOTE_DIR + '/rpc.sock')}; "
         f"cp -f {quote(remote_keymint_stage)} {quote(remote_tmp_keymint)}; "
         f"cp -f {quote(remote_inject_stage)} {quote(remote_tmp_inject)}; "
         f"chmod 0755 {quote(remote_tmp_keymint)} {quote(remote_tmp_inject)}; "

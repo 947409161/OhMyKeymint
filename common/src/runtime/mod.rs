@@ -16,5 +16,4 @@
 
 pub mod file_watch;
 pub mod fs;
-pub mod logging;
 pub mod retry;

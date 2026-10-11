@@ -20,9 +20,9 @@ macro_rules! err {
 #[macro_export]
 macro_rules! root_path {
     () => {
-        "/data/misc/keystore/omk"
+        "/data/adb/modules/oh_my_keymint/config"
     };
     ($leaf:literal) => {
-        concat!("/data/misc/keystore/omk/", $leaf)
+        concat!("/data/adb/modules/oh_my_keymint/config/", $leaf)
     };
 }

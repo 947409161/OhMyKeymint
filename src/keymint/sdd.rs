@@ -27,7 +27,7 @@ use std::io::BufRead;
 use std::io::Write;
 use std::path;
 
-const SECURE_DELETION_DATA_FILE: &str = "/data/misc/keystore/omk/data/keymint.dat";
+const SECURE_DELETION_DATA_FILE: &str = crate::root_path!("data/keymint.dat");
 
 fn read_sdd_file() -> Result<storage::SecureDeletionData, Error> {
     let f = fs::File::open(SECURE_DELETION_DATA_FILE).map_err(|e| {

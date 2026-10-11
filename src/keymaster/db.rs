@@ -1138,8 +1138,8 @@ impl KeystoreDB {
         Self::init_tables(tx)?;
 
         let _wp = wd::watch("KeystoreDB::from_2_to_3 backfill keybox-attestation metadata");
-        let keybox_signing_certs = crate::keybox::signing_certificate_ders_from_disk()
-            .unwrap_or_else(|error| {
+        let keybox_signing_certs =
+            crate::keybox::signing_certificate_ders().unwrap_or_else(|error| {
                 log::warn!(
                     "failed to load keybox signing certificates for metadata backfill: {error:#}"
                 );

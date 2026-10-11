@@ -14,7 +14,6 @@ pub enum FilterReason {
     Allowed,
     RejectedAndroidPackage,
     RejectedByDenylist,
-    RejectedNotInScope,
     RejectedUnknownPackage,
 }
 
@@ -25,12 +24,7 @@ pub struct FilterDecision {
     pub packages: Vec<String>,
 }
 
-pub fn evaluate(
-    scoop: &[String],
-    config: &FilterConfig,
-    uid: u32,
-    resolution: PackageResolution,
-) -> FilterDecision {
+pub fn evaluate(config: &FilterConfig, uid: u32, resolution: PackageResolution) -> FilterDecision {
     if !config.enabled {
         return FilterDecision {
             allowed: true,
@@ -80,8 +74,6 @@ pub fn evaluate(
         .any(|pkg| config.deny_packages.contains(pkg))
     {
         FilterReason::RejectedByDenylist
-    } else if !packages.iter().any(|pkg| scoop.contains(pkg)) {
-        FilterReason::RejectedNotInScope
     } else {
         FilterReason::Allowed
     };

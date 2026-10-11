@@ -13,6 +13,7 @@ use rsbinder::{
     hub, DeathRecipient, ExceptionCode, FromIBinder, SIBinder, Status, StatusCode, Strong, WIBinder,
 };
 
+use crate::android::content::pm::IPackageManagerNative::IPackageManagerNative;
 use crate::android::security::keystore::IKeyAttestationApplicationIdProvider::IKeyAttestationApplicationIdProvider;
 use crate::filter::PackageResolution;
 use crate::top::qwq2333::ohmykeymint::CallerInfo::CallerInfo;
@@ -23,10 +24,14 @@ use crate::top::qwq2333::ohmykeymint::IOhMyMaintenanceService::IOhMyMaintenanceS
 const RPC_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_READY_RETRY_DELAY: Duration = Duration::from_millis(200);
 const PM_SERVICE: &str = "sec_key_att_app_id_provider";
+const PACKAGE_MANAGER_NATIVE_SERVICE: &str = "package_native";
+const LOCATION_SYSTEM: i32 = 0x1;
 
 thread_local! {
     static PM: RefCell<Option<Strong<dyn IKeyAttestationApplicationIdProvider>>> = const { RefCell::new(None) };
     static PM_DEATH: RefCell<Option<Arc<dyn DeathRecipient>>> = const { RefCell::new(None) };
+    static PACKAGE_MANAGER_NATIVE: RefCell<Option<Strong<dyn IPackageManagerNative>>> = const { RefCell::new(None) };
+    static PACKAGE_MANAGER_NATIVE_DEATH: RefCell<Option<Arc<dyn DeathRecipient>>> = const { RefCell::new(None) };
 }
 
 static PROCESS_STATE_INIT: Once = Once::new();
@@ -412,8 +417,19 @@ where
 pub fn resolve_packages_for_uid(uid: u32) -> PackageResolution {
     ensure_process_state();
     match resolve_package_names_for_uid(uid) {
-        Ok(packages) if packages.is_empty() => PackageResolution::Unknown,
-        Ok(packages) => PackageResolution::Known(packages),
+        Ok(packages) => {
+            let packages = filter_user_installed_packages(packages, |package| {
+                with_package_manager_native_retry(|pm| {
+                    pm.getLocationFlags(package.to_string())
+                        .with_context(|| format!("getLocationFlags failed for {package}"))
+                })
+            });
+            if packages.is_empty() {
+                PackageResolution::Unknown
+            } else {
+                PackageResolution::Known(packages)
+            }
+        }
         Err(error) => {
             warn!("failed to resolve packages for uid {}: {:#}", uid, error);
             PackageResolution::Unknown
@@ -423,8 +439,88 @@ pub fn resolve_packages_for_uid(uid: u32) -> PackageResolution {
 
 pub fn resolve_packages_for_caller(caller: &CallerInfo) -> PackageResolution {
     resolve_packages_for_caller_with(caller, resolve_packages_for_uid, |caller| {
-        with_omk_retry(|omk| Ok(omk.r#resolveIsolatedCallerPackages(Some(caller))?))
+        let packages =
+            with_omk_retry(|omk| Ok(omk.r#resolveIsolatedCallerPackages(Some(caller))?))?;
+        Ok(filter_user_installed_packages(packages, |package| {
+            with_package_manager_native_retry(|pm| {
+                pm.getLocationFlags(package.to_string())
+                    .with_context(|| format!("getLocationFlags failed for {package}"))
+            })
+        }))
     })
+}
+
+fn filter_user_installed_packages(
+    packages: Vec<String>,
+    mut get_location_flags: impl FnMut(&str) -> Result<i32>,
+) -> Vec<String> {
+    packages
+        .into_iter()
+        .filter(|package| {
+            if crate::config::GOOGLE_PACKAGE_EXCEPTIONS.contains(&package.as_str()) {
+                return true;
+            }
+            match get_location_flags(package) {
+                Ok(flags) => flags & LOCATION_SYSTEM == 0,
+                Err(error) => {
+                    warn!(
+                        "failed to classify package {package}; excluding from user app scope: {error:#}"
+                    );
+                    false
+                }
+            }
+        })
+        .collect()
+}
+
+fn get_package_manager_native() -> Result<Strong<dyn IPackageManagerNative>> {
+    ensure_process_state();
+    PACKAGE_MANAGER_NATIVE.with(|slot| {
+        if let Some(client) = slot.borrow().as_ref() {
+            return Ok(client.clone());
+        }
+
+        let client: Strong<dyn IPackageManagerNative> =
+            hub::check_interface(PACKAGE_MANAGER_NATIVE_SERVICE)
+                .context("failed to connect to package_native")?;
+        let recipient: Arc<dyn DeathRecipient> = Arc::new(PackageManagerNativeDeathRecipient);
+        client
+            .as_binder()
+            .link_to_death(Arc::downgrade(&recipient))
+            .context("failed to watch package_native death")?;
+        PACKAGE_MANAGER_NATIVE_DEATH.with(|death| *death.borrow_mut() = Some(recipient));
+        *slot.borrow_mut() = Some(client.clone());
+        Ok(client)
+    })
+}
+
+struct PackageManagerNativeDeathRecipient;
+
+impl DeathRecipient for PackageManagerNativeDeathRecipient {
+    fn binder_died(&self, _who: &WIBinder) {
+        PACKAGE_MANAGER_NATIVE.with(|slot| *slot.borrow_mut() = None);
+        PACKAGE_MANAGER_NATIVE_DEATH.with(|death| *death.borrow_mut() = None);
+        warn!(
+            "{} binder died; cache cleared",
+            PACKAGE_MANAGER_NATIVE_SERVICE
+        );
+    }
+}
+
+fn with_package_manager_native_retry<T, F>(mut f: F) -> Result<T>
+where
+    F: FnMut(&Strong<dyn IPackageManagerNative>) -> Result<T>,
+{
+    with_binder_retry(
+        PACKAGE_MANAGER_NATIVE_SERVICE,
+        get_package_manager_native,
+        |_| {
+            PACKAGE_MANAGER_NATIVE.with(|slot| *slot.borrow_mut() = None);
+            PACKAGE_MANAGER_NATIVE_DEATH.with(|death| *death.borrow_mut() = None);
+        },
+        is_dead_object_error,
+        &mut f,
+    )
 }
 
 fn resolve_packages_for_caller_with(

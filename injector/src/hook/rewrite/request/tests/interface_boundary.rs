@@ -376,7 +376,7 @@ fn service_identity_requirement_preserves_intercept_and_filter_decisions() {
         &decision,
         &config::InterceptConfig::default()
     ));
-    decision.reason = FilterReason::RejectedNotInScope;
+    decision.reason = FilterReason::RejectedUnknownPackage;
     assert!(service_request_needs_identity(
         &request,
         &decision,

@@ -1,46 +1,59 @@
 #!/system/bin/sh
 
 MODDIR=${0%/*}
-TARGET_DIR=/data/misc/keystore/omk
-LOG_DIR=$TARGET_DIR/logs
-TARGET_KEYBOX=$TARGET_DIR/keybox.xml
-TARGET_INJECTOR_CONFIG=$TARGET_DIR/injector.toml
-STATE_DIR=/data/adb/omk
+TARGET_DIR=$MODDIR/config
+LEGACY_DIR=/data/misc/keystore/omk
+STATE_DIR=$TARGET_DIR
 SECURITY_PATCH_CONFIG=$TARGET_DIR/config.toml
-SECURITY_PATCH_SNAPSHOT=$TARGET_DIR/data/security_patch_defaults.toml
+SECURITY_PATCH_SNAPSHOT=$TARGET_DIR/security_patch_defaults.toml
 
 
 mkdir -p "$TARGET_DIR"
 chmod 0770 "$TARGET_DIR"
 chown 1017:1017 "$TARGET_DIR"
 
-mkdir -p "$LOG_DIR"
-chmod 0770 "$LOG_DIR"
-chown 1017:1017 "$LOG_DIR"
-
 mkdir -p "$STATE_DIR"
 rm -f "$STATE_DIR/keymint-daemon.pid" "$STATE_DIR/injector-daemon.pid"
 rm -f "$STATE_DIR/restart.keymint" "$STATE_DIR/restart.injector" "$STATE_DIR/restart.all"
 
-if [ ! -f "$TARGET_KEYBOX" ] && [ -f "$MODDIR/keybox.xml" ]; then
-  cp "$MODDIR/keybox.xml" "$TARGET_KEYBOX"
+# Move existing persistent state into the module config directory once. Logs
+# are intentionally discarded; the runtime no longer writes log files.
+move_legacy_file() {
+  source_file=$1
+  target_file=$2
+  [ -f "$source_file" ] || return 0
+  if [ ! -e "$target_file" ]; then
+    mv "$source_file" "$target_file"
+  elif cmp -s "$source_file" "$target_file"; then
+    rm -f "$source_file"
+  fi
+}
+
+if [ -d "$LEGACY_DIR" ]; then
+  mkdir -p "$TARGET_DIR/data"
+  for file in config.toml config.toml.bak crash_count timestamp keybox.xml; do
+    move_legacy_file "$LEGACY_DIR/$file" "$TARGET_DIR/$file"
+  done
+  move_legacy_file "$LEGACY_DIR/data/security_patch_defaults.toml" \
+    "$TARGET_DIR/security_patch_defaults.toml"
+  rm -f "$LEGACY_DIR/data/google_attestation_status.json"
+  if [ -d "$LEGACY_DIR/data" ]; then
+    for file in "$LEGACY_DIR"/data/*; do
+      [ -f "$file" ] || continue
+      name=${file##*/}
+      case "$name" in
+        google_attestation_status.json|security_patch_defaults.toml) continue ;;
+      esac
+      move_legacy_file "$file" "$TARGET_DIR/data/$name"
+    done
+  fi
+  # Runtime writes now target only MODDIR/config; retain other legacy files
+  # until their contents are explicitly accounted for.
+  rm -rf "$LEGACY_DIR/logs"
+  rm -f "$LEGACY_DIR/keymint.log.lock" "$LEGACY_DIR/injector.log.lock"
 fi
 
-if [ ! -f "$TARGET_INJECTOR_CONFIG" ] && [ -f "$MODDIR/injector.toml" ]; then
-  cp "$MODDIR/injector.toml" "$TARGET_INJECTOR_CONFIG"
-fi
-
-if [ -f "$TARGET_KEYBOX" ]; then
-  chmod 0600 "$TARGET_KEYBOX"
-  chown 1017:1017 "$TARGET_KEYBOX"
-fi
-
-if [ -f "$TARGET_INJECTOR_CONFIG" ]; then
-  chmod 0600 "$TARGET_INJECTOR_CONFIG"
-  chown 1017:1017 "$TARGET_INJECTOR_CONFIG"
-fi
-
-# Replay a WebUI synchronization before Android framework caches
+# Replay a synchronized security-patch override before Android framework caches
 # Build.VERSION.SECURITY_PATCH. Restore removes the snapshot and changes all
 # four fields to auto, so it naturally skips this block on the next boot.
 reapply_security_patch_early() (

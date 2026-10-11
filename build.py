@@ -52,13 +52,11 @@ REQUIRED_TEMPLATE_FILES = (
     "customize.sh",
     "daemon",
     "daemon-injector",
-    "injector.toml",
     "module.prop",
     "uninstall.sh",
     "post-fs-data.sh",
     "service.sh",
     "verify.sh",
-    "webroot",
 )
 
 MODULE_TEXT_FILES = (
@@ -66,14 +64,10 @@ MODULE_TEXT_FILES = (
     "LICENSE-2",
     "LICENSE.md",
     "README.md",
-    "THIRD_PARTY_LICENSES/Tricky-Addon-Update-Target-List.txt",
     "THIRD_PARTY_LICENSES/D-soter.txt",
     "customize.sh",
     "daemon",
     "daemon-injector",
-    "injector.toml",
-    "keybox.xml",
-    "google_attestation_status.json",
     "module.prop",
     "uninstall.sh",
     "post-fs-data.sh",
@@ -265,10 +259,6 @@ def copy_project_documents(stage_dir: Path) -> None:
             REPO_ROOT / "soter-spoof" / "D-soter.NOTICE",
             stage_dir / "THIRD_PARTY_LICENSES" / "D-soter.txt",
         ),
-        (
-            REPO_ROOT / "webui" / "LICENSE.upstream",
-            stage_dir / "THIRD_PARTY_LICENSES" / "Tricky-Addon-Update-Target-List.txt",
-        ),
     )
     for source, destination in documents:
         if not source.is_file():
@@ -340,24 +330,6 @@ def generate_hash_files(stage_dir: Path) -> None:
     for item in stage_dir.rglob("*"):
         if item.is_file() and not item.name.endswith(".sha256"):
             generate_hash_for_file(item)
-
-
-def generate_webroot_manifest(stage_dir: Path) -> None:
-    webroot = stage_dir / "webroot"
-    required = (webroot / "index.html", webroot / "config.json")
-    missing = [path.relative_to(stage_dir).as_posix() for path in required if not path.is_file()]
-    if missing:
-        raise FileNotFoundError(f"WebUI build is incomplete; missing: {', '.join(missing)}")
-
-    assets = sorted(
-        path.relative_to(stage_dir).as_posix()
-        for path in webroot.rglob("*")
-        if path.is_file() and not path.name.endswith(".sha256")
-    )
-    if not assets:
-        raise FileNotFoundError("WebUI build did not produce any files")
-    write_text_lf(stage_dir / "webroot.manifest", "\n".join(assets) + "\n")
-    print(f"Created WebUI manifest with {len(assets)} asset(s)")
 
 
 def delete_old_zips(release: bool, selected_abis: list[str], version: str) -> None:
@@ -471,7 +443,6 @@ def build_package_for_abi(
 
         modify_module_prop(stage_dir, version, git_count, git_hash, release)
         normalize_module_text_files(stage_dir)
-        generate_webroot_manifest(stage_dir)
         generate_hash_files(stage_dir)
         return create_zip_package(
             stage_dir=stage_dir,

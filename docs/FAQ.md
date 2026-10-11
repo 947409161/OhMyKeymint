@@ -11,8 +11,8 @@ separate explanation of every field.
 ### What is OhMyKeymint?
 
 Android has a secure key service that apps use to create keys and check device
-information. OMK provides an alternative version of that service for the apps
-you select.
+information. OMK provides an alternative version for resolved user and system
+app identities while core Android services remain on the System route.
 
 OMK only covers this part of Android. It is not a general root-hiding tool, a
 Play Integrity module, or a repair tool for damaged security hardware.
@@ -69,7 +69,7 @@ source.
 ### How should I update OMK?
 
 Install the current release over the existing installation in the root manager,
-then reboot. The update keeps the active settings, keybox, and stored OMK keys.
+then reboot. The update keeps the active KeyMint settings and stored OMK keys; Injector defaults ship in the updated binary.
 
 ### Is downgrading safe?
 
@@ -80,10 +80,9 @@ No.
 Before testing a development build, or making a large
 configuration change, privately back up:
 
-- `/data/misc/keystore/omk/config.toml`
-- `/data/misc/keystore/omk/injector.toml`
-- `/data/misc/keystore/omk/keybox.xml`
-- `/data/misc/keystore/omk/data/`
+- `/data/adb/modules/oh_my_keymint/config/config.toml`
+- `/data/adb/modules/oh_my_keymint/config/keybox.xml`
+- `/data/adb/modules/oh_my_keymint/config/data/`
 
 Treat the backup like a password. It can contain private keys and device
 identifiers. A backup is a safety measure, not a portable copy that is
@@ -95,231 +94,58 @@ Disable it in the root manager when you need to keep OMK's persistent data.
 Keys created through OMK are not converted into normal System keys, so some
 selected apps may ask you to sign in or register again after OMK is disabled.
 
-When **Oh My Keymint is uninstalled from KernelSU**, its uninstaller removes
-exactly `/data/adb/omk` and `/data/misc/keystore/omk` before the module directory
-is deleted. This permanently removes OMK configuration, logs, keybox data, and
-OMK-created keys; affected apps may need to be registered or signed in again.
-Reboot after the uninstall. Disabling the module does not run this cleanup.
+When **Oh My Keymint is uninstalled from KernelSU**, the module directory and
+its `config/` contents are removed. This permanently removes OMK configuration
+and OMK-created keys; affected apps may need to be registered or signed in
+again. Reboot after the uninstall. Disabling the module does not remove data.
 
-## Choosing apps and changing settings
+## Routing apps and changing settings
 
-### How do I open the WebUI?
+### Which apps use OMK?
 
-In KernelSU, open Oh My Keymint from the module list and select its WebUI.
+Injector routing is compiled into the Rust source and applies globally across
+Android users and profiles. Caller package identities and system-app status
+are read at runtime. Resolved user-installed apps are in scope; system apps,
+core Android/system UIDs, `android` and `android.*` package identities, and
+unresolved package identities are excluded. The hardcoded exceptions are
+`com.google.android.gsf`, `com.google.android.gms`, and `com.android.vending`.
 
-In Magisk, open an installed KSUWebUIStandalone or WebUI X host and select Oh
-My Keymint. Install one of those WebUI hosts separately if neither is present.
+### Can I change the Injector routing settings on the device?
 
-### Does the WebUI use the network, and what can it change?
-
-Its application code, icons, and language files are bundled with OMK. Normal
-local operations do not use the network. **Sync security patch** invokes the
-module's native HTTPS client to request Google's
-official `source.android.com` Android Security Bulletin overview, with the
-official Chinese mirror as a fallback. It extracts the newest published patch
-month. If the saved default `ro.build.version.security_patch` uses day `01`,
-the synchronized value uses day `01` in that month; a saved day `05` or any
-other day keeps Google's published date. When the saved system and vendor
-dates differ, the system date determines this behavior. The helper updates the
-four `[trust]` patch-level fields and also sets
-`ro.build.version.security_patch` and `ro.vendor.build.security_patch` to that
-date with `resetprop`. Before the first sync, it saves both current property
-values in
-`/data/misc/keystore/omk/data/security_patch_defaults.toml`; repeated syncs keep
-the existing defaults snapshot. While that snapshot remains valid and all four
-patch fields still hold one exact date, the module's early boot hook reapplies
-the paired properties before Android framework values are cached; keymint also
-reapplies them at startup. A manual exact-date configuration without the
-snapshot does not trigger that additional vendor-property write. A snapshot
-error skips this optional reapply without preventing keymint from starting. The native
-client validates TLS with embedded WebPKI roots, so the device does not need to
-provide `curl` or `wget`. HTTPS redirects are accepted only when the final URL
-remains the official bulletin page.
-
-**Restore default security patch** is local and makes no network request. It
-first restores both properties from that snapshot, then sets `security_patch`,
-`os_patchlevel`, `vendor_patchlevel`, and `boot_patchlevel` to `"auto"` while
-preserving all other configuration values. The snapshot is deleted only after
-the properties and configuration are restored successfully. These properties
-are global runtime state for the current boot, so other processes can observe
-their synchronized or restored values. After a successful synchronization or
-restore, the WebUI shows a completion message and asks you to reboot the device;
-it does not reboot automatically.
-
-A network, HTTP, or parsing failure occurs before anything is changed. Snapshot
-validation or creation failures also leave the properties and configuration
-unchanged. The native helper verifies paired property writes and rolls them back
-when an update cannot complete. If the configuration write fails, it attempts
-to restore the preceding property values. A failed restore keeps the snapshot
-available for another attempt and reports the error in the WebUI.
-
-The WebUI also reads and replaces `scoop` and can install a local XML file
-selected through Android's system document picker as the active keybox. The
-picker can use another installed storage app such as MT Manager and requests
-all MIME types because providers may label XML as `text/plain` or
-`application/octet-stream`; the WebUI still requires an `.xml` filename. If the
-system picker cannot be opened, the WebUI falls back to its shared-storage
-browser. It does not change `[crypto]`, device identity, or unrelated
-configuration settings.
-
-The Home page checks every certificate serial number in the active Keybox
-against Google's attestation status list. The validated local cache is used for
-up to 12 hours after its last successful refresh; the next check after that
-interval performs an online lookup. A valid online response is cached at
-`/data/misc/keystore/omk/data/google_attestation_status.json`; when Google is
-unreachable, the validated local cache is used, with the module's validated
-snapshot as the first-install fallback. It shows **Not revoked** when no serial
-is present in the selected list and **Revoked** when any serial is marked
-`SUSPENDED` or `REVOKED`. If all sources fail validation, the result remains a
-check failure and is not reported as **Not revoked**. The local list can be
-stale, and absence from it does not mean that the Keybox passes Play Integrity.
-The **Security Level** row is read from the active Keybox certificate and shows
-`TEE`, `StrongBox`, or an unknown value when the certificate does not identify
-either level.
-Continue to manage those settings through the documented active files.
-
-### What happens when the WebUI saves the app list?
-
-The WebUI passes the selected package names to the native `inject` helper. The
-helper validates the existing complete `injector.toml` and every exact package
-name, removes duplicates, and atomically replaces the file while preserving
-its ownership and permissions. The injector then hot-reloads the valid file
-for new requests.
-
-If loading, parsing, validation, or writing fails, the WebUI reports the error
-and the existing file is not replaced. Saving is unavailable when the current
-list could not be loaded. The package selector refreshes installed apps when it
-opens and when the WebUI returns to the foreground, while preserving unsaved
-selections. A successful save keeps the package selector open.
-
-**Select recommended apps** adds installed user apps and the three core Google
-packages (Google Play services, Google Play Store, and Google Services Framework).
-It skips recognized Root managers, Shizuku clients, and Xposed tools using exact
-package identifiers, declared permissions, and the Xposed settings category.
-Unknown or renamed tools without these markers may still require manual adjustment.
-Existing selections are preserved, including manually selected tools. Other system
-apps remain available through **Add System App**. Recommendation only changes the
-pending selection; **Apply** writes it to `scoop`. This is OMK backend routing,
-not a general-purpose root-hiding list.
+No. The Injector does not read an `injector.toml` file. Its package scope,
+safety rules, enabled KeyStore methods, and timing values are compiled into the
+Rust source. To change them, rebuild and update the module, then restart the
+injector and reopen affected apps.
 
 ### Where are the active settings?
 
-The active files are:
+The active settings file is `/data/adb/modules/oh_my_keymint/config/config.toml`. Edit
+that file rather than a copy in the module ZIP. The
+[Configuration Guide](CONFIGURATION.md) explains its fields and when changes
+take effect.
 
-- `/data/misc/keystore/omk/config.toml`
-- `/data/misc/keystore/omk/injector.toml`
+### How do I apply a KeyMint setting change?
 
-Edit the active files, not the copies inside the module ZIP. Make a backup
-first and use a root-capable editor that preserves the files correctly.
-The [Configuration Guide](CONFIGURATION.md) explains every field and when each
-kind of change takes effect. The embedded WebUI is an optional editor for
-`scoop`, an installer for a locally selected keybox, and controls for syncing
-or restoring the four security-patch fields and the two corresponding runtime
-properties; it does not expose the other settings.
+KeyMint loads valid `config.toml` edits automatically where supported. Changes
+to `[crypto]`, most `[trust]` or `[device]` values, and the KeyMint log level
+require a KeyMint restart. After changing compiled Injector behavior, update
+the module and restart the injector. After installing or updating the whole
+module, reboot the device.
 
-### What is `scoop`?
+### What happens if I make a mistake in `config.toml`?
 
-`scoop` is the list of app package names that may use OMK. A package name looks
-like `com.example.app`; it is not the name shown under the app icon. It must be
-entered exactly.
-
-You can often find the package name at the end of the app's Play Store URL,
-after `id=`. Add only apps that you actually want OMK to handle.
-
-Keep the `scoop = [` and closing `]` lines in `injector.toml`, and put one
-package name on each line between them. Bare entries do not need quotes or
-commas (the quoted, comma-separated TOML form is still accepted).
-
-The embedded WebUI lists installed packages and updates this same `scoop`
-value. It accepts exact package names only and does not support `!`, `?`,
-wildcards, labels, or partial names.
-
-### Why is an app affected even though I did not add it?
-
-The default list is not empty. It includes Google Services Framework, Google
-Play services, Play Store, and two common test apps. Also, a few related apps
-share one Android identity, so selecting one can affect another app in the
-same group.
-
-The active `injector.toml` is authoritative and is not replaced during an
-update.
-
-### Can I enable OMK for every app?
-
-OMK is designed for selected apps, and there is no official one-click
-"all apps" mode. Keep the filter enabled and add only the apps that need OMK.
-Intercepting Android, system services, or unknown callers can break unlocking,
-app storage, or the user interface.
-
-Problems caused by deliberately allowing Android or system callers are outside
-the project's support scope. Restore the default filter before asking for
-help.
-
-### Which settings should ordinary users leave alone?
-
-Keep these defaults unless a maintainer gives you a specific reason to change
-them:
-
-- keep the filter enabled;
-- keep Android packages blocked and unknown callers rejected;
-- leave every switch under `[intercept]` enabled;
-- keep `os_version`, all four patch-level fields, `vb_key`, and `vb_hash` on
-  their documented automatic settings; and
-- never change generated values under `[crypto]`.
-
-The biometric verification bypass is an insecure compatibility option, not a
-general fix for fingerprint errors or app root detection. Changing `[crypto]`
-values can make existing OMK keys unusable.
-
-### How do I apply a setting change?
-
-Both components notice valid edits automatically, but not every keymint value
-can be replaced safely while it is running. Injector settings apply to new
-requests; the four patch-level fields can apply together when no other
-`[trust]` field changes, and the biometric compatibility switch can also apply
-without a keymint restart. Changes to `[crypto]`, other `[trust]` fields, device
-identity fields, or the keymint log level require a keymint restart. The
-[Configuration Guide](CONFIGURATION.md#how-changes-are-loaded) has the complete
-list.
-
-After changing app routing, close and reopen the affected app to avoid mixing
-an already-open operation with the new route. If a process restart is still
-needed for a clean boundary, restart the injector only; an injector-only
-setting change does not require a keymint restart. After installing or updating
-the whole module, reboot the device.
-
-A successful WebUI save follows the injector hot-reload path and needs no
-keymint restart. Close and reopen the selected app when you need a clean
-routing boundary.
-
-### What happens if I make a mistake in a configuration file?
-
-A TOML syntax error, an unknown injector field, or an unsupported configuration
-version is not applied while OMK is already running; the affected component
-keeps its last valid settings. An unknown injector `log_level` is a special
-case: the file remains valid and the level falls back to `debug`. Restarting
-with a broken `config.toml` prevents keymint from starting, and restarting with
-a broken `injector.toml` disables OMK request routing.
-
-Restore a valid backup. A repaired `injector.toml` is loaded automatically;
-restart the injector only if routing does not recover. A repaired `config.toml`
-requires a keymint restart. If a configuration file is completely missing at
-startup, OMK creates a new default file. Do not delete `config.toml` as a reset
-method: its newly generated `[crypto]` values may make existing OMK keys
+A malformed file is rejected. While KeyMint is running, the last valid settings
+remain active; a malformed file at startup prevents KeyMint from starting.
+Restore a valid backup and restart KeyMint. Do not delete `config.toml` as a
+reset method: newly generated `[crypto]` values may make existing OMK keys
 unusable.
-
-### Does an update overwrite my settings or keybox?
-
-No. OMK preserves the active settings and keybox files during an update. The
-active personal configuration remains authoritative.
 
 ## Keybox and stored keys
 
-### Do I have to replace the bundled keybox?
+### Can I replace the keybox?
 
-Only if you have a valid replacement and understand where it came from. The
-bundled file is a fallback template; it is not a promise that every current
-service or detector will accept it.
+Edit `/data/adb/modules/oh_my_keymint/config/keybox.xml` and restart KeyMint.
+Trusted runtime keybox updates are written to this file.
 
 Never download private keyboxes from an untrusted source and never publish a
 keybox that you use.
@@ -349,25 +175,6 @@ into key data, invisible characters, or other extra content.
 A file working in another module does not prove that it is valid. Some other
 tools accept damaged or incomplete XML that OMK correctly rejects.
 
-### How should I replace `keybox.xml`?
-
-In the WebUI, choose **Change Keybox**. Android's system document picker opens
-directly so you can select the file with the default file manager or another
-installed storage app such as MT Manager. The picker requests all MIME types
-because providers may label XML as `text/plain` or `application/octet-stream`;
-the WebUI still requires an `.xml` filename. If the system picker cannot be
-opened, the WebUI falls back to its shared-storage browser. The native
-`keymint` helper checks the input size, decodes it
-as UTF-8, and performs the complete in-memory `KeyBox` validation, including
-private-key and certificate-chain matching. It atomically replaces the canonical lowercase
-`/data/misc/keystore/omk/keybox.xml` only after every check succeeds. A read,
-size, UTF-8, validation, or write failure leaves the current keybox unchanged.
-
-The keybox watcher loads a successful replacement automatically, so a restart
-is normally unnecessary. Replacing the keybox preserves ordinary application
-signing keys, including passkey credentials; only dedicated `ATTEST_KEY`
-entries tied to the previous keybox are retired. Check `keymint.log` afterward.
-
 ### Why does a detector say that the certificate is expired or revoked?
 
 That is a keybox problem, not a security-patch setting. Changing
@@ -375,16 +182,16 @@ patch-level settings cannot extend a certificate's lifetime or remove a
 revocation. Use a currently valid, complete keybox and do not alter certificate
 dates.
 
-### Should I delete `/data/misc/keystore/omk/data/`?
+### Should I delete `config/data/`?
 
 Not during a normal update, keybox change, or first troubleshooting attempt.
-That folder contains OMK-created keys. Deleting it can sign apps out, make
+`/data/adb/modules/oh_my_keymint/config/data/` contains OMK-created keys. Deleting it can sign apps out, make
 encrypted app data unreadable, or force identity verification.
 
 Only reset it when you deliberately accept those consequences and have already
 made a private backup. Resetting all stored keys is not a general repair step.
 
-### Why did an app lose a key after I added it to or removed it from `scoop`?
+### Why did an app lose a key after routing changed?
 
 Normal System keys and OMK keys are kept separately. Moving an app between the
 two services does not copy its existing keys. The app may then report a missing key,
@@ -405,24 +212,24 @@ Check these in order:
    testing.
 2. Confirm that the device is in the supported Android and architecture range.
 3. Keep the default safety filters and do not run another KeyStore replacement.
-4. Confirm the exact app package is in the active `scoop` list.
+4. Confirm the app package is resolved and the compiled filter allows its UID.
 5. Reboot after installation or a module update.
 6. Reproduce the problem once, then inspect the fresh injector and keymint
    logs from that same time.
 
 Changing several settings at once makes the cause harder to find. Keep your
 existing `config.toml` and every generated `[crypto]` value. Restore only the
-documented filter and intercept defaults in `injector.toml`, then change only
-the app list.
+compiled filter and intercept behavior, then change only KeyMint settings
+needed for the reproduction.
 
 ### Why does a test app still show "Bootloader unlocked" after installation?
 
 Usually the test app is still using the normal System service because its
-package was not selected, the injector did not start, or the active filter
+package identity was unresolved, the injector did not start, or the active filter
 rejected it. The test app's screen alone cannot tell which service answered.
 
-After following the checklist above, look in the fresh injector log for the
-test app and an OMK routing result.
+After following the checklist above, inspect fresh `logcat -d -s OhMyKeymint`
+output for the test app and an OMK routing result.
 
 ### Why do I see "No attestation keys", "TEE damaged", or a similar message?
 
@@ -430,11 +237,11 @@ These messages do not by themselves prove that the phone's hardware is
 damaged. They can appear when the test app was not routed to OMK, injection
 failed, or the active keybox was missing, invalid, expired, or revoked.
 
-Confirm the app's package, routing log, and keybox log from the same test. OMK
+Confirm the app's package and the related logcat output from the same test. OMK
 cannot restore factory hardware provisioning if the device's real TEE is
 actually damaged.
 
-### Why does an app work outside `scoop` but fail inside it?
+### Why can an app behave differently when routed through OMK?
 
 The app may be trying to use a System key that OMK does not have, or it may
 depend on behavior outside Android's standard KeyStore rules. First account
@@ -450,7 +257,7 @@ OMK does not hide root. A warning can come from an app's own root detection,
 package checks, system-property checks, a blocked certificate, or another
 module. Passing a key-attestation test does not cancel those checks.
 
-If the warning is identical with the app removed from `scoop`, investigate the
+If the warning is identical when OMK is disabled for the test, investigate the
 rest of the root setup. If it appears only when OMK handles the app, provide a
 routed and unrouted comparison from the same app and build.
 
@@ -527,7 +334,7 @@ same time, not just an isolated word such as `ERROR`.
 
 ### What should I do if Android cannot unlock or the user interface does not start?
 
-Restore the default `injector.toml`, especially the app list and safety filter,
+Restore the default module build, especially the compiled app scope and safety filter,
 then reboot. If you allowed Android packages, system services, or unknown
 callers, undo that change first.
 
@@ -535,23 +342,12 @@ If Android cannot start normally, use the root manager's documented safe mode
 or module-disable method to disable OMK. Do not keep testing a broad
 interception configuration on important data.
 
-### Where are the logs, and will they grow forever?
+### Where can I read logs?
 
-The log files are:
-
-- `/data/misc/keystore/omk/logs/keymint.log`
-- `/data/misc/keystore/omk/logs/keymint.log.1`
-- `/data/misc/keystore/omk/logs/injector.log`
-- `/data/misc/keystore/omk/logs/injector.log.1`
-
-`debug` is the normal default and is useful while reproducing a problem. You
-can lower the level in each component's active configuration after testing.
-The injector applies a valid level change automatically; changing the keymint
-level requires a keymint restart. OMK rotates the logs; all four files together
-are limited to about 16 MB in normal operation.
-
-For a report, note the exact reproduction time and also collect
-`logcat -d -s OhMyKeymint` from the same attempt.
+OMK does not write log files. Collect Android logcat output with
+`logcat -d -s OhMyKeymint` after noting the exact reproduction time. The
+KeyMint log level is configured in `config.toml`; Injector logging uses a fixed
+level.
 
 ### What should I include in a bug report?
 

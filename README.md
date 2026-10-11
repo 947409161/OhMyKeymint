@@ -1,6 +1,6 @@
 # Oh My Keymint
 
-[![Telegram](https://img.shields.io/static/v1?label=Telegram&message=@OhMyKeymint&color=0088cc)](https://t.me/OhMyKeymint)  [![CI Build](https://github.com/qwq233/OhMyKeymint/actions/workflows/ci.yml/badge.svg)](https://github.com/qwq233/OhMyKeymint/actions/workflows/ci.yml)
+[![Telegram](https://img.shields.io/static/v1?label=Telegram&message=@OhMyKeymint&color=0088cc)](https://t.me/OhMyKeymint)
 
 Custom keystore implementation for Android Keystore Spoofer
 
@@ -18,35 +18,30 @@ In theory, this would make it harder for detectors to identify behavior inconsis
 
 2. [Configure OMK](docs/CONFIGURATION.md) if needed.
 
-3. Change the active keybox.xml from the WebUI (if you need)
-
-The keybox file must contain at least one complete RSA or EC entry, and every
-private key present must match its certificate chain. A keybox may contain both
-algorithms or only one; RKP-extracted keyboxes are legitimately EC-only. Keep
-the XML free of extra content such as watermarks or invisible characters. The
-embedded WebUI opens Android's system document picker when installing a
-replacement, so the default file manager or another installed storage app such
-as MT Manager can provide the file. The picker requests all MIME types; the
-WebUI still requires an `.xml` file and the native helper performs the complete
-validation. If the system picker cannot be opened, the WebUI falls back to its
-shared-storage browser.
-
-The active files are `/data/misc/keystore/omk/config.toml` and
-`/data/misc/keystore/omk/injector.toml`. Read the
-[Configuration Guide](docs/CONFIGURATION.md) for complete annotated examples,
-field-by-field explanations, safety notes, and restart requirements.
+3. The active configuration and keybox files are
+   `/data/adb/modules/oh_my_keymint/config/config.toml` and
+   `/data/adb/modules/oh_my_keymint/config/keybox.xml`. KeyMint reads the
+   keybox file at startup and persists trusted runtime keybox updates there.
+Injector routing settings are compiled into the Rust source. The injector
+reads caller package identities at runtime and globally includes resolved
+user-installed apps across Android users and profiles. It excludes system
+apps, blocks core Android identities, and rejects callers whose package
+identity cannot be resolved. Google Services Framework, Google Play services,
+and Play Store are hardcoded exceptions. See the
+[Configuration Guide](docs/CONFIGURATION.md) for KeyMint settings and restart
+requirements.
 
 The `[main]` settings `ta_operation_delay_ms`, `ta_generation_delay_ms`, and
 `ta_control_delay_ms` in `config.toml` add a fresh random wait before each
 covered software TA call. Their default ranges are `[9, 21]`, `[6, 16]`, and
 `[1, 4]` milliseconds, including when a field is absent. Set a range to
 `[0, 0]` to disable that category. Valid changes apply to new calls without a
-restart. These are extra waits, which add to any enabled injector delays;
+restart. These are extra waits, which add to the compiled injector delays;
 they do not provide hardware security or guarantee a detector result. See
 [TA delay ranges](docs/CONFIGURATION.md#ta-delay-ranges) for coverage and limits.
 
-Optional `injector.toml` settings under `[main]` can mitigate timing-based client
-heuristics: `attestation_generation_delay_ms` delays successful challenged key
+The compiled injector settings can mitigate timing-based client heuristics:
+`attestation_generation_delay_ms` delays challenged key
 generation replies, and `operation_start_delay_ms` delays two-way OMK
 `createOperation` calls before the RPC, including calls that return business
 errors. `attestation_generation_delay_ms` defaults to `[20, 30]` so that a
@@ -55,88 +50,7 @@ on a device with a real security level, while the sampled range keeps the wait
 from becoming a fixed value of its own; `operation_start_delay_ms` defaults to
 `0`. Both accept values up to `250` milliseconds and occupy a Binder worker while
 waiting. They do not provide hardware security or guarantee a detector result.
-See the Configuration Guide before changing them.
-
-In `injector.toml`, keep the `scoop = [` and closing `]` lines, then add each
-exact package name on its own line. Bare entries omit both quotes and commas;
-blank lines and lines beginning with `#` are ignored. The traditional quoted,
-comma-separated TOML form remains accepted.
-
-## Embedded WebUI
-
-The module includes a WebUI for choosing the exact packages in `scoop`,
-installing a local keybox, managing the Android security patch level, and enabling
-an optional Tencent Soter compatibility (Beta) simulation. It also provides an ADB
-Disabler with independent controls for developer options,
-USB debugging, and OEM unlocking:
-
-- In KernelSU, open Oh My Keymint from the module list and select its WebUI.
-- In Magisk, open an installed KSUWebUIStandalone or WebUI X host and select
-  Oh My Keymint. The module does not install a WebUI host.
-
-The WebUI uses bundled assets for normal operation. **Sync security patch**
-uses the module's native HTTPS client to download the Android Security Bulletin
-overview from Google's official `source.android.com` host (with its official
-Chinese mirror as a fallback), and parses the newest published patch level.
-The synchronized value always uses that level's year and month. If the saved
-default `ro.build.version.security_patch` ends in day `01`, it uses day `01`;
-otherwise it keeps Google's published date. A saved day `05` therefore follows
-Google's published date. If the saved system and vendor patch dates disagree,
-the system date determines this choice. It does not require `curl` or
-`wget` on the device. TLS uses the client's embedded WebPKI roots, and HTTPS
-redirects are accepted only when they end at the official bulletin page.
-Before the first sync, the
-helper records the current `ro.build.version.security_patch` and
-`ro.vendor.build.security_patch` values in
-`/data/misc/keystore/omk/data/security_patch_defaults.toml`. Later syncs keep
-that original snapshot. Each sync writes the selected date to all four
-`[trust]` patch-level fields and applies it to both runtime properties with
-`resetprop`. While that valid snapshot remains, the module's early boot hook
-reapplies the paired properties before Android framework values are cached;
-keymint also reapplies them at startup. A manually configured exact date
-without the snapshot continues to use the normal configuration behavior. After a
-successful sync or restore, the WebUI reports completion and asks you to reboot;
-it does not reboot the device automatically.
-
-**Restore default security patch** does not use the network. It restores both
-runtime properties from the saved snapshot, sets `security_patch`,
-`os_patchlevel`, `vendor_patchlevel`, and `boot_patchlevel` to `auto`, and then
-deletes the snapshot. These runtime properties are global for the current boot,
-so other processes can observe the synchronized or restored values. A failed
-operation is reported, property writes are rolled back when a later step fails,
-and a snapshot needed for another restore attempt is retained.
-
-The ADB Disabler action stores four strict `0/1` values in
-`/data/misc/keystore/omk/data/adb_disabler.conf`. When enabled, the selected
-settings are applied immediately and replayed by the module service at every
-boot. Disabling the master switch stops future replay; it intentionally does
-not restore properties already changed during the current boot.
-
-The security-patch network actions use the bundled native HTTPS client
-and require neither `curl` nor `wget`. Other WebUI operations remain local.
-The WebUI can also read and replace `scoop` and select a local XML file from
-shared storage or through another installed file app to replace the active OMK
-keybox. The security-patch actions do not change secrets, identity fields, or
-other settings.
-
-When the module is uninstalled from KernelSU, its bundled uninstaller removes
-exactly `/data/adb/omk` and `/data/misc/keystore/omk`, including OMK-created key
-data. This is irreversible and can require affected apps to register or sign in
-again; disabling the module does not remove the directories. Reboot after an
-uninstall.
-
-Saving `scoop` is delegated to the native `inject` helper, which validates the
-current configuration and package names before atomically replacing
-`injector.toml`. Installing a keybox is delegated to the native `keymint`
-helper. That helper checks the size, decodes UTF-8, and performs the complete
-in-memory `KeyBox` validation before atomically replacing the canonical
-lowercase `/data/misc/keystore/omk/keybox.xml`. A failed read, size, UTF-8,
-validation, or write leaves the corresponding active file unchanged. The
-appropriate watcher loads a successful change automatically, so a restart is
-normally unnecessary.
-
-Third-party source and licensing details for the adapted WebUI are listed in
-[Third-Party Software](docs/THIRD_PARTY.md).
+These settings are fixed in the injector source.
 
 ## Restarting keymint and injector
 
@@ -144,9 +58,9 @@ The module ships two background daemons: one for `keymint`, one for `injector`.
 You can restart them by following commands.
 
 ```sh
-touch /data/adb/omk/restart.keymint
-touch /data/adb/omk/restart.injector
-touch /data/adb/omk/restart.all
+touch /data/adb/modules/oh_my_keymint/config/restart.keymint
+touch /data/adb/modules/oh_my_keymint/config/restart.injector
+touch /data/adb/modules/oh_my_keymint/config/restart.all
 ```
 
 See the [Configuration Guide](docs/CONFIGURATION.md#how-changes-are-loaded) for

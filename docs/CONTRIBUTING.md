@@ -45,16 +45,16 @@ State in the pull request what behavior remains unchanged.
 
 ### OMK routing
 
-- For every request routed by `scoop` with
+- For every request routed by the global package filter with
   `FilterDecision::allowed == true`, OMK is the only backend during normal
-  reachable operation. Per-method intercept settings still determine whether a
-  request is routed by `scoop`.
+  reachable operation. Per-method intercept settings still determine whether
+  a request is routed to OMK.
 - Choose the backend only from the current caller, filter decision, method, and
   configuration. Do not inspect or infer which backend created a key,
   `KeyDescriptor`, `KEY_ID`, `GRANT`, alias, wrapping key, or attestation key.
 - Per-method intercept settings are authoritative. When interception for a
-  method is disabled, pass the request to System unchanged even when `scoop`
-  allows the caller.
+  method is disabled, pass the request to System unchanged even when the global
+  package filter allows the caller.
 - Do not provide key or descriptor continuity between System and OMK. Pass old,
   externally supplied, and System-created descriptors to the selected backend
   unchanged. An OMK business error for such a descriptor is authoritative.
@@ -75,7 +75,8 @@ State in the pull request what behavior remains unchanged.
 ### Persistent and temporary files
 
 - Delete every temporary probe artifact immediately after the probe completes.
-- Store new persistent product data under `/data/misc/keystore/omk/data/`.
+- Store persistent product data under
+  `/data/adb/modules/oh_my_keymint/config/`.
 
 ## Repository conventions
 
@@ -83,15 +84,13 @@ State in the pull request what behavior remains unchanged.
   non-ASCII.
 - When `src/config.rs` changes the `config.toml` schema, defaults, accepted
   values, migration, or runtime semantics, update the corresponding
-  [README](../README.md) documentation. When `injector/src/config.rs` changes
-  `injector.toml`, update both the README and
-  [`template/injector.toml`](../template/injector.toml).
+  [README](../README.md) documentation. Injector routing settings are compiled
+  in `injector/src/config.rs`; update the README and configuration guide when
+  those defaults or runtime semantics change.
 
 ## Development, validation, and deployment
 
-The [CI workflow](../.github/workflows/ci.yml) is the source of truth for the
-current toolchain and Android build environment. Use Rust nightly, the
-`aarch64-linux-android` target, an Android NDK version matching CI, and the
+Use Rust nightly, the `aarch64-linux-android` target, an Android NDK, and the
 CMake, Ninja, bindgen, and protobuf compiler tools required by the build.
 
 Build BoringSSL for Android with Rust bindings. Keep the checkout at
@@ -125,9 +124,8 @@ Release packages use the identity order `OhMyKeymint-<version>-<commit count>-<s
 
 Module archives use standard ZIP Deflate at compression level 9 and retain
 per-file SHA-256 verification. Native release binaries keep speed-oriented
-optimization, LTO and symbol stripping. The log4rs dependency enables only
-console and pattern encoding; OMK's shared rotating-file logger handles file
-output without log4rs configuration-file parsers or built-in rolling appenders.
+optimization, LTO and symbol stripping. Runtime logs are sent to Android
+logcat; OMK does not create log files.
 
 Rust changes must pass:
 

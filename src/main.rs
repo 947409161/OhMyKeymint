@@ -2,7 +2,6 @@
 #![feature(once_cell_try)]
 
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::panic;
 use std::sync::Arc;
 use std::{ffi::CString, os::unix::fs::PermissionsExt, path::Path};
@@ -12,7 +11,6 @@ use kmr_common::rpc;
 use kmr_common::selinux::{clear_sockcreate_con, set_sockcreate_con};
 use log::{debug, error, info, warn, LevelFilter};
 use rsbinder::rpc::{PeerIdentity, RpcServer};
-use serde::Serialize;
 
 use crate::{
     consts::RPC_SOCKET_CONTEXT,
@@ -27,6 +25,7 @@ pub mod att_mgr;
 pub mod config;
 pub mod consts;
 pub mod global;
+pub mod https;
 pub mod keybox;
 pub mod keymaster;
 pub mod keymint;
@@ -35,12 +34,9 @@ pub mod macros;
 pub mod plat;
 pub mod proto;
 pub mod security_patch;
-pub mod soter_beta;
 pub mod selinux;
 pub mod utils;
 pub mod watchdog;
-pub mod webui_activity;
-pub mod webui_http;
 
 include!(concat!(env!("OUT_DIR"), "/aidl.rs"));
 // include!( "./aidl.rs"); // for development only
@@ -106,7 +102,7 @@ fn repair_omk_data_files() {
 }
 
 fn prepare_android_storage() {
-    for dir in [root_path!(), root_path!("data"), root_path!("logs")] {
+    for dir in [root_path!(), root_path!("data")] {
         if let Err(e) = std::fs::create_dir_all(dir) {
             storage_warn(format!("Failed to create OMK directory {dir}: {e:?}"));
             continue;
@@ -121,55 +117,18 @@ fn prepare_android_storage() {
         }
     }
 
-    if let Err(e) = crate::keybox::ensure_keybox_file(root_path!("keybox.xml")) {
-        storage_warn(format!(
-            "Failed to seed OMK keybox {}: {e:?}",
-            root_path!("keybox.xml")
-        ));
-    }
-
-    if let Err(e) = crate::keybox::ensure_google_attestation_status_cache() {
-        storage_warn(format!(
-            "Failed to seed Google attestation status cache {}: {e:?}",
-            crate::keybox::GOOGLE_ATTESTATION_STATUS_CACHE_PATH
-        ));
-    }
-
-    for file in [
-        root_path!("keymint.log.lock"),
-        root_path!("injector.log.lock"),
-    ] {
-        match std::fs::remove_file(file) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => storage_warn(format!(
-                "Failed to remove legacy OMK lock file {file}: {e:?}"
-            )),
-        }
-    }
-
     for file in [
         root_path!("config.toml"),
         root_path!("config.toml.bak"),
         root_path!("keybox.xml"),
-        root_path!("data/google_attestation_status.json"),
+        root_path!("security_patch_defaults.toml"),
         root_path!("crash_count"),
-        root_path!("logs/keymint.log"),
-        root_path!("logs/keymint.log.1"),
-        root_path!("logs/injector.log"),
-        root_path!("logs/injector.log.1"),
     ] {
         if !Path::new(file).exists() {
             continue;
         }
 
-        let mode = if file.ends_with(".xml") || file.ends_with("google_attestation_status.json") {
-            0o600
-        } else {
-            0o660
-        };
-
-        if let Err(e) = std::fs::set_permissions(file, std::fs::Permissions::from_mode(mode)) {
+        if let Err(e) = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o660)) {
             storage_warn(format!("Failed to chmod OMK file {file}: {e:?}"));
         }
 
@@ -246,355 +205,7 @@ fn install_module_info_bundle_if_available() -> Result<()> {
     Ok(())
 }
 
-const WEBUI_KEYBOX_CHUNK_BYTES: usize = 48 * 1024;
-const WEBUI_KEYBOX_MAX_CHUNKS: usize = 4;
-
-fn decode_webui_keybox_payload(chunks: Vec<String>) -> Result<Vec<u8>, String> {
-    if chunks.is_empty() {
-        return Err("--webui-install-keybox requires a base64 payload".to_string());
-    }
-    if chunks.len() > WEBUI_KEYBOX_MAX_CHUNKS {
-        return Err("keybox payload contains too many chunks".to_string());
-    }
-    if chunks
-        .iter()
-        .any(|chunk| chunk.is_empty() || chunk.len() > WEBUI_KEYBOX_CHUNK_BYTES)
-    {
-        return Err("keybox payload contains an invalid chunk".to_string());
-    }
-
-    let max_encoded_bytes = keybox::MAX_KEYBOX_XML_BYTES.div_ceil(3) * 4;
-    let encoded_len = chunks.iter().map(String::len).sum::<usize>();
-    if encoded_len > max_encoded_bytes {
-        return Err(format!(
-            "keybox payload exceeds the {} byte limit",
-            keybox::MAX_KEYBOX_XML_BYTES
-        ));
-    }
-
-    let mut encoded = String::with_capacity(encoded_len);
-    for chunk in chunks {
-        encoded.push_str(&chunk);
-    }
-    BASE64_STANDARD
-        .decode(encoded.as_bytes())
-        .map_err(|error| format!("invalid keybox payload encoding: {error}"))
-}
-
-#[derive(Serialize)]
-struct WebUiKeyboxState {
-    valid: bool,
-    bundled: bool,
-    source: &'static str,
-    level: &'static str,
-    play_integrity: &'static str,
-    revocation: &'static str,
-}
-
-fn webui_keybox_state() -> Result<String, String> {
-    let (state, metadata, _) =
-        keybox::installed_keybox_state_and_metadata().map_err(|error| format!("{error:#}"))?;
-    let valid = !matches!(state, keybox::KeyboxFileState::Invalid);
-    let response = WebUiKeyboxState {
-        valid,
-        bundled: matches!(state, keybox::KeyboxFileState::Bundled),
-        source: metadata.source.as_str(),
-        level: metadata.level.as_str(),
-        // A static Keybox cannot provide a Play Integrity verdict. A real
-        // verdict must come from an enrolled app and its trusted server.
-        play_integrity: "not_checked",
-        // The online lookup is a separate command so local Home data does not
-        // wait for a slow or unreachable network.
-        revocation: keybox::KeyboxRevocationStatus::NotChecked.as_str(),
-    };
-    serde_json::to_string(&response)
-        .map_err(|error| format!("failed to serialize keybox state: {error}"))
-}
-
-fn webui_keybox_revocation_status() -> Result<String, String> {
-    let (state, _, serials) =
-        keybox::installed_keybox_state_and_metadata().map_err(|error| format!("{error:#}"))?;
-    if matches!(state, keybox::KeyboxFileState::Invalid) {
-        return Ok(keybox::KeyboxRevocationStatus::NotChecked
-            .as_str()
-            .to_string());
-    }
-    let serials = serials.ok_or_else(|| {
-        "failed to read every certificate serial number from the installed Keybox".to_string()
-    })?;
-    let status =
-        keybox::check_google_attestation_status(&serials).map_err(|error| format!("{error:#}"))?;
-
-    let (current_state, _, current_serials) =
-        keybox::installed_keybox_state_and_metadata().map_err(|error| format!("{error:#}"))?;
-    if matches!(current_state, keybox::KeyboxFileState::Invalid)
-        || current_serials.as_ref() != Some(&serials)
-    {
-        return Err(
-            "installed Keybox changed while its certificate status was checked".to_string(),
-        );
-    }
-
-    Ok(status.as_str().to_string())
-}
-
-fn handle_webui_keybox_command() -> Option<Result<String, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    match args.next()?.as_str() {
-        "--webui-install-keybox" => Some(
-            decode_webui_keybox_payload(args.collect())
-                .and_then(|contents| {
-                    keybox::install_keybox_xml(&contents).map_err(|e| format!("{e:#}"))
-                })
-                .map(|()| "ok".to_string()),
-        ),
-        "--webui-get-keybox-state" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-get-keybox-state does not accept arguments".to_string()
-                ));
-            }
-            Some(webui_keybox_state())
-        }
-        "--webui-check-keybox-revocation" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-check-keybox-revocation does not accept arguments".to_string(),
-                ));
-            }
-            Some(webui_keybox_revocation_status())
-        }
-        _ => None,
-    }
-}
-
-fn handle_webui_soter_beta_command(
-    mut args: impl Iterator<Item = String>,
-) -> Option<Result<String, String>> {
-    match args.next()?.as_str() {
-        "--webui-get-soter-beta" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-get-soter-beta does not accept arguments".to_string()
-                ));
-            }
-            Some(soter_beta::state_json().map_err(|error| format!("{error:#}")))
-        }
-        "--webui-set-soter-beta" => {
-            let value = args.next();
-            if value.is_none() || args.next().is_some() {
-                return Some(Err(
-                    "--webui-set-soter-beta requires exactly one argument: 0 or 1".to_string(),
-                ));
-            }
-            let enabled = match soter_common::parse(value.unwrap().as_bytes()) {
-                Ok(enabled) => enabled,
-                Err(error) => return Some(Err(error.to_string())),
-            };
-            if let Err(error) = soter_beta::require_root() {
-                return Some(Err(format!("{error:#}")));
-            }
-            prepare_android_storage();
-            Some(
-                soter_beta::save(enabled)
-                    .map(|()| "soter_beta_saved".to_string())
-                    .map_err(|error| format!("{error:#}")),
-            )
-        }
-        _ => None,
-    }
-}
-
-fn handle_webui_security_patch_command() -> Option<Result<String, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    if args.next()?.as_str() != "--webui-sync-security-patch" {
-        return None;
-    }
-
-    let value = match args.next() {
-        Some(value) => value,
-        None => {
-            return Some(Err(
-                "--webui-sync-security-patch requires exactly one value: auto or YYYY-MM-DD"
-                    .to_string(),
-            ))
-        }
-    };
-    if args.next().is_some() {
-        return Some(Err(
-            "--webui-sync-security-patch accepts exactly one value: auto or YYYY-MM-DD".to_string(),
-        ));
-    }
-
-    prepare_android_storage();
-    Some(
-        crate::security_patch::apply_webui_security_patch(&value)
-            .map_err(|error| format!("{error:#}")),
-    )
-}
-
-fn handle_webui_security_bulletin_command() -> Option<Result<String, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    if args.next()?.as_str() != "--webui-fetch-security-bulletin" {
-        return None;
-    }
-
-    let url = match args.next() {
-        Some(url) => url,
-        None => {
-            return Some(Err(
-                "--webui-fetch-security-bulletin requires exactly one official URL".to_string(),
-            ))
-        }
-    };
-    if args.next().is_some() {
-        return Some(Err(
-            "--webui-fetch-security-bulletin accepts exactly one official URL".to_string(),
-        ));
-    }
-
-    Some(
-        crate::security_patch::download_android_security_bulletin(&url)
-            .map_err(|error| format!("{error:#}")),
-    )
-}
-
-fn handle_webui_activity_command() -> Option<Result<String, String>> {
-    let mut args = std::env::args();
-    let _program = args.next();
-    let command = args.next()?;
-
-    match command.as_str() {
-        "--webui-get-activity-log" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-get-activity-log does not accept arguments".to_string()
-                ));
-            }
-            prepare_android_storage();
-            Some(webui_activity::list_json().map_err(|error| format!("{error:#}")))
-        }
-        "--webui-record-activity" => {
-            let Some(action) = args.next() else {
-                return Some(Err(
-                    "--webui-record-activity requires an action and base64 detail".to_string(),
-                ));
-            };
-            let Some(encoded_detail) = args.next() else {
-                return Some(Err(
-                    "--webui-record-activity requires an action and base64 detail".to_string(),
-                ));
-            };
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-record-activity accepts exactly two arguments".to_string()
-                ));
-            }
-            let max_encoded_bytes = webui_activity::MAX_ACTIVITY_DETAIL_BYTES.div_ceil(3) * 4;
-            if encoded_detail.len() > max_encoded_bytes {
-                return Some(Err(
-                    "--webui-record-activity detail exceeds the byte limit".to_string()
-                ));
-            }
-            let result = BASE64_STANDARD
-                .decode(encoded_detail)
-                .map_err(|error| format!("invalid WebUI activity detail encoding: {error}"))
-                .and_then(|bytes| {
-                    String::from_utf8(bytes)
-                        .map_err(|error| format!("WebUI activity detail is not UTF-8: {error}"))
-                })
-                .and_then(|detail| {
-                    prepare_android_storage();
-                    webui_activity::record(&action, &detail).map_err(|error| format!("{error:#}"))
-                })
-                .map(|()| "ok".to_string());
-            Some(result)
-        }
-        "--webui-clear-activity-log" => {
-            if args.next().is_some() {
-                return Some(Err(
-                    "--webui-clear-activity-log does not accept arguments".to_string()
-                ));
-            }
-            prepare_android_storage();
-            Some(
-                webui_activity::clear()
-                    .map(|()| "ok".to_string())
-                    .map_err(|error| format!("{error:#}")),
-            )
-        }
-        _ => None,
-    }
-}
-
 fn main() {
-    if let Some(result) = handle_webui_soter_beta_command(std::env::args().skip(1)) {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_activity_command() {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_security_bulletin_command() {
-        match result {
-            Ok(output) => print!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_security_patch_command() {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    if let Some(result) = handle_webui_keybox_command() {
-        match result {
-            Ok(output) => println!("{output}"),
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::exit(2);
-            }
-        }
-        return;
-    }
-
-    // A stale WebUI must not start the daemon after a helper command is removed.
-    if std::env::args()
-        .nth(1)
-        .is_some_and(|arg| arg.starts_with("--webui-"))
-    {
-        eprintln!("unsupported WebUI command");
-        std::process::exit(2);
-    }
-
     logging::init_logger();
     prepare_android_storage();
     panic::set_hook(Box::new(|panic_info| {
@@ -629,7 +240,9 @@ fn run() -> Result<()> {
     info!("starting OhMyKeymint");
 
     if let Err(error) = security_patch::prepare_startup(&config_file, &security_patch_lock) {
-        warn!("failed to prepare synchronized security-patch properties; continuing startup: {error:#}");
+        warn!(
+            "failed to prepare synchronized security-patch properties; continuing startup: {error:#}"
+        );
     }
 
     info!("initial process state");
@@ -670,7 +283,7 @@ fn run() -> Result<()> {
     });
     repair_omk_data_files();
 
-    keybox::initialize().context("failed to initialize keybox runtime")?;
+    keybox::initialize();
 
     info!("setting uid/gid={} role=keystore", KEYSTORE_UID);
     set_keystore_identity()?;
@@ -720,43 +333,4 @@ fn run() -> Result<()> {
     info!("serving OMK RPC socket={}", rpc::SOCKET);
     server.run().context("OMK RPC server stopped")?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn webui_soter_beta_rejects_invalid_arguments_before_storage_setup() {
-        for arguments in [
-            vec!["--webui-get-soter-beta", "1"],
-            vec!["--webui-set-soter-beta"],
-            vec!["--webui-set-soter-beta", "true"],
-            vec!["--webui-set-soter-beta", "1", "0"],
-            vec!["--webui-set-soter-beta", "1\n"],
-        ] {
-            assert!(
-                handle_webui_soter_beta_command(arguments.into_iter().map(str::to_string))
-                    .unwrap()
-                    .is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn webui_keybox_payload_decodes_multiple_chunks() {
-        let decoded = decode_webui_keybox_payload(vec!["YWJj".into(), "ZA==".into()]).unwrap();
-        assert_eq!(decoded, b"abcd");
-    }
-
-    #[test]
-    fn webui_keybox_payload_rejects_invalid_base64() {
-        assert!(decode_webui_keybox_payload(vec!["not-base64".into()]).is_err());
-    }
-
-    #[test]
-    fn webui_keybox_payload_rejects_too_many_chunks() {
-        let chunks = vec!["YQ==".to_string(); WEBUI_KEYBOX_MAX_CHUNKS + 1];
-        assert!(decode_webui_keybox_payload(chunks).is_err());
-    }
 }

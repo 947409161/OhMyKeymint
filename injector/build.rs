@@ -43,6 +43,7 @@ fn main() {
         "../aidl/android/security/authorization",
         "../aidl/android/security/maintenance",
         "../aidl/android/security/keystore",
+        "../aidl/android/content/pm",
         "../aidl/top/qwq2333/ohmykeymint",
     ];
     let mut aidl = rsbinder_aidl::Builder::new();

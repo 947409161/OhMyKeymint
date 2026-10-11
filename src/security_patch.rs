@@ -15,6 +15,7 @@ use ureq::http::Uri;
 
 use crate::{
     config::{self, ConfigFile, RawTrustConfig},
+    https::{self, DownloadPolicy},
     plat::{
         resetprop::{
             self, SecurityPatchProperties, SYSTEM_SECURITY_PATCH_PROPERTY,
@@ -23,10 +24,9 @@ use crate::{
         vbmeta,
     },
     root_path,
-    webui_http::{self, DownloadPolicy},
 };
 
-const DEFAULTS_PATH: &str = root_path!("data/security_patch_defaults.toml");
+const DEFAULTS_PATH: &str = root_path!("security_patch_defaults.toml");
 const ANDROID_SECURITY_BULLETIN_PATH: &str = "/docs/security/bulletin/asb-overview";
 const ANDROID_SECURITY_BULLETIN_HOSTS: [&str; 2] =
     ["source.android.com", "source.android.google.cn"];
@@ -160,8 +160,7 @@ fn is_official_security_bulletin_uri(uri: &Uri) -> bool {
 
 /// Download one explicitly allowed Android Security Bulletin overview page.
 ///
-/// The WebUI invokes this entry point in a short-lived `keymint` process so
-/// devices do not need to provide curl, wget, or a particular root-shell PATH.
+/// Download an allowed bulletin page using the native HTTPS client.
 pub fn download_android_security_bulletin(url: &str) -> Result<String> {
     let requested_uri: Uri = url
         .parse()
@@ -170,7 +169,7 @@ pub fn download_android_security_bulletin(url: &str) -> Result<String> {
         bail!("Android Security Bulletin URL is not an allowed Google page");
     }
 
-    webui_http::download_https_utf8(
+    https::download_https_utf8(
         requested_uri,
         &DownloadPolicy {
             resource: "Android Security Bulletin",
@@ -185,7 +184,7 @@ pub fn download_android_security_bulletin(url: &str) -> Result<String> {
     )
 }
 
-pub fn apply_webui_security_patch(value: &str) -> Result<String> {
+pub fn apply_security_patch_override(value: &str) -> Result<String> {
     config::validate_security_patch_sync_value(value)?;
     let _lock = acquire_operation_lock()?;
     let config_file = config::load_config_file()
@@ -193,7 +192,7 @@ pub fn apply_webui_security_patch(value: &str) -> Result<String> {
     let fingerprint = current_build_fingerprint()?;
     let state_path = Path::new(DEFAULTS_PATH);
 
-    apply_webui_security_patch_with(
+    apply_security_patch_override_with(
         value,
         PatchOperation {
             config_file: &config_file,
@@ -207,7 +206,7 @@ pub fn apply_webui_security_patch(value: &str) -> Result<String> {
     )
 }
 
-/// Reapply an active WebUI patch override before the regular vbmeta bootstrap
+/// Reapply an active synchronized patch override before the regular vbmeta bootstrap
 /// can change the system property. This also refreshes defaults after an OTA.
 pub(crate) fn prepare_startup(config_file: &ConfigFile, _lock: &OperationLock) -> Result<()> {
     let PatchIntent::Synchronized(date) = patch_intent(&config_file.trust) else {
@@ -227,7 +226,7 @@ pub(crate) fn prepare_startup(config_file: &ConfigFile, _lock: &OperationLock) -
     .with_context(|| format!("failed to reapply synchronized security patch {date}"))
 }
 
-fn apply_webui_security_patch_with<RuntimeReader, DefaultReader, PropertyWriter, ConfigWriter>(
+fn apply_security_patch_override_with<RuntimeReader, DefaultReader, PropertyWriter, ConfigWriter>(
     value: &str,
     operation: PatchOperation<'_>,
     mut read_runtime: RuntimeReader,
@@ -372,7 +371,7 @@ fn load_snapshot(path: &Path) -> Result<Option<SecurityPatchDefaults>> {
                     "failed to inspect security-patch defaults {}",
                     path.display()
                 )
-            })
+            });
         }
     };
     if !metadata.file_type().is_file() {
@@ -416,7 +415,7 @@ fn remove_snapshot(path: &Path) -> Result<()> {
                     "failed to remove security-patch defaults {}",
                     path.display()
                 )
-            })
+            });
         }
     }
     let parent = path
@@ -450,9 +449,8 @@ where
     PropertyWriter: FnMut(&SecurityPatchProperties, &SecurityPatchProperties) -> Result<()>,
 {
     match write_properties(expected, before) {
-        Ok(()) => config_error.context(
-            "security-patch config update failed; runtime properties were restored",
-        ),
+        Ok(()) => config_error
+            .context("security-patch config update failed; runtime properties were restored"),
         Err(rollback_error) => anyhow!(
             "security-patch config update failed: {config_error:#}; runtime property rollback failed: {rollback_error:#}"
         ),
@@ -605,7 +603,7 @@ mod tests {
 
         for (location, expected) in cases {
             let resolved =
-                crate::webui_http::resolve_redirect(&base, location, "Android Security Bulletin")
+                crate::https::resolve_redirect(&base, location, "Android Security Bulletin")
                     .unwrap();
             assert_eq!(resolved.to_string(), expected);
             assert!(is_official_security_bulletin_uri(&resolved));
@@ -626,7 +624,7 @@ mod tests {
             "/docs/security/bulletin/../bulletin/asb-overview",
         ] {
             let resolved =
-                crate::webui_http::resolve_redirect(&base, location, "Android Security Bulletin");
+                crate::https::resolve_redirect(&base, location, "Android Security Bulletin");
             if let Ok(uri) = resolved {
                 assert!(
                     !is_official_security_bulletin_uri(&uri),
@@ -645,7 +643,7 @@ mod tests {
         let config = ConfigFile::default();
 
         for date in ["2026-01-05", "2026-02-05"] {
-            let applied = apply_webui_security_patch_with(
+            let applied = apply_security_patch_override_with(
                 date,
                 PatchOperation {
                     config_file: &config,
@@ -694,7 +692,7 @@ mod tests {
                 .into_iter()
                 .zip(&configs)
         {
-            let applied = apply_webui_security_patch_with(
+            let applied = apply_security_patch_override_with(
                 published,
                 PatchOperation {
                     config_file: config,
@@ -767,7 +765,7 @@ mod tests {
         let default_reads = RefCell::new(0_u32);
         let configured = RefCell::new(None);
 
-        let applied = apply_webui_security_patch_with(
+        let applied = apply_security_patch_override_with(
             "2026-08-05",
             PatchOperation {
                 config_file: &synchronized_config("2026-07-05"),
@@ -817,7 +815,7 @@ mod tests {
         let current = RefCell::new(defaults.clone());
         let writes = RefCell::new(Vec::new());
 
-        let error = apply_webui_security_patch_with(
+        let error = apply_security_patch_override_with(
             "2026-08-05",
             PatchOperation {
                 config_file: &ConfigFile::default(),
@@ -865,7 +863,7 @@ mod tests {
         let current = RefCell::new(properties("2026-02-05", "2026-02-05"));
         let config_values = RefCell::new(Vec::new());
 
-        let applied = apply_webui_security_patch_with(
+        let applied = apply_security_patch_override_with(
             "auto",
             PatchOperation {
                 config_file: &synchronized_config("2026-02-05"),
@@ -909,7 +907,7 @@ mod tests {
         let synchronized = properties("2026-02-05", "2026-02-05");
         let current = RefCell::new(synchronized.clone());
 
-        let error = apply_webui_security_patch_with(
+        let error = apply_security_patch_override_with(
             "auto",
             PatchOperation {
                 config_file: &synchronized_config("2026-02-05"),
@@ -939,7 +937,7 @@ mod tests {
         let current = properties(DEFAULT_SYSTEM, DEFAULT_VENDOR);
         let config_writes = RefCell::new(0_u32);
 
-        let error = apply_webui_security_patch_with(
+        let error = apply_security_patch_override_with(
             "2026-02-05",
             PatchOperation {
                 config_file: &ConfigFile::default(),
@@ -968,7 +966,7 @@ mod tests {
         let current = RefCell::new(properties("2026-02-05", "2026-02-05"));
         let default_reads = RefCell::new(0_u32);
 
-        apply_webui_security_patch_with(
+        apply_security_patch_override_with(
             "auto",
             PatchOperation {
                 config_file: &synchronized_config("2026-02-05"),
@@ -1007,7 +1005,7 @@ mod tests {
         let reads = RefCell::new(0_u32);
         let writes = RefCell::new(0_u32);
 
-        let result = apply_webui_security_patch_with(
+        let result = apply_security_patch_override_with(
             "9999-12-31",
             PatchOperation {
                 config_file: &ConfigFile::default(),
@@ -1047,7 +1045,7 @@ mod tests {
         .unwrap();
         let current = RefCell::new(properties(DEFAULT_SYSTEM, DEFAULT_VENDOR));
 
-        apply_webui_security_patch_with(
+        apply_security_patch_override_with(
             "2026-02-05",
             PatchOperation {
                 config_file: &ConfigFile::default(),
@@ -1083,7 +1081,7 @@ mod tests {
         fs::write(&path, "version = 1\nbroken = true\n").unwrap();
         let writes = RefCell::new(0_u32);
 
-        let result = apply_webui_security_patch_with(
+        let result = apply_security_patch_override_with(
             "2026-02-05",
             PatchOperation {
                 config_file: &ConfigFile::default(),
@@ -1104,7 +1102,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_without_snapshot_does_not_treat_manual_exact_config_as_webui_sync() {
+    fn startup_without_snapshot_does_not_treat_manual_exact_config_as_synchronized() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("security_patch_defaults.toml");
         let written = RefCell::new(None);

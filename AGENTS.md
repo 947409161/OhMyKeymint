@@ -37,14 +37,14 @@
 
 ### OMK Routing
 
-- For every request routed by `scoop` with `FilterDecision::allowed == true`, OMK is the only
-  backend during normal reachable operation. Per-method intercept settings still determine whether
-  a request is routed by `scoop`.
+- For every request routed by the global package filter with
+  `FilterDecision::allowed == true`, OMK is the only backend during normal reachable operation.
+  Per-method intercept settings still determine whether a request is routed to OMK.
 - Choose the backend only from the current caller, filter decision, method, and configuration. Do
   not read or infer which backend created a key, `KeyDescriptor`, `KEY_ID`, `GRANT`, alias,
   wrapping key, or attestation key.
 - Per-method intercept settings are authoritative. When interception for a method is disabled, pass
-  the request to System unchanged even for a caller allowed by `scoop`
+  the request to System unchanged even for a caller allowed by the global package filter.
 - Do not support key or descriptor continuity between System and OMK. Pass old, externally
   supplied, and System-created descriptors to the selected backend unchanged; an OMK business
   error for such a descriptor is authoritative.
@@ -60,7 +60,7 @@
 
 - Obtain the user's explicit approval before creating any file that requires permanent storage.
 - Delete every temporary probe artifact immediately after the probe completes.
-- All persistent data should be in `/data/misc/keystore/omk/data/`
+- All persistent data should be in `/data/adb/modules/oh_my_keymint/config/`
 
 ### Telephony Attestation IDs
 
@@ -79,7 +79,7 @@
   because IMEI2, MEID, or all telephony fields are absent after one-shot discovery.
 - Preserve every valid candidate returned by any slot or API. A failure or unsupported result from
   another probe must not discard successful values or turn the resolved snapshot into an error.
-  Individual probe failures are internal discovery failures, not scoop-routed OMK business errors.
+  Individual probe failures are internal discovery failures, not package-filter-routed OMK business errors.
 - Return `CANNOT_ATTEST_IDS` only when an explicitly requested ID is absent or mismatched. Missing
   unrequested IMEI2 or MEID must not block ordinary attestation or requests for other IDs.
 - Use the existing privileged fork helper and direct Binder calls. Do not add shell commands or
@@ -115,8 +115,9 @@
   affected behavior and update it when needed.
 - Documentation under `docs/` must describe only the latest behavior. Never mix in previous
   behavior, migration history, fixed-issue narratives, or comparisons with older releases.
-- When `config.rs` changes the `injector.toml` or `config.toml` schema, defaults, accepted values, or
-  runtime semantics, keep `template` in sync.
+- When `src/config.rs` changes the `config.toml` schema, defaults, accepted
+  values, or runtime semantics, keep `template` in sync. Injector configuration
+  is compiled in `injector/src/config.rs` and has no TOML template.
 
 ## Validation and Deployment
 
