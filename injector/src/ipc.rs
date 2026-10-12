@@ -420,7 +420,7 @@ pub fn resolve_packages_for_uid(uid: u32) -> PackageResolution {
         Ok(packages) => {
             let packages = filter_user_installed_packages(packages, |package| {
                 with_package_manager_native_retry(|pm| {
-                    pm.getLocationFlags(package.to_string())
+                    pm.getLocationFlags(package)
                         .with_context(|| format!("getLocationFlags failed for {package}"))
                 })
             });
@@ -443,7 +443,7 @@ pub fn resolve_packages_for_caller(caller: &CallerInfo) -> PackageResolution {
             with_omk_retry(|omk| Ok(omk.r#resolveIsolatedCallerPackages(Some(caller))?))?;
         Ok(filter_user_installed_packages(packages, |package| {
             with_package_manager_native_retry(|pm| {
-                pm.getLocationFlags(package.to_string())
+                pm.getLocationFlags(package)
                     .with_context(|| format!("getLocationFlags failed for {package}"))
             })
         }))
