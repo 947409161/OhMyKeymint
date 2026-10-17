@@ -152,4 +152,24 @@
     <string name="soter_beta_saved">Soter Beta preference saved. Restart the device to apply. Compatibility is not verified.</string>
     <string name="soter_beta_preview">Preview only. Device settings cannot be saved here.</string>
     <string name="soter_beta_warning">Beta simulation only: replies carry a software-generated key pair and signature. This is not real TEE attestation and does not repair payments or cryptographic signatures. Applies only to Tencent SoterServer, not KeyMint.</string>
+    <string name="menu_spoof_pif_fingerprint">Spoof PIF fingerprint</string>
+    <string name="pif_fingerprint_title">Spoof PIF fingerprint</string>
+    <string name="pif_enable_spoofing">Enable PIF fingerprint spoofing</string>
+    <string name="pif_zygisk_next_required">Install and enable Zygisk Next separately. OMK does not bundle, download, or install it.</string>
+    <string name="pif_current_config">Current configuration</string>
+    <string name="pif_security_patch">Security patch: %s</string>
+    <string name="pif_disabled">Disabled</string>
+    <string name="pif_loading_config">Loading PIF configuration…</string>
+    <string name="pif_config_load_error">Failed to load the PIF configuration</string>
+    <string name="pif_loading_devices">Loading Pixel devices…</string>
+    <string name="pif_devices_load_error">Failed to load Pixel devices</string>
+    <string name="pif_choose_device">Choose a Pixel device</string>
+    <string name="pif_random_device">Random</string>
+    <string name="pif_applying">Applying…</string>
+    <string name="prompt_pif_applied">PIF fingerprint applied: %1$s · security patch %2$s.</string>
+    <string name="prompt_pif_disabled">PIF fingerprint spoofing disabled.</string>
+    <string name="prompt_pif_apply_error">Failed to update PIF fingerprint spoofing: %s</string>
+    <string name="home_spoofed_device">Spoofed device fingerprint</string>
+    <string name="tools_pif_desc">Fetch and apply a Pixel fingerprint for PIF spoofing</string>
+    <string name="tools_fingerprint_spoofing">Fingerprint spoofing</string>
 </resources>

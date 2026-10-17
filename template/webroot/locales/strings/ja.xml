@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Zygisk Next を別途インストールして有効にしてください。有効化・無効化の後は端末を再起動してください。互換性は未検証です。</string>
     <string name="soter_beta_saved">Soter Beta 設定を保存しました。適用するには端末を再起動してください。互換性は未検証です。</string>
     <string name="soter_beta_preview">プレビューのみです。ここでは端末の設定を保存できません。</string>
+    <string name="menu_spoof_pif_fingerprint">PIF フィンガープリントを偽装</string>
+    <string name="pif_fingerprint_title">PIF フィンガープリントを偽装</string>
+    <string name="pif_enable_spoofing">PIF フィンガープリントの偽装を有効にする</string>
+    <string name="pif_zygisk_next_required">Zygisk Next を別途インストールして有効にしてください。OMK はこのモジュールを同梱、ダウンロード、インストールしません。</string>
+    <string name="pif_current_config">現在の設定</string>
+    <string name="pif_security_patch">セキュリティパッチ：%s</string>
+    <string name="pif_disabled">無効</string>
+    <string name="pif_loading_config">PIF の設定を読み込み中…</string>
+    <string name="pif_config_load_error">PIF の設定を読み込めませんでした</string>
+    <string name="pif_loading_devices">Pixel デバイスを読み込み中…</string>
+    <string name="pif_devices_load_error">Pixel デバイスを読み込めませんでした</string>
+    <string name="pif_choose_device">Pixel デバイスを選択</string>
+    <string name="pif_random_device">ランダム</string>
+    <string name="pif_applying">適用中…</string>
+    <string name="prompt_pif_applied">%1$s の PIF フィンガープリントを適用しました。セキュリティパッチ：%2$s。</string>
+    <string name="prompt_pif_disabled">PIF フィンガープリントの偽装を無効にしました。</string>
+    <string name="prompt_pif_apply_error">PIF フィンガープリントの偽装を更新できませんでした：%s</string>
+    <string name="home_spoofed_device">偽装デバイス フィンガープリント</string>
+    <string name="tools_pif_desc">PIF 偽装用の Pixel フィンガープリントを取得して適用</string>
+    <string name="tools_fingerprint_spoofing">フィンガープリント偽装</string>
 </resources>

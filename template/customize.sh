@@ -114,9 +114,9 @@ pkill -9 -f 'soterta?-svc --mode=' 2>/dev/null || true
 setprop ctl.stop vendor.soter 2>/dev/null || true
 setprop ctl.start vendor.soter 2>/dev/null || true
 
-ui_print "- Extracting Zygisk Soter payload"
+ui_print "- Extracting Zygisk spoof payload"
 extract "$ZIPFILE" "zygisk/$ZYGISK_ABI.so" "$MODPATH"
-[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk Soter payload"
+[ -f "$MODPATH/zygisk/$ZYGISK_ABI.so" ] || abort "! Missing Zygisk spoof payload"
 chmod 755 "$MODPATH/zygisk/$ZYGISK_ABI.so"
 
 CONFIG_DIR=/data/adb/omk

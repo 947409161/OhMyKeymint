@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Installa e abilita Zygisk Next separatamente. Riavvia il dispositivo dopo l'abilitazione o la disabilitazione. La compatibilità non è stata verificata.</string>
     <string name="soter_beta_saved">Impostazione Soter Beta salvata. Riavvia il dispositivo per applicarla. La compatibilità non è stata verificata.</string>
     <string name="soter_beta_preview">Solo anteprima. Qui non è possibile salvare le impostazioni del dispositivo.</string>
+    <string name="menu_spoof_pif_fingerprint">Simula l'impronta PIF</string>
+    <string name="pif_fingerprint_title">Simula l'impronta PIF</string>
+    <string name="pif_enable_spoofing">Abilita la simulazione dell'impronta PIF</string>
+    <string name="pif_zygisk_next_required">Installa e abilita Zygisk Next separatamente. OMK non lo include, scarica o installa.</string>
+    <string name="pif_current_config">Configurazione attuale</string>
+    <string name="pif_security_patch">Patch di sicurezza: %s</string>
+    <string name="pif_disabled">Disabilitato</string>
+    <string name="pif_loading_config">Caricamento della configurazione PIF…</string>
+    <string name="pif_config_load_error">Impossibile caricare la configurazione PIF</string>
+    <string name="pif_loading_devices">Caricamento dei dispositivi Pixel…</string>
+    <string name="pif_devices_load_error">Impossibile caricare i dispositivi Pixel</string>
+    <string name="pif_choose_device">Scegli un dispositivo Pixel</string>
+    <string name="pif_random_device">Casuale</string>
+    <string name="pif_applying">Applicazione…</string>
+    <string name="prompt_pif_applied">Impronta PIF applicata: %1$s · patch di sicurezza %2$s.</string>
+    <string name="prompt_pif_disabled">Simulazione dell'impronta PIF disabilitata.</string>
+    <string name="prompt_pif_apply_error">Impossibile aggiornare la simulazione dell'impronta PIF: %s</string>
+    <string name="home_spoofed_device">Impronta dispositivo simulata</string>
+    <string name="tools_pif_desc">Scarica e applica un'impronta Pixel per lo spoofing PIF</string>
+    <string name="tools_fingerprint_spoofing">Simulazione dell'impronta</string>
 </resources>

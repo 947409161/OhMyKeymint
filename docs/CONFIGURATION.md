@@ -62,7 +62,8 @@ change does not require a keymint restart.
 ## Embedded WebUI
 
 The module includes a WebUI for selecting packages in `scoop`, installing a
-local keybox, managing the Android security patch level, and enabling an optional
+local keybox, managing the Android security patch level, applying a Pixel
+PIF fingerprint through OMK's own Zygisk payload, and enabling an optional
 Tencent Soter compatibility (Beta) simulation. Open it from the Oh My Keymint
 module page in KernelSU. With Magisk, open an installed
 KSUWebUIStandalone or WebUI X host and select Oh My Keymint; the module does not
@@ -133,7 +134,9 @@ do not match either source or level are shown as unknown. The
 security-patch card reads the current
 `ro.build.version.security_patch` runtime property. **TEE: Normal** is shown
 only after the injector reaches OMK and obtains the Trusted Environment
-security level.
+security level. The spoofed-device value is the Pixel model in OMK's active PIF
+profile; it describes the configured target and is not a separate live check of
+a Google Play services process.
 
 The Keybox card checks every certificate serial number from both presented
 algorithm chains against Google's attestation status list at
@@ -155,10 +158,12 @@ the bundled snapshot.
 
 The Home page also keeps the 30 most recent successful WebUI changes in
 `/data/misc/keystore/omk/data/webui_activity.json`. The list covers saved app
-targets, Keybox changes, and security-patch synchronization and restore. It
-stores only the action type, a short non-secret result such as an entry count or
-patch date, and the completion time. It never stores package-name lists, Keybox
-contents or filenames, or downloaded response bodies. The Home page initially shows the newest four entries, can expand
+targets, Keybox changes, security-patch synchronization and restore, and PIF
+enable or disable actions. It
+stores only the action type, a short non-secret result such as an entry count,
+patch date, or Pixel model, and the completion time. It never stores
+package-name lists, Keybox contents or filenames, downloaded response bodies, or
+a PIF fingerprint. The Home page initially shows the newest four entries, can expand
 the complete retained list, and provides controls to copy an entry or clear the
 activity file. Activity recording is supplementary: failure to update this file
 does not change the result of a completed WebUI operation.
@@ -203,6 +208,58 @@ When Oh My Keymint is uninstalled from KernelSU, the bundled uninstaller removes
 exactly `/data/adb/omk` and `/data/misc/keystore/omk`. This includes the active
 configuration, keybox, logs, and OMK-created key data and cannot be undone. A
 module disable does not remove these directories; reboot after an uninstall.
+
+The **Spoof PIF fingerprint** action is a separate OMK Zygisk integration. It
+downloads a Pixel device list from
+`KOWX712/PlayIntegrityFix`'s `bot/device_list.json`, then downloads the selected
+`bot/device_prop/<product>.prop`. The upstream bot refreshes these records
+daily from Google's Android preview pages, Android Flash Tool Canary metadata,
+and Pixel security bulletin. The helper first tries the exact GitHub Raw path
+and then the exact jsDelivr path. It does not run the upstream Autopif shell
+script and does not require a device-provided `curl`, `wget`, or shell download
+tool.
+
+The native helper accepts only the fixed feed paths, validates every catalog
+entry, requires exactly `FINGERPRINT`, `MANUFACTURER`, `MODEL`, and
+`SECURITY_PATCH` in a profile, and splits the fingerprint into its eight Build
+components. It writes the following LF-delimited values only after they agree
+with one another and satisfy TrickyStore's value limits:
+
+```text
+MANUFACTURER=Google
+MODEL=Pixel ...
+FINGERPRINT=google/.../...:.../.../...:user/release-keys
+BRAND=google
+PRODUCT=...
+DEVICE=...
+RELEASE=...
+ID=...
+INCREMENTAL=...
+TYPE=user
+TAGS=release-keys
+SECURITY_PATCH=YYYY-MM-DD
+```
+
+The complete candidate is atomically stored at
+`/data/misc/keystore/omk/data/pif_fingerprint.json`; an invalid download or
+failed write leaves the previous profile unchanged. This state file is not
+part of either OMK TOML schema. OMK packages its own Zygisk library, which reads
+the validated profile through its root companion when a new
+`com.google.android.gms.unstable` or `com.android.vending` process (including a
+named `:...` child process) is specialized by the Zygisk Next loader. During
+pre-app specialization the payload installs available PLT hooks. On AArch64 it
+also attempts a process-wide bionic callback hook only after validating the
+wrapper semantics, memory mappings, and BTI/MTE permissions. A rejected
+callback hook leaves libc unchanged, records the reason, and continues with
+the available PLT and Java paths. After specialization the payload updates Java
+`Build` fields and records a property probe. Zygisk Next must already be
+installed and enabled by the user; OMK does
+not bundle, install, or implement that loader. The helper ends both target
+process families after a successful change so a later process receives the
+selected values. Disabling spoofing removes the profile and repeats the same
+process refresh. The spoof is process-local: it does not call `resetprop`,
+change global Android properties, or change values under OMK's `[device]`
+section.
 
 **Tencent Soter compatibility (Beta)** is an optional simulation based on
 D-soter. Its switch is disabled by default and is independent of `scoop` and all
@@ -1112,7 +1169,8 @@ until the file is corrected.
 
 The embedded WebUI can change `scoop`, install a locally selected keybox,
 synchronize the four `[trust]` patch-level fields from the official Android
-Security Bulletin, restore those fields to `"auto"`, and enable the optional Tencent
+Security Bulletin, restore those fields to `"auto"`, manage the validated PIF
+profile, and enable the optional Tencent
 Soter compatibility (Beta) simulation. Security-patch sync
 and restore also manage
 the two global runtime properties and the defaults snapshot described above.

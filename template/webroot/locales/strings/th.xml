@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">ติดตั้งและเปิดใช้งาน Zygisk Next แยกต่างหาก รีสตาร์ทอุปกรณ์หลังจากเปิดหรือปิดฟังก์ชันนี้ ยังไม่ได้ยืนยันความเข้ากันได้</string>
     <string name="soter_beta_saved">บันทึกการตั้งค่า Soter เบตาแล้ว รีสตาร์ทอุปกรณ์เพื่อนำไปใช้ ยังไม่ได้ยืนยันความเข้ากันได้</string>
     <string name="soter_beta_preview">ตัวอย่างเท่านั้น ไม่สามารถบันทึกการตั้งค่าอุปกรณ์ที่นี่ได้</string>
+    <string name="menu_spoof_pif_fingerprint">ปลอมแปลงลายนิ้วมือ PIF</string>
+    <string name="pif_fingerprint_title">ปลอมแปลงลายนิ้วมือ PIF</string>
+    <string name="pif_enable_spoofing">เปิดใช้การปลอมแปลงลายนิ้วมือ PIF</string>
+    <string name="pif_zygisk_next_required">ติดตั้งและเปิดใช้ Zygisk Next แยกต่างหาก OMK ไม่ได้รวม ดาวน์โหลด หรือติดตั้งโมดูลนี้</string>
+    <string name="pif_current_config">การตั้งค่าปัจจุบัน</string>
+    <string name="pif_security_patch">แพตช์ความปลอดภัย: %s</string>
+    <string name="pif_disabled">ปิดใช้งานแล้ว</string>
+    <string name="pif_loading_config">กำลังโหลดการตั้งค่า PIF…</string>
+    <string name="pif_config_load_error">ไม่สามารถโหลดการตั้งค่า PIF ได้</string>
+    <string name="pif_loading_devices">กำลังโหลดอุปกรณ์ Pixel…</string>
+    <string name="pif_devices_load_error">ไม่สามารถโหลดอุปกรณ์ Pixel ได้</string>
+    <string name="pif_choose_device">เลือกอุปกรณ์ Pixel</string>
+    <string name="pif_random_device">สุ่ม</string>
+    <string name="pif_applying">กำลังใช้…</string>
+    <string name="prompt_pif_applied">ใช้ลายนิ้วมือ PIF ของ %1$s แล้ว แพตช์ความปลอดภัย: %2$s</string>
+    <string name="prompt_pif_disabled">ปิดใช้การปลอมแปลงลายนิ้วมือ PIF แล้ว</string>
+    <string name="prompt_pif_apply_error">อัปเดตการปลอมแปลงลายนิ้วมือ PIF ไม่สำเร็จ: %s</string>
+    <string name="home_spoofed_device">ลายนิ้วมืออุปกรณ์ที่ปลอมแปลง</string>
+    <string name="tools_pif_desc">ดึงและใช้ลายนิ้วมือ Pixel สำหรับการปลอมแปลง PIF</string>
+    <string name="tools_fingerprint_spoofing">การปลอมแปลงลายนิ้วมือ</string>
 </resources>

@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Instala y activa Zygisk Next por separado. Reinicia el dispositivo después de activar o desactivar esta función. La compatibilidad no se ha verificado.</string>
     <string name="soter_beta_saved">Ajuste de Soter Beta guardado. Reinicia el dispositivo para aplicarlo. La compatibilidad no se ha verificado.</string>
     <string name="soter_beta_preview">Solo vista previa. Aquí no se pueden guardar los ajustes del dispositivo.</string>
+    <string name="menu_spoof_pif_fingerprint">Suplantar la huella de PIF</string>
+    <string name="pif_fingerprint_title">Suplantar la huella de PIF</string>
+    <string name="pif_enable_spoofing">Activar la suplantación de la huella de PIF</string>
+    <string name="pif_zygisk_next_required">Instala y activa Zygisk Next por separado. OMK no lo incluye, descarga ni instala.</string>
+    <string name="pif_current_config">Configuración actual</string>
+    <string name="pif_security_patch">Parche de seguridad: %s</string>
+    <string name="pif_disabled">Deshabilitado</string>
+    <string name="pif_loading_config">Cargando la configuración de PIF…</string>
+    <string name="pif_config_load_error">No se pudo cargar la configuración de PIF</string>
+    <string name="pif_loading_devices">Cargando dispositivos Pixel…</string>
+    <string name="pif_devices_load_error">No se pudieron cargar los dispositivos Pixel</string>
+    <string name="pif_choose_device">Elige un dispositivo Pixel</string>
+    <string name="pif_random_device">Aleatorio</string>
+    <string name="pif_applying">Aplicando…</string>
+    <string name="prompt_pif_applied">Huella de PIF aplicada: %1$s · parche de seguridad %2$s.</string>
+    <string name="prompt_pif_disabled">Se ha deshabilitado la suplantación de la huella de PIF.</string>
+    <string name="prompt_pif_apply_error">No se pudo actualizar la suplantación de la huella de PIF: %s</string>
+    <string name="home_spoofed_device">Huella digital del dispositivo suplantada</string>
+    <string name="tools_pif_desc">Obtén y aplica una huella digital de Pixel para la suplantación de PIF</string>
+    <string name="tools_fingerprint_spoofing">Suplantación de huella digital</string>
 </resources>

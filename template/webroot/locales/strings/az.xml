@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Zygisk Next-i ayrıca quraşdırın və aktivləşdirin. Aktivləşdirdikdən və ya söndürdükdən sonra cihazı yenidən başladın. Uyğunluq yoxlanılmayıb.</string>
     <string name="soter_beta_saved">Soter Beta ayarı saxlanıldı. Tətbiq etmək üçün cihazı yenidən başladın. Uyğunluq yoxlanılmayıb.</string>
     <string name="soter_beta_preview">Yalnız önbaxışdır. Cihaz ayarları burada saxlanıla bilməz.</string>
+    <string name="menu_spoof_pif_fingerprint">PIF barmaq izini saxtalaşdır</string>
+    <string name="pif_fingerprint_title">PIF barmaq izini saxtalaşdır</string>
+    <string name="pif_enable_spoofing">PIF barmaq izi saxtalaşdırmasını aktivləşdir</string>
+    <string name="pif_zygisk_next_required">Zygisk Next-i ayrıca quraşdırın və aktivləşdirin. OMK onu paketə daxil etmir, endirmir və ya quraşdırmır.</string>
+    <string name="pif_current_config">Cari konfiqurasiya</string>
+    <string name="pif_security_patch">Təhlükəsizlik yaması: %s</string>
+    <string name="pif_disabled">Deaktivdir</string>
+    <string name="pif_loading_config">PIF konfiqurasiyası yüklənir…</string>
+    <string name="pif_config_load_error">PIF konfiqurasiyasını yükləmək mümkün olmadı</string>
+    <string name="pif_loading_devices">Pixel cihazları yüklənir…</string>
+    <string name="pif_devices_load_error">Pixel cihazlarını yükləmək mümkün olmadı</string>
+    <string name="pif_choose_device">Pixel cihazı seçin</string>
+    <string name="pif_random_device">Təsadüfi</string>
+    <string name="pif_applying">Tətbiq edilir…</string>
+    <string name="prompt_pif_applied">PIF barmaq izi tətbiq edildi: %1$s · təhlükəsizlik yaması %2$s.</string>
+    <string name="prompt_pif_disabled">PIF barmaq izi saxtalaşdırması deaktiv edildi.</string>
+    <string name="prompt_pif_apply_error">PIF barmaq izi saxtalaşdırmasını yeniləmək mümkün olmadı: %s</string>
+    <string name="home_spoofed_device">Saxtalaşdırılmış cihaz barmaq izi</string>
+    <string name="tools_pif_desc">PIF saxtalaşdırması üçün Pixel barmaq izini əldə edib tətbiq edin</string>
+    <string name="tools_fingerprint_spoofing">Barmaq izi saxtalaşdırması</string>
 </resources>

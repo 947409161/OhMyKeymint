@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">ثبّت Zygisk Next وفعّله بشكل منفصل. أعد تشغيل الجهاز بعد التفعيل أو التعطيل. لم يتم التحقق من التوافق.</string>
     <string name="soter_beta_saved">تم حفظ إعداد Soter التجريبي. أعد تشغيل الجهاز للتطبيق. لم يتم التحقق من التوافق.</string>
     <string name="soter_beta_preview">معاينة فقط. لا يمكن حفظ إعدادات الجهاز هنا.</string>
+    <string name="menu_spoof_pif_fingerprint">انتحال بصمة PIF</string>
+    <string name="pif_fingerprint_title">انتحال بصمة PIF</string>
+    <string name="pif_enable_spoofing">تمكين انتحال بصمة PIF</string>
+    <string name="pif_zygisk_next_required">ثبّت Zygisk Next وفعّله بشكل منفصل. لا يضمّن OMK هذه الوحدة أو ينزّلها أو يثبّتها.</string>
+    <string name="pif_current_config">التكوين الحالي</string>
+    <string name="pif_security_patch">تصحيح الأمان: %s</string>
+    <string name="pif_disabled">معطّل</string>
+    <string name="pif_loading_config">جارٍ تحميل تكوين PIF…</string>
+    <string name="pif_config_load_error">تعذّر تحميل تكوين PIF</string>
+    <string name="pif_loading_devices">جارٍ تحميل أجهزة Pixel…</string>
+    <string name="pif_devices_load_error">تعذّر تحميل أجهزة Pixel</string>
+    <string name="pif_choose_device">اختر جهاز Pixel</string>
+    <string name="pif_random_device">عشوائي</string>
+    <string name="pif_applying">جارٍ التطبيق…</string>
+    <string name="prompt_pif_applied">تم تطبيق بصمة PIF: %1$s · تصحيح الأمان %2$s.</string>
+    <string name="prompt_pif_disabled">تم تعطيل انتحال بصمة PIF.</string>
+    <string name="prompt_pif_apply_error">تعذّر تحديث انتحال بصمة PIF: %s</string>
+    <string name="home_spoofed_device">بصمة الجهاز المنتحلة</string>
+    <string name="tools_pif_desc">جلب بصمة Pixel وتطبيقها لانتحال PIF</string>
+    <string name="tools_fingerprint_spoofing">انتحال بصمة الجهاز</string>
 </resources>

@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Εγκαταστήστε και ενεργοποιήστε το Zygisk Next ξεχωριστά. Επανεκκινήστε τη συσκευή μετά την ενεργοποίηση ή απενεργοποίηση. Η συμβατότητα δεν έχει επαληθευτεί.</string>
     <string name="soter_beta_saved">Η ρύθμιση Soter Beta αποθηκεύτηκε. Επανεκκινήστε τη συσκευή για εφαρμογή. Η συμβατότητα δεν έχει επαληθευτεί.</string>
     <string name="soter_beta_preview">Μόνο προεπισκόπηση. Οι ρυθμίσεις της συσκευής δεν μπορούν να αποθηκευτούν εδώ.</string>
+    <string name="menu_spoof_pif_fingerprint">Παραποίηση αποτυπώματος PIF</string>
+    <string name="pif_fingerprint_title">Παραποίηση αποτυπώματος PIF</string>
+    <string name="pif_enable_spoofing">Ενεργοποίηση παραποίησης αποτυπώματος PIF</string>
+    <string name="pif_zygisk_next_required">Εγκαταστήστε και ενεργοποιήστε το Zygisk Next ξεχωριστά. Το OMK δεν το ενσωματώνει, δεν το κατεβάζει και δεν το εγκαθιστά.</string>
+    <string name="pif_current_config">Τρέχουσα διαμόρφωση</string>
+    <string name="pif_security_patch">Ενημέρωση ασφαλείας: %s</string>
+    <string name="pif_disabled">Απενεργοποιημένο</string>
+    <string name="pif_loading_config">Φόρτωση διαμόρφωσης PIF…</string>
+    <string name="pif_config_load_error">Αποτυχία φόρτωσης της διαμόρφωσης PIF</string>
+    <string name="pif_loading_devices">Φόρτωση συσκευών Pixel…</string>
+    <string name="pif_devices_load_error">Αποτυχία φόρτωσης συσκευών Pixel</string>
+    <string name="pif_choose_device">Επιλέξτε συσκευή Pixel</string>
+    <string name="pif_random_device">Τυχαία</string>
+    <string name="pif_applying">Εφαρμογή…</string>
+    <string name="prompt_pif_applied">Εφαρμόστηκε το αποτύπωμα PIF: %1$s · ενημέρωση ασφαλείας %2$s.</string>
+    <string name="prompt_pif_disabled">Η παραποίηση αποτυπώματος PIF απενεργοποιήθηκε.</string>
+    <string name="prompt_pif_apply_error">Αποτυχία ενημέρωσης της παραποίησης αποτυπώματος PIF: %s</string>
+    <string name="home_spoofed_device">Παραποιημένο αποτύπωμα συσκευής</string>
+    <string name="tools_pif_desc">Λήψη και εφαρμογή αποτυπώματος Pixel για πλαστογράφηση PIF</string>
+    <string name="tools_fingerprint_spoofing">Παραποίηση αποτυπώματος</string>
 </resources>

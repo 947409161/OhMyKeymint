@@ -21,6 +21,7 @@ import { i18n } from '../i18n'
 import { fetchLatestSecurityPatch } from '../security_patch'
 import { isDev } from '../utils/dev'
 import HomeView, { type KeyboxStatus, type ModuleStatus, type TeeStatus } from './HomeView.vue'
+import PifFingerprintDialog from './PifFingerprintDialog.vue'
 import SettingsView from './SettingsView.vue'
 import SoterDialog from './SoterDialog.vue'
 import TargetsView from './TargetsView.vue'
@@ -47,16 +48,19 @@ const keyboxLevel = ref<'tee' | 'strongbox' | 'unknown'>('unknown')
 const keyboxRevocation = ref<KeyboxRevocationStatus>('not_checked')
 const teeStatus = ref<TeeStatus>('loading')
 const securityPatch = ref<string | null>(null)
+const spoofedDevice = ref<string | null | undefined>(undefined)
 const activities = ref<ActivityEntry[]>([])
 const activityStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const activityClearBusy = ref(false)
 const securityPatchBusy = ref<'sync' | 'restore' | null>(null)
 const soterOpen = ref(false)
+const pifOpen = ref(false)
 const keyboxOpen = ref(false)
 const selectedKeybox = ref<{ name: string, contents: Uint8Array } | null>(null)
 const keyboxBusy = ref(false)
 const targetsView = ref<InstanceType<typeof TargetsView> | null>(null)
 const settingsView = ref<InstanceType<typeof SettingsView> | null>(null)
+const pifDialog = ref<InstanceType<typeof PifFingerprintDialog> | null>(null)
 const soterDialog = ref<InstanceType<typeof SoterDialog> | null>(null)
 
 const pageIds = ['home', 'tools', 'settings'] as const
@@ -313,13 +317,15 @@ async function refreshIdentity(force = false): Promise<void> {
     keyboxRevocation.value = 'not_listed'
     teeStatus.value = 'normal'
     securityPatch.value = '2026-08-01'
+    spoofedDevice.value = 'Google Pixel 9 Pro'
     return
   }
   try {
-    const [keybox, patch, tee] = await Promise.allSettled([
+    const [keybox, patch, tee, pif] = await Promise.allSettled([
       cli.getKeyboxState(),
       cli.getSystemSecurityPatch(),
       cli.getTeeStatus(),
+      cli.getPifFingerprintState(),
     ])
     if (keybox.status === 'fulfilled') {
       const value = keybox.value
@@ -335,6 +341,11 @@ async function refreshIdentity(force = false): Promise<void> {
     if (patch.status === 'fulfilled') securityPatch.value = patch.value
     if (tee.status === 'fulfilled') teeStatus.value = 'normal'
     else teeStatus.value = 'error'
+    if (pif.status === 'fulfilled') {
+      spoofedDevice.value = pif.value.enabled
+        ? (/^google\s/i.test(pif.value.model) ? pif.value.model : `Google ${pif.value.model}`)
+        : null
+    }
   } catch (error) {
     console.error('Unable to load OMK identity:', error)
   }
@@ -414,6 +425,7 @@ function onTool(event: ToolEvent): void {
     case 'syncSecurityPatch': void syncPatch(false); break
     case 'restoreSecurityPatch': void syncPatch(true); break
     case 'openSoterBeta': soterOpen.value = true; break
+    case 'spoofPif': pifOpen.value = true; break
   }
 }
 
@@ -509,6 +521,15 @@ watch(targetsOpen, open => {
   })
 })
 
+watch(pifOpen, open => {
+  if (open && !overlayHistory.has('pif-fingerprint')) {
+    overlayHistory.add('pif-fingerprint')
+    history.push('pif-fingerprint', () => {
+      overlayHistory.delete('pif-fingerprint')
+      pifDialog.value?.requestClose()
+    })
+  } else if (!open && overlayHistory.delete('pif-fingerprint')) history.consume('pif-fingerprint')
+})
 function trackSoterOverlay(): void {
   const key = 'soter-beta'
   if (!soterOpen.value || overlayHistory.has(key)) return
@@ -546,6 +567,7 @@ watch(keyboxOpen, open => {
           :keybox-revocation="keyboxRevocation"
           :tee-status="teeStatus"
           :security-patch="securityPatch"
+          :spoofed-device="spoofedDevice"
           :activities="activities"
           :activity-status="activityStatus"
           :activity-clear-busy="activityClearBusy"
@@ -561,6 +583,7 @@ watch(keyboxOpen, open => {
           @sync-security-patch="onTool('syncSecurityPatch')"
           @restore-security-patch="onTool('restoreSecurityPatch')"
           @open-soter-beta="onTool('openSoterBeta')"
+          @spoof-pif="onTool('spoofPif')"
         />
       </Transition>
       <Transition name="page-switch">
@@ -627,6 +650,13 @@ watch(keyboxOpen, open => {
       </template>
     </MiuixDialog>
 
+    <PifFingerprintDialog
+      ref="pifDialog"
+      v-model="pifOpen"
+      :cli="cli"
+      @notify="notify"
+      @changed="refreshIdentity(true); refreshActivity()"
+    />
     <SoterDialog ref="soterDialog" v-model="soterOpen" :cli="cli" @notify="notify" />
     <MiuixSnackbarHost />
   </div>

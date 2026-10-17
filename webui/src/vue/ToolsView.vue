@@ -16,6 +16,7 @@ export type ToolEvent =
   | 'syncSecurityPatch'
   | 'restoreSecurityPatch'
   | 'openSoterBeta'
+  | 'spoofPif'
 
 type BusyPatch = 'sync' | 'restore' | null
 
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   syncSecurityPatch: []
   restoreSecurityPatch: []
   openSoterBeta: []
+  spoofPif: []
 }>()
 
 function runTool(event: ToolEvent): void {
@@ -38,6 +40,7 @@ function runTool(event: ToolEvent): void {
     case 'syncSecurityPatch': emit('syncSecurityPatch'); break
     case 'restoreSecurityPatch': emit('restoreSecurityPatch'); break
     case 'openSoterBeta': emit('openSoterBeta'); break
+    case 'spoofPif': emit('spoofPif'); break
   }
 }
 
@@ -72,6 +75,15 @@ const groups = [
         summary: tr('tools_keybox_desc', 'Choose a Keybox.xml file and install it for Oh My Keymint.'),
       },
     ],
+  },
+  {
+    title: tr('tools_fingerprint_spoofing', 'Fingerprint spoofing'),
+    items: [{
+      event: 'spoofPif' as const,
+      icon: Tune,
+      title: tr('menu_spoof_pif_fingerprint', 'Spoof PIF fingerprint'),
+      summary: tr('tools_pif_desc', 'Fetch and apply a Pixel fingerprint for Play Integrity.'),
+    }],
   },
   {
     title: tr('tools_security_patch', 'Set security patch'),

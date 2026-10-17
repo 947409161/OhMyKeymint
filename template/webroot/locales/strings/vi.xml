@@ -146,4 +146,24 @@
     <string name="soter_beta_reboot">Cài đặt và bật Zygisk Next riêng. Khởi động lại thiết bị sau khi bật hoặc tắt. Khả năng tương thích chưa được xác minh.</string>
     <string name="soter_beta_saved">Đã lưu cài đặt Soter Beta. Khởi động lại thiết bị để áp dụng. Khả năng tương thích chưa được xác minh.</string>
     <string name="soter_beta_preview">Chỉ xem trước. Không thể lưu cài đặt thiết bị tại đây.</string>
+    <string name="menu_spoof_pif_fingerprint">Giả mạo dấu vân tay PIF</string>
+    <string name="pif_fingerprint_title">Giả mạo dấu vân tay PIF</string>
+    <string name="pif_enable_spoofing">Bật tính năng giả mạo dấu vân tay PIF</string>
+    <string name="pif_zygisk_next_required">Hãy tự cài đặt và bật Zygisk Next. OMK không tích hợp, tải xuống hoặc cài đặt mô-đun này.</string>
+    <string name="pif_current_config">Cấu hình hiện tại</string>
+    <string name="pif_security_patch">Bản vá bảo mật: %s</string>
+    <string name="pif_disabled">Đã tắt</string>
+    <string name="pif_loading_config">Đang tải cấu hình PIF…</string>
+    <string name="pif_config_load_error">Không thể tải cấu hình PIF</string>
+    <string name="pif_loading_devices">Đang tải thiết bị Pixel…</string>
+    <string name="pif_devices_load_error">Không thể tải thiết bị Pixel</string>
+    <string name="pif_choose_device">Chọn thiết bị Pixel</string>
+    <string name="pif_random_device">Ngẫu nhiên</string>
+    <string name="pif_applying">Đang áp dụng…</string>
+    <string name="prompt_pif_applied">Đã áp dụng dấu vân tay PIF của %1$s; bản vá bảo mật: %2$s.</string>
+    <string name="prompt_pif_disabled">Đã tắt tính năng giả mạo dấu vân tay PIF.</string>
+    <string name="prompt_pif_apply_error">Không thể cập nhật tính năng giả mạo dấu vân tay PIF: %s</string>
+    <string name="home_spoofed_device">Dấu vân tay thiết bị giả mạo</string>
+    <string name="tools_pif_desc">Tải và áp dụng dấu vân tay Pixel để giả mạo PIF</string>
+    <string name="tools_fingerprint_spoofing">Giả mạo dấu vân tay</string>
 </resources>

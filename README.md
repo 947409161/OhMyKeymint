@@ -65,7 +65,8 @@ comma-separated TOML form remains accepted.
 ## Embedded WebUI
 
 The module includes a WebUI for choosing the exact packages in `scoop`,
-installing a local keybox, managing the Android security patch level, and enabling
+installing a local keybox, managing the Android security patch level, applying a
+Pixel PIF fingerprint through OMK's own Zygisk payload, and enabling
 an optional Tencent Soter compatibility (Beta) simulation. It also provides an ADB
 Disabler with independent controls for developer options,
 USB debugging, and OEM unlocking:
@@ -106,13 +107,36 @@ so other processes can observe the synchronized or restored values. A failed
 operation is reported, property writes are rolled back when a later step fails,
 and a snapshot needed for another restore attempt is retained.
 
+**Spoof PIF fingerprint** downloads the current Pixel device catalog and the
+selected profile from the `bot` branch of `KOWX712/PlayIntegrityFix`. That feed
+is generated daily from Google's Android preview pages, Android Flash Tool
+metadata, and Pixel security bulletin. The native helper validates the
+catalog, the four profile fields, and the complete fingerprint structure. It
+then derives the matching Build fields and atomically stores the active profile
+at `/data/misc/keystore/omk/data/pif_fingerprint.json`. OMK's own Zygisk
+payload applies these values inside newly started
+`com.google.android.gms.unstable` and `com.android.vending` processes (including
+their named `:...` child processes) through the Zygisk Next loader. During
+pre-app specialization it installs available PLT hooks and, on AArch64, tries a
+process-wide bionic callback hook only after validating the wrapper semantics,
+memory mappings, and BTI/MTE permissions. A rejected callback hook leaves libc
+unchanged, records the reason, and continues with the available PLT and Java
+paths. Java `Build` fields and a property probe are updated after
+specialization.
+Zygisk Next must already be
+installed and enabled by the user; OMK does not bundle, install, or implement
+that loader. The selected values are process-local, are not global Android
+properties, and do not change OMK's `[device]` identity. Disabling the action
+removes the OMK profile and restarts the affected processes so their next
+instances use the original values.
+
 The ADB Disabler action stores four strict `0/1` values in
 `/data/misc/keystore/omk/data/adb_disabler.conf`. When enabled, the selected
 settings are applied immediately and replayed by the module service at every
 boot. Disabling the master switch stops future replay; it intentionally does
 not restore properties already changed during the current boot.
 
-The security-patch network actions use the bundled native HTTPS client
+The security-patch and PIF network actions use the bundled native HTTPS client
 and require neither `curl` nor `wget`. Other WebUI operations remain local.
 The WebUI can also read and replace `scoop` and select a local XML file from
 shared storage or through another installed file app to replace the active OMK

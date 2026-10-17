@@ -32,6 +32,7 @@ pub mod keymaster;
 pub mod keymint;
 pub mod logging;
 pub mod macros;
+pub mod pif_spoof;
 pub mod plat;
 pub mod proto;
 pub mod security_patch;
@@ -369,6 +370,59 @@ fn handle_webui_keybox_command() -> Option<Result<String, String>> {
     }
 }
 
+fn handle_webui_pif_command() -> Option<Result<String, String>> {
+    let mut args = std::env::args();
+    let _program = args.next();
+    let command = args.next()?;
+
+    match command.as_str() {
+        "--webui-get-pif-fingerprint-state" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-get-pif-fingerprint-state does not accept arguments".to_string(),
+                ));
+            }
+            prepare_android_storage();
+            Some(pif_spoof::fingerprint_state().map_err(|error| format!("{error:#}")))
+        }
+        "--webui-list-pif-devices" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-list-pif-devices does not accept arguments".to_string()
+                ));
+            }
+            Some(pif_spoof::list_devices().map_err(|error| format!("{error:#}")))
+        }
+        "--webui-apply-pif-fingerprint" => {
+            let product = match args.next() {
+                Some(product) => product,
+                None => {
+                    return Some(Err(
+                        "--webui-apply-pif-fingerprint requires exactly one product".to_string(),
+                    ))
+                }
+            };
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-apply-pif-fingerprint accepts exactly one product".to_string(),
+                ));
+            }
+            prepare_android_storage();
+            Some(pif_spoof::apply_fingerprint(&product).map_err(|error| format!("{error:#}")))
+        }
+        "--webui-disable-pif-fingerprint" => {
+            if args.next().is_some() {
+                return Some(Err(
+                    "--webui-disable-pif-fingerprint does not accept arguments".to_string(),
+                ));
+            }
+            prepare_android_storage();
+            Some(pif_spoof::disable_fingerprint().map_err(|error| format!("{error:#}")))
+        }
+        _ => None,
+    }
+}
+
 fn handle_webui_soter_beta_command(
     mut args: impl Iterator<Item = String>,
 ) -> Option<Result<String, String>> {
@@ -532,6 +586,17 @@ fn handle_webui_activity_command() -> Option<Result<String, String>> {
 
 fn main() {
     if let Some(result) = handle_webui_soter_beta_command(std::env::args().skip(1)) {
+        match result {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+
+    if let Some(result) = handle_webui_pif_command() {
         match result {
             Ok(output) => println!("{output}"),
             Err(error) => {

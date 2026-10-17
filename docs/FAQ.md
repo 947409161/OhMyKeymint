@@ -146,6 +146,9 @@ their synchronized or restored values. After a successful synchronization or
 restore, the WebUI shows a completion message and asks you to reboot the device;
 it does not reboot automatically.
 
+**Spoof PIF fingerprint** is the other network-backed action. PIF uses only the
+documented Pixel profile feed described below.
+
 A network, HTTP, or parsing failure occurs before anything is changed. Snapshot
 validation or creation failures also leave the properties and configuration
 unchanged. The native helper verifies paired property writes and rolls them back
@@ -291,6 +294,40 @@ the whole module, reboot the device.
 A successful WebUI save follows the injector hot-reload path and needs no
 keymint restart. Close and reopen the selected app when you need a clean
 routing boundary.
+
+### What does Spoof PIF fingerprint change?
+
+It stores a validated Pixel profile at
+`/data/misc/keystore/omk/data/pif_fingerprint.json`. The selected profile is
+downloaded through OMK's native HTTPS client, validated, and expanded into
+matching Android Build fields. OMK's own Zygisk payload reads that profile
+when the target process starts through the Zygisk Next loader. Zygisk Next must
+be installed and active by the user; OMK does not bundle, install, or implement
+that loader.
+
+OMK applies these fields while starting `com.google.android.gms.unstable` and
+`com.android.vending`, including their named `:...` child processes. During
+pre-app specialization the payload installs available PLT hooks. On AArch64 it
+also attempts a process-wide bionic callback hook only after validating the
+wrapper semantics, memory mappings, and BTI/MTE permissions. If that validation
+fails, libc remains unchanged, the reason is logged, and the available PLT and
+Java paths continue. After specialization the payload updates Java `Build`
+fields and records a property probe. It ends both
+process families after a successful change so a new
+process can read the file. This action does not change global system
+properties, OMK's attested device identity, or the security-patch
+synchronization setting.
+Installing or updating OMK's Zygisk payload, or enabling Zygisk Next for the
+first time, still requires a device reboot. Turning the WebUI switch off
+removes the profile and refreshes the same process families so their next
+instances return to the device's original values.
+
+A general Play Integrity checker application is not one of the target
+processes. Its own `Build.FINGERPRINT` display can therefore remain the device
+value even when the Google Play services and Play Store processes receive the
+selected profile. Check the `OhMyKeymint-PIF` log entries for the target process
+and hook status when diagnosing the integration; a payload or Zygisk Next change
+also requires a reboot before new app processes can load it.
 
 ### What happens if I make a mistake in a configuration file?
 
