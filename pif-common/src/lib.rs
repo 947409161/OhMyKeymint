@@ -32,6 +32,7 @@ pub struct PifProfile {
     pub build_type: String,
     pub tags: String,
     pub security_patch: String,
+    pub device_initial_sdk_int: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +41,7 @@ struct SourceProfile {
     manufacturer: String,
     model: String,
     security_patch: String,
+    device_initial_sdk_int: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +100,7 @@ impl PifProfile {
             build_type: fingerprint.build_type.to_string(),
             tags: fingerprint.tags.to_string(),
             security_patch: source.security_patch,
+            device_initial_sdk_int: source.device_initial_sdk_int,
         };
         profile.validate()?;
         Ok(profile)
@@ -134,6 +137,9 @@ impl PifProfile {
         }
         if self.build_type != "user" || self.tags != "release-keys" {
             return Err("stored fingerprint must describe a user/release-keys build".to_string());
+        }
+        if !(16..=100).contains(&self.device_initial_sdk_int) {
+            return Err("stored DEVICE_INITIAL_SDK_INT is outside the supported range".to_string());
         }
         Ok(())
     }
@@ -239,6 +245,7 @@ fn parse_source_profile(contents: &[u8]) -> Result<SourceProfile, String> {
     let mut manufacturer = None;
     let mut model = None;
     let mut security_patch = None;
+    let mut device_initial_sdk_int = None;
     let normalized = text.replace("\r\n", "\n");
     if normalized.contains('\r') {
         return Err("PIF source profile contains an invalid line ending".to_string());
@@ -259,6 +266,7 @@ fn parse_source_profile(contents: &[u8]) -> Result<SourceProfile, String> {
             "MANUFACTURER" => &mut manufacturer,
             "MODEL" => &mut model,
             "SECURITY_PATCH" => &mut security_patch,
+            "DEVICE_INITIAL_SDK_INT" => &mut device_initial_sdk_int,
             _ => return Err(format!("PIF source profile contains unknown key {key}")),
         };
         if slot.replace(value.to_string()).is_some() {
@@ -274,6 +282,10 @@ fn parse_source_profile(contents: &[u8]) -> Result<SourceProfile, String> {
         model: model.ok_or_else(|| "PIF source profile lacks MODEL".to_string())?,
         security_patch: security_patch
             .ok_or_else(|| "PIF source profile lacks SECURITY_PATCH".to_string())?,
+        device_initial_sdk_int: device_initial_sdk_int
+            .ok_or_else(|| "PIF source profile lacks DEVICE_INITIAL_SDK_INT".to_string())?
+            .parse::<u32>()
+            .map_err(|_| "DEVICE_INITIAL_SDK_INT must be a positive integer".to_string())?,
     };
     validate_display_value("MANUFACTURER", &source.manufacturer)?;
     validate_display_value("MODEL", &source.model)?;
@@ -386,7 +398,7 @@ fn validate_security_patch_date(value: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    const PROP: &str = "FINGERPRINT=google/oriole_beta/oriole:CANARY/ZP11.260717.006/16004061:user/release-keys\nMANUFACTURER=Google\nMODEL=Pixel 6\nSECURITY_PATCH=2026-08-05\n";
+    const PROP: &str = "FINGERPRINT=google/oriole_beta/oriole:CANARY/ZP11.260717.006/16004061:user/release-keys\nMANUFACTURER=Google\nMODEL=Pixel 6\nSECURITY_PATCH=2026-08-05\nDEVICE_INITIAL_SDK_INT=32\n";
 
     fn selected() -> DeviceEntry {
         DeviceEntry {
@@ -440,7 +452,26 @@ mod tests {
         assert_eq!(profile.incremental, "16004061");
         assert_eq!(profile.build_type, "user");
         assert_eq!(profile.tags, "release-keys");
+        assert_eq!(profile.device_initial_sdk_int, 32);
         assert_eq!(profile.build_fields().len(), 12);
+    }
+
+    #[test]
+    fn device_initial_sdk_int_must_be_present_and_bounded() {
+        let without = PROP.replace("DEVICE_INITIAL_SDK_INT=32\n", "");
+        assert!(PifProfile::from_source(&selected(), without.as_bytes()).is_err());
+        for invalid in ["", "abc", "0", "15", "101", "-1", "1.5"] {
+            let prop = PROP.replace("DEVICE_INITIAL_SDK_INT=32", &format!("DEVICE_INITIAL_SDK_INT={invalid}"));
+            assert!(
+                PifProfile::from_source(&selected(), prop.as_bytes()).is_err(),
+                "{invalid}"
+            );
+        }
+        for valid in ["16", "33", "100"] {
+            let prop = PROP.replace("DEVICE_INITIAL_SDK_INT=32", &format!("DEVICE_INITIAL_SDK_INT={valid}"));
+            let profile = PifProfile::from_source(&selected(), prop.as_bytes()).unwrap();
+            assert_eq!(profile.device_initial_sdk_int, valid.parse::<u32>().unwrap());
+        }
     }
 
     #[test]

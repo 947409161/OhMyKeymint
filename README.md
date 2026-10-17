@@ -111,7 +111,7 @@ and a snapshot needed for another restore attempt is retained.
 selected profile from the `bot` branch of `KOWX712/PlayIntegrityFix`. That feed
 is generated daily from Google's Android preview pages, Android Flash Tool
 metadata, and Pixel security bulletin. The native helper validates the
-catalog, the four profile fields, and the complete fingerprint structure. It
+catalog, the five profile fields, and the complete fingerprint structure. It
 then derives the matching Build fields and atomically stores the active profile
 at `/data/misc/keystore/omk/data/pif_fingerprint.json`. OMK's own Zygisk
 payload applies these values inside newly started

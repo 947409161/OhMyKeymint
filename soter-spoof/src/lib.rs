@@ -42,7 +42,6 @@ const PROPERTY_FIND_SYMBOL: &CStr = c"__system_property_find";
 const PROPERTY_GET_SYMBOL: &CStr = c"__system_property_get";
 const PROPERTY_READ_LEGACY_SYMBOL: &CStr = c"__system_property_read";
 const PROPERTY_VALUE_MAX: usize = 92;
-const DEVICE_INITIAL_SDK_INT: &str = "21";
 const MAX_CALLBACK_WRAPPER_INSTRUCTIONS: usize = 16;
 const INLINE_PATCH_BYTES: usize = 24;
 const MAX_DISPATCH_SPAN: usize = 32 * 1024 * 1024;
@@ -248,7 +247,10 @@ impl PropertyValues {
             build_type: property_string("build_type", &profile.build_type)?,
             tags: property_string("tags", &profile.tags)?,
             security_patch: property_string("security_patch", &profile.security_patch)?,
-            api_level: property_string("api_level", DEVICE_INITIAL_SDK_INT)?,
+            api_level: property_string(
+                "api_level",
+                &profile.device_initial_sdk_int.to_string(),
+            )?,
         })
     }
 
@@ -1619,6 +1621,7 @@ mod tests {
             build_type: "user".to_string(),
             tags: "release-keys".to_string(),
             security_patch: "2024-09-05".to_string(),
+            device_initial_sdk_int: 33,
         }
     }
 

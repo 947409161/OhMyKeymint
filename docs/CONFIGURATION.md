@@ -220,10 +220,11 @@ script and does not require a device-provided `curl`, `wget`, or shell download
 tool.
 
 The native helper accepts only the fixed feed paths, validates every catalog
-entry, requires exactly `FINGERPRINT`, `MANUFACTURER`, `MODEL`, and
-`SECURITY_PATCH` in a profile, and splits the fingerprint into its eight Build
-components. It writes the following LF-delimited values only after they agree
-with one another and satisfy TrickyStore's value limits:
+entry, requires exactly `FINGERPRINT`, `MANUFACTURER`, `MODEL`,
+`SECURITY_PATCH`, and `DEVICE_INITIAL_SDK_INT` in a profile, and splits the
+fingerprint into its eight Build components. The initial SDK level is applied to
+the spoofed `api_level` properties. It writes the following LF-delimited values
+only after they agree with one another and satisfy TrickyStore's value limits:
 
 ```text
 MANUFACTURER=Google

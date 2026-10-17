@@ -359,7 +359,7 @@ mod tests {
                 model: "Pixel 6".to_string(),
                 product: "oriole_beta".to_string(),
             },
-            b"FINGERPRINT=google/oriole_beta/oriole:CANARY/ZP11.260717.006/16004061:user/release-keys\nMANUFACTURER=Google\nMODEL=Pixel 6\nSECURITY_PATCH=2026-08-05\n",
+            b"FINGERPRINT=google/oriole_beta/oriole:CANARY/ZP11.260717.006/16004061:user/release-keys\nMANUFACTURER=Google\nMODEL=Pixel 6\nSECURITY_PATCH=2026-08-05\nDEVICE_INITIAL_SDK_INT=32\n",
         )
         .unwrap()
     }
