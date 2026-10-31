@@ -3,22 +3,14 @@ use super::super::*;
 fn prepared_bc_reply(fd: c_int, reply_index: usize) -> Option<PreparedBcReply> {
     let connection = binder_state_key(fd);
     PREPARED_BC_REPLIES.with(|prepared| {
-        prepared
-            .borrow()
-            .get(&connection)
-            .and_then(|replies| replies.get(reply_index))
-            .copied()
+        prepared.borrow().get(&connection).and_then(|replies| replies.get(reply_index)).copied()
     })
 }
 
 fn remember_prepared_bc_reply(fd: c_int, prepared_reply: PreparedBcReply) {
     let connection = binder_state_key(fd);
     PREPARED_BC_REPLIES.with(|prepared| {
-        prepared
-            .borrow_mut()
-            .entry(connection)
-            .or_default()
-            .push_back(prepared_reply);
+        prepared.borrow_mut().entry(connection).or_default().push_back(prepared_reply);
     });
 }
 
@@ -140,13 +132,9 @@ pub(super) fn mark_inbound_free_buffers_consumed(
     rewritten: &[(usize, usize)],
     write_consumed: usize,
 ) {
-    let mut entries = INBOUND_TRANSACTION_SHADOWS
-        .lock()
-        .expect("inbound transaction shadow map poisoned");
-    for &(_, shadow_buffer) in rewritten
-        .iter()
-        .take_while(|(end, _)| *end <= write_consumed)
-    {
+    let mut entries =
+        INBOUND_TRANSACTION_SHADOWS.lock().expect("inbound transaction shadow map poisoned");
+    for &(_, shadow_buffer) in rewritten.iter().take_while(|(end, _)| *end <= write_consumed) {
         if let Some(shadow) = entries.get_mut(&(connection, shadow_buffer)) {
             if shadow.state == InboundTransactionShadowState::Live {
                 shadow.state = InboundTransactionShadowState::KernelFreedPendingAck;
@@ -160,19 +148,12 @@ pub(in crate::hook::intercept) fn complete_inbound_free_buffers(
     rewritten: &[(usize, usize)],
     write_consumed: usize,
 ) {
-    let mut entries = INBOUND_TRANSACTION_SHADOWS
-        .lock()
-        .expect("inbound transaction shadow map poisoned");
-    for &(_, shadow_buffer) in rewritten
-        .iter()
-        .take_while(|(end, _)| *end <= write_consumed)
-    {
-        if entries
-            .get(&(connection, shadow_buffer))
-            .is_some_and(|shadow| {
-                shadow.state == InboundTransactionShadowState::KernelFreedPendingAck
-            })
-        {
+    let mut entries =
+        INBOUND_TRANSACTION_SHADOWS.lock().expect("inbound transaction shadow map poisoned");
+    for &(_, shadow_buffer) in rewritten.iter().take_while(|(end, _)| *end <= write_consumed) {
+        if entries.get(&(connection, shadow_buffer)).is_some_and(|shadow| {
+            shadow.state == InboundTransactionShadowState::KernelFreedPendingAck
+        }) {
             entries.remove(&(connection, shadow_buffer));
         }
     }
@@ -228,9 +209,8 @@ pub(super) unsafe fn parse_write_buffer(
                     if cmd_size == expected_size {
                         let tr_ptr = payload as *mut binder_transaction_data;
                         let mut tr = std::ptr::read_unaligned(tr_ptr);
-                        let prepared = is_reply
-                            .then(|| prepared_bc_reply(fd, reply_count))
-                            .flatten();
+                        let prepared =
+                            is_reply.then(|| prepared_bc_reply(fd, reply_count)).flatten();
                         if let Some(prepared) = prepared {
                             tr = prepared.transaction;
                         }
@@ -313,10 +293,7 @@ pub(super) unsafe fn parse_write_buffer(
             }
             if cmd == BC_ACQUIRE_DONE_CMD && cmd_size == size_of::<binder_ptr_cookie>() {
                 let ptr_cookie = std::ptr::read_unaligned(payload as *const binder_ptr_cookie);
-                let target = LocalBinderTarget {
-                    ptr: ptr_cookie.ptr,
-                    cookie: ptr_cookie.cookie,
-                };
+                let target = LocalBinderTarget { ptr: ptr_cookie.ptr, cookie: ptr_cookie.cookie };
                 completion_commands.push((
                     offset + cmd_size,
                     None,

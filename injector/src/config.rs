@@ -49,13 +49,11 @@ fn deserialize_delay_range<'de, D>(deserializer: D) -> Result<[u16; 2], D::Error
 where
     D: serde::Deserializer<'de>,
 {
-    Vec::<u16>::deserialize(deserializer)?
-        .try_into()
-        .map_err(|_| {
-            serde::de::Error::custom(
-                "main.attestation_generation_delay_ms must contain exactly two integers",
-            )
-        })
+    Vec::<u16>::deserialize(deserializer)?.try_into().map_err(|_| {
+        serde::de::Error::custom(
+            "main.attestation_generation_delay_ms must contain exactly two integers",
+        )
+    })
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,11 +105,7 @@ impl Default for MainConfig {
 
 impl Default for FilterConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            block_android_package: true,
-            allow_unknown_package: false,
-        }
+        Self { enabled: true, block_android_package: true, allow_unknown_package: false }
     }
 }
 
@@ -191,9 +185,7 @@ impl Drop for DirectoryLock {
 }
 
 fn lock_config_directory(path: &Path) -> io::Result<DirectoryLock> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("config has no parent"))?;
+    let parent = path.parent().ok_or_else(|| io::Error::other("config has no parent"))?;
     fs::create_dir_all(parent)?;
     DirectoryLock::acquire(parent)
 }
@@ -299,11 +291,7 @@ fn load_or_seed(path: &Path, context: LoadContext) -> Option<InjectorConfig> {
                 );
             }
             if matches!(context, LoadContext::Startup) {
-                log::info!(
-                    "loaded config from {} via {}",
-                    path.display(),
-                    context.label()
-                );
+                log::info!("loaded config from {} via {}", path.display(), context.label());
             }
             Some(loaded.value)
         }
@@ -425,13 +413,12 @@ fn parse_versioned_config(
 ) -> Result<(InjectorConfig, Option<String>), String> {
     let without_bom = contents.strip_prefix('\u{feff}').unwrap_or(contents);
     let bom_len = contents.len() - without_bom.len();
-    let version: ConfigVersion =
-        toml::from_str(without_bom).map_err(|error| error.to_string())?;
+    let version: ConfigVersion = toml::from_str(without_bom).map_err(|error| error.to_string())?;
     let migrated = match version.version {
         None => {
             if !allow_migration {
                 return Err(
-                    "injector config version 0 requires an injector restart to migrate".into(),
+                    "injector config version 0 requires an injector restart to migrate".into()
                 );
             }
             Some(insert_config_version(contents, bom_len))
@@ -440,7 +427,7 @@ fn parse_versioned_config(
             0 if allow_migration => Some(replace_config_version(contents, bom_len)?),
             0 => {
                 return Err(
-                    "injector config version 0 requires an injector restart to migrate".into(),
+                    "injector config version 0 requires an injector restart to migrate".into()
                 )
             }
             version if version == i64::from(CURRENT_CONFIG_VERSION) => None,
@@ -460,7 +447,7 @@ fn parse_versioned_config(
     let attestation_delay = parsed.main.attestation_generation_delay_ms;
     if attestation_delay[0] > attestation_delay[1] {
         return Err(
-            "main.attestation_generation_delay_ms must be an ordered [minimum, maximum]".into(),
+            "main.attestation_generation_delay_ms must be an ordered [minimum, maximum]".into()
         );
     }
     if attestation_delay[1] > 250 {
@@ -473,11 +460,7 @@ fn parse_versioned_config(
 }
 
 fn insert_config_version(contents: &str, bom_len: usize) -> String {
-    let newline = if contents.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
+    let newline = if contents.contains("\r\n") { "\r\n" } else { "\n" };
     let mut migrated = String::with_capacity(contents.len() + 12);
     migrated.push_str(&contents[..bom_len]);
     migrated.push_str("version = 1");
@@ -532,10 +515,7 @@ fn version_key_suffix(line: &str) -> Option<&str> {
         return Some(after_name);
     }
 
-    let quote = line
-        .chars()
-        .next()
-        .filter(|character| *character == '"' || *character == '\'')?;
+    let quote = line.chars().next().filter(|character| *character == '"' || *character == '\'')?;
     let close = if quote == '"' {
         let mut escaped = false;
         line.char_indices().skip(1).find_map(|(index, character)| {
@@ -583,18 +563,10 @@ fn reload_runtime_config(path: &Path, trigger: WatchTrigger) {
                 let level = config.main.log_level_filter();
                 *guard = Arc::new(config);
                 log::set_max_level(level);
-                log::info!(
-                    "reloaded config from {} via {}",
-                    path.display(),
-                    trigger.label()
-                );
+                log::info!("reloaded config from {} via {}", path.display(), trigger.label());
             }
             Err(error) => {
-                log::error!(
-                    "failed to apply config reload from {}: {}",
-                    path.display(),
-                    error
-                );
+                log::error!("failed to apply config reload from {}: {}", path.display(), error);
             }
         }
     }

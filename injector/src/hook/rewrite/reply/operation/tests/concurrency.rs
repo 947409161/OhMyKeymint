@@ -10,11 +10,11 @@ struct BlockingOperationBackend {
 impl rsbinder::Interface for BlockingOperationBackend {}
 
 impl AospKeystoreOperation for BlockingOperationBackend {
-    fn r#updateAad(&self, _input: &[u8]) -> rsbinder::status::Result<()> {
+    fn r#updateAad(&self, _input: &[u8]) -> rsbinder::BinderResult<()> {
         Ok(())
     }
 
-    fn r#update(&self, input: &[u8]) -> rsbinder::status::Result<Option<Vec<u8>>> {
+    fn r#update(&self, input: &[u8]) -> rsbinder::BinderResult<Option<Vec<u8>>> {
         if self.updates.fetch_add(1, Ordering::SeqCst) == 0 {
             self.entered.send(()).unwrap();
             self.release
@@ -30,11 +30,11 @@ impl AospKeystoreOperation for BlockingOperationBackend {
         &self,
         _input: Option<&[u8]>,
         _signature: Option<&[u8]>,
-    ) -> rsbinder::status::Result<Option<Vec<u8>>> {
+    ) -> rsbinder::BinderResult<Option<Vec<u8>>> {
         Ok(None)
     }
 
-    fn r#abort(&self) -> rsbinder::status::Result<()> {
+    fn r#abort(&self) -> rsbinder::BinderResult<()> {
         Ok(())
     }
 }
@@ -42,11 +42,7 @@ impl AospKeystoreOperation for BlockingOperationBackend {
 fn operation_status(target: LocalBinderTarget, request: ParsedOperationRequest) -> Status {
     let mut reply = build_operation_reply_rewrite(&PendingOperationCall {
         request,
-        caller: CallerInfo {
-            uid: 1000,
-            pid: 2000,
-            sid: String::new(),
-        },
+        caller: CallerInfo { uid: 1000, pid: 2000, sid: String::new() },
         target,
     })
     .expect("operation rewrite must succeed")
@@ -60,14 +56,8 @@ fn operation_status(target: LocalBinderTarget, request: ParsedOperationRequest) 
 fn overlapping_carrier_calls_are_busy_without_finalizing_or_blocking_other_operations() {
     ensure_binder_process_state();
     let _guard = route_state_test_guard();
-    let target = LocalBinderTarget {
-        ptr: 0x1234,
-        cookie: 0x5678,
-    };
-    let other_target = LocalBinderTarget {
-        ptr: 0x2345,
-        cookie: 0x6789,
-    };
+    let target = LocalBinderTarget { ptr: 0x1234, cookie: 0x5678 };
+    let other_target = LocalBinderTarget { ptr: 0x2345, cookie: 0x6789 };
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let updates = Arc::new(AtomicUsize::new(0));
@@ -103,34 +93,24 @@ fn overlapping_carrier_calls_are_busy_without_finalizing_or_blocking_other_opera
     let first = std::thread::spawn(move || {
         operation_status(target, ParsedOperationRequest::Update { input: vec![1] })
     });
-    entered_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("first call must reach backend");
+    entered_rx.recv_timeout(Duration::from_secs(10)).expect("first call must reach backend");
     for request in [
         ParsedOperationRequest::UpdateAad { aad_input: vec![2] },
         ParsedOperationRequest::Update { input: vec![3] },
-        ParsedOperationRequest::Finish {
-            input: None,
-            signature: None,
-        },
+        ParsedOperationRequest::Finish { input: None, signature: None },
         ParsedOperationRequest::Abort,
     ] {
         let status = operation_status(target, request);
         assert_eq!(status.exception_code(), ExceptionCode::ServiceSpecific);
-        assert_eq!(
-            status.service_specific_error(),
-            ResponseCode::OPERATION_BUSY.0
-        );
+        assert_eq!(status.service_specific_error(), ResponseCode::OPERATION_BUSY.0);
         let current = lookup_operation_target(target).expect("busy must keep the operation");
         assert!(!current.finalized);
         assert!(current.backend.is_some());
     }
     assert_eq!(updates.load(Ordering::SeqCst), 1);
-    assert!(operation_status(
-        other_target,
-        ParsedOperationRequest::Update { input: vec![4] },
-    )
-    .is_ok());
+    assert!(
+        operation_status(other_target, ParsedOperationRequest::Update { input: vec![4] },).is_ok()
+    );
 
     release_tx.send(()).unwrap();
     assert!(first.join().unwrap().is_ok());
@@ -138,10 +118,7 @@ fn overlapping_carrier_calls_are_busy_without_finalizing_or_blocking_other_opera
     assert_eq!(updates.load(Ordering::SeqCst), 2);
     assert!(operation_status(
         target,
-        ParsedOperationRequest::Finish {
-            input: None,
-            signature: None
-        }
+        ParsedOperationRequest::Finish { input: None, signature: None }
     )
     .is_ok());
     let late = operation_status(target, ParsedOperationRequest::Update { input: vec![6] });

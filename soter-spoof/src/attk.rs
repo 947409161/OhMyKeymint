@@ -90,19 +90,12 @@ pub(crate) fn generate_keypair() -> Option<KeyPair> {
             .l()?;
         env.call_method(&generator, "initialize", "(I)V", &[JValue::Int(2048)])?;
         let pair = env
-            .call_method(
-                &generator,
-                "generateKeyPair",
-                "()Ljava/security/KeyPair;",
-                &[],
-            )?
+            .call_method(&generator, "generateKeyPair", "()Ljava/security/KeyPair;", &[])?
             .l()?;
-        let public = env
-            .call_method(&pair, "getPublic", "()Ljava/security/PublicKey;", &[])?
-            .l()?;
-        let private = env
-            .call_method(&pair, "getPrivate", "()Ljava/security/PrivateKey;", &[])?
-            .l()?;
+        let public =
+            env.call_method(&pair, "getPublic", "()Ljava/security/PublicKey;", &[])?.l()?;
+        let private =
+            env.call_method(&pair, "getPrivate", "()Ljava/security/PrivateKey;", &[])?.l()?;
         let public = JByteArray::from(env.call_method(public, "getEncoded", "()[B", &[])?.l()?);
         let private = JByteArray::from(env.call_method(private, "getEncoded", "()[B", &[])?.l()?);
         Ok(KeyPair {
@@ -113,9 +106,7 @@ pub(crate) fn generate_keypair() -> Option<KeyPair> {
     if env.exception_check().unwrap_or(false) {
         let _ = env.exception_clear();
     }
-    result
-        .ok()
-        .filter(|key| !key.public_der.is_empty() && !key.private_der.is_empty())
+    result.ok().filter(|key| !key.public_der.is_empty() && !key.private_der.is_empty())
 }
 
 pub(crate) fn attk_private_der() -> Option<Vec<u8>> {
@@ -183,11 +174,7 @@ fn parse_pkcs8_private(der: &[u8]) -> Option<(BigUint, BigUint, BigUint)> {
         if tag != 0x02 || bytes.is_empty() {
             return None;
         }
-        let stripped = bytes
-            .iter()
-            .skip_while(|byte| **byte == 0)
-            .copied()
-            .collect::<Vec<_>>();
+        let stripped = bytes.iter().skip_while(|byte| **byte == 0).copied().collect::<Vec<_>>();
         (!stripped.is_empty()).then(|| BigUint::from_bytes_be(&stripped))
     };
     let modulus = read_integer(&mut field)?;
@@ -316,12 +303,7 @@ pub(crate) mod tests {
         let (modulus, public, _) = parse_pkcs8_private(&der).unwrap();
         assert_eq!(modulus.bits(), MODULUS_BYTES * 8);
         let signature = sign_export_json(&der, KNOWN_JSON.as_bytes()).unwrap();
-        assert!(verifies(
-            &signature,
-            KNOWN_JSON.as_bytes(),
-            &modulus,
-            &public
-        ));
+        assert!(verifies(&signature, KNOWN_JSON.as_bytes(), &modulus, &public));
     }
 
     #[test]
@@ -351,9 +333,7 @@ pub(crate) mod tests {
         modulus: &BigUint,
         public: &BigUint,
     ) -> bool {
-        let message = BigUint::from_bytes_be(signature)
-            .modpow(public, modulus)
-            .to_bytes_be();
+        let message = BigUint::from_bytes_be(signature).modpow(public, modulus).to_bytes_be();
         if message.len() > MODULUS_BYTES {
             return false;
         }

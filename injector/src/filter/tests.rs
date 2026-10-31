@@ -1,5 +1,5 @@
 use super::*;
-use kmr_common::app_scope::{AppScope, global_packages};
+use kmr_common::app_scope::{global_packages, AppScope};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn base_config() -> FilterConfig {
@@ -11,8 +11,7 @@ fn scope_with(users: &[(u32, &[&str])]) -> AppScope {
     let users: BTreeMap<u32, BTreeSet<String>> = users
         .iter()
         .map(|(user, packages)| {
-            let packages: BTreeSet<String> =
-                packages.iter().map(|name| name.to_string()).collect();
+            let packages: BTreeSet<String> = packages.iter().map(|name| name.to_string()).collect();
             (*user, packages)
         })
         .collect();
@@ -154,10 +153,7 @@ fn any_in_scope_package_of_a_shared_uid_allows_the_caller() {
         &scope_with(&[(10, &["com.allowed"])]),
         &config,
         1_010_123,
-        PackageResolution::Known(vec![
-            "com.other".to_string(),
-            "com.allowed".to_string(),
-        ]),
+        PackageResolution::Known(vec!["com.other".to_string(), "com.allowed".to_string()]),
     );
     assert!(decision.allowed);
     assert_eq!(decision.reason, FilterReason::Allowed);

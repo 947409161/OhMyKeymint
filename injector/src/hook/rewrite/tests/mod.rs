@@ -18,12 +18,7 @@ pub(super) fn ensure_binder_process_state() {
 }
 
 pub(super) fn sample_key_descriptor() -> KeyDescriptor {
-    KeyDescriptor {
-        domain: Domain::APP,
-        nspace: 7,
-        alias: Some("alias".to_string()),
-        blob: None,
-    }
+    KeyDescriptor { domain: Domain::APP, nspace: 7, alias: Some("alias".to_string()), blob: None }
 }
 
 pub(super) fn sample_service_requests() -> Vec<ParsedServiceRequest> {
@@ -31,42 +26,27 @@ pub(super) fn sample_service_requests() -> Vec<ParsedServiceRequest> {
         ParsedServiceRequest::GetSecurityLevel {
             security_level: SecurityLevel::TRUSTED_ENVIRONMENT,
         },
-        ParsedServiceRequest::GetKeyEntry {
-            key: sample_key_descriptor(),
-        },
+        ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
         ParsedServiceRequest::UpdateSubcomponent {
             key: sample_key_descriptor(),
             public_cert: None,
             certificate_chain: None,
         },
-        ParsedServiceRequest::ListEntries {
-            domain: Domain::APP,
-            nspace: 0,
-        },
-        ParsedServiceRequest::DeleteKey {
-            key: sample_key_descriptor(),
-        },
+        ParsedServiceRequest::ListEntries { domain: Domain::APP, nspace: 0 },
+        ParsedServiceRequest::DeleteKey { key: sample_key_descriptor() },
         ParsedServiceRequest::Grant {
             key: sample_key_descriptor(),
             grantee_uid: 12345,
             access_vector: 7,
         },
-        ParsedServiceRequest::Ungrant {
-            key: sample_key_descriptor(),
-            grantee_uid: 12345,
-        },
-        ParsedServiceRequest::GetNumberOfEntries {
-            domain: Domain::APP,
-            nspace: 0,
-        },
+        ParsedServiceRequest::Ungrant { key: sample_key_descriptor(), grantee_uid: 12345 },
+        ParsedServiceRequest::GetNumberOfEntries { domain: Domain::APP, nspace: 0 },
         ParsedServiceRequest::ListEntriesBatched {
             domain: Domain::APP,
             nspace: 0,
             starting_past_alias: Some("alias".to_string()),
         },
-        ParsedServiceRequest::GetSupplementaryAttestationInfo {
-            tag: Tag::MODULE_HASH,
-        },
+        ParsedServiceRequest::GetSupplementaryAttestationInfo { tag: Tag::MODULE_HASH },
     ]
 }
 
@@ -94,14 +74,14 @@ pub(super) struct TestOperationBackend {
 impl Interface for TestOperationBackend {}
 
 impl AospKeystoreOperation for TestOperationBackend {
-    fn r#updateAad(&self, _aad_input: &[u8]) -> rsbinder::status::Result<()> {
+    fn r#updateAad(&self, _aad_input: &[u8]) -> rsbinder::BinderResult<()> {
         match self.update_aad_status.as_ref() {
             Some(status) => Err(status.clone()),
             None => Ok(()),
         }
     }
 
-    fn r#update(&self, _input: &[u8]) -> rsbinder::status::Result<Option<Vec<u8>>> {
+    fn r#update(&self, _input: &[u8]) -> rsbinder::BinderResult<Option<Vec<u8>>> {
         Ok(Some(self.update_output.clone()))
     }
 
@@ -109,11 +89,11 @@ impl AospKeystoreOperation for TestOperationBackend {
         &self,
         _input: Option<&[u8]>,
         _signature: Option<&[u8]>,
-    ) -> rsbinder::status::Result<Option<Vec<u8>>> {
+    ) -> rsbinder::BinderResult<Option<Vec<u8>>> {
         Ok(Some(self.update_output.clone()))
     }
 
-    fn r#abort(&self) -> rsbinder::status::Result<()> {
+    fn r#abort(&self) -> rsbinder::BinderResult<()> {
         self.aborts.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -123,11 +103,7 @@ pub(super) fn raw_parts(reply: &mut parcel::OwnedReply) -> (*mut u8, usize, *mut
     (
         reply.data_mut_ptr(),
         reply.data_size(),
-        if reply.offsets.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            reply.offsets.as_mut_ptr()
-        },
+        if reply.offsets.is_empty() { std::ptr::null_mut() } else { reply.offsets.as_mut_ptr() },
         reply.offsets_size(),
     )
 }
@@ -153,31 +129,31 @@ pub(super) fn request_parcel_with_marker(interface: &str, marker: u32) -> rsbind
 pub(super) fn transaction_for_parcel(
     target: LocalBinderTarget,
     code: rsbinder::TransactionCode,
-    parcel: &rsbinder::Parcel,
+    parcel: &mut rsbinder::Parcel,
 ) -> binder_transaction_data {
+    let data = crate::parcel::parcel_bytes(parcel).expect("serialize test parcel");
+    // Leak the serialized bytes so the transaction pointer stays valid for the
+    // duration of the test, matching the lifetime-free binder ABI.
+    let data: &'static [u8] = Box::leak(data.into_boxed_slice());
     let mut tr: binder_transaction_data = unsafe { std::mem::zeroed() };
     tr.target.ptr = target.ptr;
-    tr.data.ptr.buffer = parcel.as_ptr() as libc::c_ulong;
+    tr.data.ptr.buffer = data.as_ptr() as libc::c_ulong;
     tr.data.ptr.offsets = 0;
     tr.cookie = target.cookie;
     tr.code = code;
     tr.sender_euid = 10002;
     tr.sender_pid = 2000;
-    tr.data_size = parcel.data_size();
+    tr.data_size = data.len();
     tr.offsets_size = 0;
     tr
 }
 
 static ROUTE_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub(in crate::hook) fn route_state_test_guard() -> (
-    std::sync::MutexGuard<'static, ()>,
-    std::sync::MutexGuard<'static, ()>,
-) {
+pub(in crate::hook) fn route_state_test_guard(
+) -> (std::sync::MutexGuard<'static, ()>, std::sync::MutexGuard<'static, ()>) {
     let tracker_guard = tracker::state_test_guard();
-    let route_guard = ROUTE_STATE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let route_guard = ROUTE_STATE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     super::mirror::reset_mirror_state_for_tests();
     reset_route_state_for_tests();
     (tracker_guard, route_guard)

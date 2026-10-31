@@ -223,19 +223,14 @@ pub fn parse_catalog(contents: &[u8]) -> Result<Vec<DeviceEntry>, String> {
         return Err("PIF device catalog is empty".to_string());
     }
     if entries.len() > MAX_CATALOG_ENTRIES {
-        return Err(format!(
-            "PIF device catalog contains more than {MAX_CATALOG_ENTRIES} entries"
-        ));
+        return Err(format!("PIF device catalog contains more than {MAX_CATALOG_ENTRIES} entries"));
     }
 
     let mut products = BTreeSet::new();
     for entry in &entries {
         entry.validate()?;
         if !products.insert(entry.product.as_str()) {
-            return Err(format!(
-                "PIF device catalog contains duplicate product {}",
-                entry.product
-            ));
+            return Err(format!("PIF device catalog contains duplicate product {}", entry.product));
         }
     }
     Ok(entries)
@@ -426,10 +421,7 @@ mod tests {
     const PROP: &str = "FINGERPRINT=google/oriole_beta/oriole:CANARY/ZP11.260717.006/16004061:user/release-keys\nMANUFACTURER=Google\nMODEL=Pixel 6\nSECURITY_PATCH=2026-08-05\nDEVICE_INITIAL_SDK_INT=32\n";
 
     fn selected() -> DeviceEntry {
-        DeviceEntry {
-            model: "Pixel 6".to_string(),
-            product: "oriole_beta".to_string(),
-        }
+        DeviceEntry { model: "Pixel 6".to_string(), product: "oriole_beta".to_string() }
     }
 
     #[test]
@@ -486,25 +478,15 @@ mod tests {
         let without = PROP.replace("DEVICE_INITIAL_SDK_INT=32\n", "");
         assert!(PifProfile::from_source(&selected(), without.as_bytes()).is_err());
         for invalid in ["", "abc", "0", "15", "101", "-1", "1.5"] {
-            let prop = PROP.replace(
-                "DEVICE_INITIAL_SDK_INT=32",
-                &format!("DEVICE_INITIAL_SDK_INT={invalid}"),
-            );
-            assert!(
-                PifProfile::from_source(&selected(), prop.as_bytes()).is_err(),
-                "{invalid}"
-            );
+            let prop = PROP
+                .replace("DEVICE_INITIAL_SDK_INT=32", &format!("DEVICE_INITIAL_SDK_INT={invalid}"));
+            assert!(PifProfile::from_source(&selected(), prop.as_bytes()).is_err(), "{invalid}");
         }
         for valid in ["16", "33", "100"] {
-            let prop = PROP.replace(
-                "DEVICE_INITIAL_SDK_INT=32",
-                &format!("DEVICE_INITIAL_SDK_INT={valid}"),
-            );
+            let prop = PROP
+                .replace("DEVICE_INITIAL_SDK_INT=32", &format!("DEVICE_INITIAL_SDK_INT={valid}"));
             let profile = PifProfile::from_source(&selected(), prop.as_bytes()).unwrap();
-            assert_eq!(
-                profile.device_initial_sdk_int,
-                valid.parse::<u32>().unwrap()
-            );
+            assert_eq!(profile.device_initial_sdk_int, valid.parse::<u32>().unwrap());
         }
     }
 
@@ -548,10 +530,8 @@ mod tests {
         assert!(!loaded.spoof_vending_build);
         assert_eq!(loaded.to_canonical_json().unwrap(), json);
         for value in ["1", "null", "\"true\""] {
-            let invalid = format!(
-                "{},\"spoof_vending_build\":{value}}}",
-                json.trim_end_matches('}')
-            );
+            let invalid =
+                format!("{},\"spoof_vending_build\":{value}}}", json.trim_end_matches('}'));
             assert!(PifProfile::from_json(invalid.as_bytes()).is_err());
         }
     }
@@ -560,10 +540,8 @@ mod tests {
     fn fingerprint_only_option_does_not_implicitly_enable_store_build() {
         let profile = PifProfile::from_source(&selected(), PROP.as_bytes()).unwrap();
         let json = profile.to_canonical_json().unwrap();
-        let unsupported = format!(
-            "{},\"spoof_vending_fingerprint\":true}}",
-            json.trim_end_matches('}')
-        );
+        let unsupported =
+            format!("{},\"spoof_vending_fingerprint\":true}}", json.trim_end_matches('}'));
         assert!(PifProfile::from_json(unsupported.as_bytes()).is_err());
     }
 
@@ -602,18 +580,12 @@ mod tests {
     #[test]
     fn source_profile_requires_catalog_model_and_product_match() {
         assert!(PifProfile::from_source(
-            &DeviceEntry {
-                model: "Pixel 6 Pro".to_string(),
-                product: "oriole_beta".to_string(),
-            },
+            &DeviceEntry { model: "Pixel 6 Pro".to_string(), product: "oriole_beta".to_string() },
             PROP.as_bytes(),
         )
         .is_err());
         assert!(PifProfile::from_source(
-            &DeviceEntry {
-                model: "Pixel 6".to_string(),
-                product: "raven_beta".to_string(),
-            },
+            &DeviceEntry { model: "Pixel 6".to_string(), product: "raven_beta".to_string() },
             PROP.as_bytes(),
         )
         .is_err());
@@ -662,8 +634,7 @@ mod tests {
         let json = profile.to_canonical_json().unwrap();
         assert_eq!(PifProfile::from_json(json.as_bytes()).unwrap(), profile);
         assert!(PifProfile::from_json(
-            json.replace("\"brand\":\"google\"", "\"brand\":\"evil\"")
-                .as_bytes()
+            json.replace("\"brand\":\"google\"", "\"brand\":\"evil\"").as_bytes()
         )
         .is_err());
         assert!(PifProfile::from_json(

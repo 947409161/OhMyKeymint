@@ -22,14 +22,8 @@ pub(super) enum MirrorFailurePolicy {
 
 #[derive(Clone)]
 enum MirrorReplayEvent {
-    Authorization {
-        request: ParsedAuthorizationRequest,
-        caller: CallerInfo,
-    },
-    Maintenance {
-        request: ParsedMaintenanceRequest,
-        caller: CallerInfo,
-    },
+    Authorization { request: ParsedAuthorizationRequest, caller: CallerInfo },
+    Maintenance { request: ParsedMaintenanceRequest, caller: CallerInfo },
 }
 
 #[derive(Clone)]
@@ -196,9 +190,7 @@ pub(super) fn maintenance_requires_mirror(request: &ParsedMaintenanceRequest) ->
 
 #[cfg(test)]
 fn mirror_state_dirty(kind: MirrorStateKind) -> bool {
-    let state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     let lane = state.lane(kind);
     lane.poisoned || !lane.pending.is_empty()
 }
@@ -211,9 +203,7 @@ fn poison_mirror_state(state: &mut MirrorRecoveryState, kind: MirrorStateKind) {
 
 #[cfg(test)]
 pub(super) fn reset_mirror_state_for_tests() {
-    let mut state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     *state = MirrorRecoveryState::default();
 }
 
@@ -222,19 +212,14 @@ fn remove_reserved_mirror_update(
     kind: MirrorStateKind,
     sequence: u64,
 ) {
-    state
-        .lane_mut(kind)
-        .pending
-        .retain(|pending| pending.sequence != sequence);
+    state.lane_mut(kind).pending.retain(|pending| pending.sequence != sequence);
 }
 
 pub(super) fn reserve_mirror_update(
     kind: MirrorStateKind,
     failure_policy: MirrorFailurePolicy,
 ) -> anyhow::Result<MirrorUpdateReservation> {
-    let mut state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     if state.authorization.poisoned || state.maintenance.poisoned {
         anyhow::bail!("OMK mirror recovery is poisoned by a non-retryable failure");
     }
@@ -248,21 +233,13 @@ pub(super) fn reserve_mirror_update(
 
     let sequence = state.next_sequence;
     state.next_sequence = state.next_sequence.wrapping_add(1).max(1);
-    state
-        .lane_mut(kind)
-        .pending
-        .push_back(SequencedMirrorReplay {
-            sequence,
-            kind,
-            event: None,
-            retry_not_before: None,
-        });
-    Ok(MirrorUpdateReservation {
-        kind,
-        failure_policy,
+    state.lane_mut(kind).pending.push_back(SequencedMirrorReplay {
         sequence,
-        active: true,
-    })
+        kind,
+        event: None,
+        retry_not_before: None,
+    });
+    Ok(MirrorUpdateReservation { kind, failure_policy, sequence, active: true })
 }
 
 impl MirrorUpdateReservation {
@@ -272,9 +249,7 @@ impl MirrorUpdateReservation {
         let method = event.method();
         let caller_uid = event.caller().uid;
         let caller_pid = event.caller().pid;
-        let mut state = MIRROR_RECOVERY_STATE
-            .lock()
-            .expect("mirror recovery state poisoned");
+        let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
         let Some(position) = state
             .lane(self.kind)
             .pending
@@ -324,9 +299,7 @@ impl MirrorUpdateReservation {
     }
 
     fn cancel(mut self) {
-        let mut state = MIRROR_RECOVERY_STATE
-            .lock()
-            .expect("mirror recovery state poisoned");
+        let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
         remove_reserved_mirror_update(&mut state, self.kind, self.sequence);
         self.active = false;
         drop(state);
@@ -339,9 +312,7 @@ impl Drop for MirrorUpdateReservation {
         if !self.active {
             return;
         }
-        let mut state = MIRROR_RECOVERY_STATE
-            .lock()
-            .expect("mirror recovery state poisoned");
+        let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
         remove_reserved_mirror_update(&mut state, self.kind, self.sequence);
         if self.failure_policy == MirrorFailurePolicy::FailClosed {
             poison_mirror_state(&mut state, self.kind);
@@ -364,9 +335,7 @@ impl Drop for MirrorUpdateReservation {
 }
 
 pub(super) fn ensure_mirror_state_recovered() -> anyhow::Result<()> {
-    let state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     if state.authorization.poisoned || state.maintenance.poisoned {
         anyhow::bail!("OMK mirror recovery is poisoned by a non-retryable failure");
     }
@@ -386,9 +355,7 @@ fn recover_mirror_state_with(
 ) -> anyhow::Result<()> {
     loop {
         let pending = {
-            let mut state = MIRROR_RECOVERY_STATE
-                .lock()
-                .expect("mirror recovery state poisoned");
+            let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
             if state.authorization.poisoned || state.maintenance.poisoned {
                 anyhow::bail!("OMK mirror recovery is poisoned by a non-retryable failure");
             }
@@ -404,31 +371,19 @@ fn recover_mirror_state_with(
                     pending.kind.label()
                 );
             }
-            if pending
-                .retry_not_before
-                .is_some_and(|deadline| deadline > Instant::now())
-            {
+            if pending.retry_not_before.is_some_and(|deadline| deadline > Instant::now()) {
                 anyhow::bail!("{} mirror retry is delayed", pending.kind.label());
             }
             state.lane_mut(pending.kind).draining = true;
             pending
         };
 
-        let event = pending
-            .event
-            .as_ref()
-            .expect("ready mirror replay lost its event");
+        let event = pending.event.as_ref().expect("ready mirror replay lost its event");
         let method = event.method();
         let failure_policy = event.failure_policy();
         let result = execute(event);
-        let mut state = MIRROR_RECOVERY_STATE
-            .lock()
-            .expect("mirror recovery state poisoned");
-        if state
-            .lane(pending.kind)
-            .pending
-            .front()
-            .map(|front| front.sequence)
+        let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
+        if state.lane(pending.kind).pending.front().map(|front| front.sequence)
             != Some(pending.sequence)
         {
             state.authorization.poisoned = true;
@@ -540,9 +495,7 @@ fn mirror_recovery_worker(receiver: std::sync::mpsc::Receiver<()>) {
     loop {
         let _ = recover_mirror_state();
         let wait = {
-            let state = MIRROR_RECOVERY_STATE
-                .lock()
-                .expect("mirror recovery state poisoned");
+            let state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
             state.next_worker_wait(Instant::now())
         };
         match wait {
@@ -718,18 +671,16 @@ fn execute_maintenance_mirror(
                 Ok(maintenance.r#onUserAdded(Some(caller), *user_id)?)
             })
         }
-        ParsedMaintenanceRequest::InitUserSuperKeys {
-            user_id,
-            password,
-            allow_existing,
-        } => ipc::with_omk_maintenance_once(|maintenance| {
-            Ok(maintenance.r#initUserSuperKeys(
-                Some(caller),
-                *user_id,
-                password,
-                *allow_existing,
-            )?)
-        }),
+        ParsedMaintenanceRequest::InitUserSuperKeys { user_id, password, allow_existing } => {
+            ipc::with_omk_maintenance_once(|maintenance| {
+                Ok(maintenance.r#initUserSuperKeys(
+                    Some(caller),
+                    *user_id,
+                    password,
+                    *allow_existing,
+                )?)
+            })
+        }
         ParsedMaintenanceRequest::OnUserRemoved { user_id } => {
             ipc::with_omk_maintenance_once(|maintenance| {
                 Ok(maintenance.r#onUserRemoved(Some(caller), *user_id)?)

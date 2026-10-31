@@ -36,11 +36,7 @@ fn grant_and_ungrant_preserve_system_only_when_omk_unavailable() {
         grantee_uid: 12345,
         access_vector: 7,
     };
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
 
     let result = precompute_omk_grant_service_reply_with(
         &request,
@@ -51,15 +47,9 @@ fn grant_and_ungrant_preserve_system_only_when_omk_unavailable() {
 
     assert!(matches!(result, OmkServicePrecompute::PreserveSystem));
 
-    let request = ParsedServiceRequest::Ungrant {
-        key: sample_key_descriptor(),
-        grantee_uid: 12345,
-    };
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let request =
+        ParsedServiceRequest::Ungrant { key: sample_key_descriptor(), grantee_uid: 12345 };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
 
     let result = precompute_omk_grant_service_reply_with(
         &request,
@@ -78,30 +68,19 @@ fn grant_precompute_returns_reachable_omk_business_error() {
         grantee_uid: 12345,
         access_vector: 7,
     };
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
 
     let result = precompute_omk_grant_service_reply_with(
         &request,
         &caller,
-        |_, _, _, _| {
-            Err(anyhow::Error::new(Status::new_service_specific_error(
-                7, None,
-            )))
-        },
+        |_, _, _, _| Err(anyhow::Error::new(Status::new_service_specific_error(7, None))),
         |_, _, _| panic!("grant requests must not call ungrant"),
     );
 
     let OmkServicePrecompute::Reply(PrecomputedServiceReply::Error(status)) = result else {
         panic!("reachable OMK business error should be precomputed as an authoritative status");
     };
-    assert_eq!(
-        status.exception_code(),
-        rsbinder::ExceptionCode::ServiceSpecific
-    );
+    assert_eq!(status.exception_code(), rsbinder::ExceptionCode::ServiceSpecific);
     assert_eq!(status.service_specific_error(), 7);
 }
 
@@ -142,12 +121,7 @@ fn service_route_respects_intercept_configuration() {
 
 #[test]
 fn service_route_uses_omk_for_key_id() {
-    let key = KeyDescriptor {
-        domain: Domain::KEY_ID,
-        nspace: 123,
-        alias: None,
-        blob: None,
-    };
+    let key = KeyDescriptor { domain: Domain::KEY_ID, nspace: 123, alias: None, blob: None };
 
     assert_eq!(
         route_for_service_request(
@@ -166,17 +140,8 @@ fn unconfirmed_grant_readback_stays_rejected() {
         reason: crate::filter::FilterReason::RejectedNotInScope,
         packages: vec!["com.grantee".to_string()],
     };
-    let caller = CallerInfo {
-        uid: 10002,
-        sid: String::new(),
-        pid: 2000,
-    };
-    let grant = KeyDescriptor {
-        domain: Domain::GRANT,
-        nspace: 123,
-        alias: None,
-        blob: None,
-    };
+    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
+    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
 
     assert!(!should_allow_omk_grant_service_request_with_probe(
         &ParsedServiceRequest::GetKeyEntry { key: grant },
@@ -186,9 +151,7 @@ fn unconfirmed_grant_readback_stays_rejected() {
     )
     .expect("unconfirmed grant lookup should succeed"));
     assert!(!should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry {
-            key: sample_key_descriptor(),
-        },
+        &ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
         &decision,
         &caller,
         |_, _| -> anyhow::Result<bool> { panic!("non-GRANT descriptors must not be probed") },
@@ -199,22 +162,13 @@ fn unconfirmed_grant_readback_stays_rejected() {
 #[test]
 fn soft_rejected_grant_probe_error_is_fail_closed() {
     let _guard = route_state_test_guard();
-    let grant = KeyDescriptor {
-        domain: Domain::GRANT,
-        nspace: 123,
-        alias: None,
-        blob: None,
-    };
+    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
     let decision = crate::filter::FilterDecision {
         allowed: false,
         reason: crate::filter::FilterReason::RejectedUnknownPackage,
         packages: vec![],
     };
-    let caller = CallerInfo {
-        uid: 10002,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
 
     let error = should_allow_omk_grant_service_request_with_probe(
         &ParsedServiceRequest::GetKeyEntry { key: grant },
@@ -230,22 +184,13 @@ fn soft_rejected_grant_probe_error_is_fail_closed() {
 #[test]
 fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
     let _guard = route_state_test_guard();
-    let grant = KeyDescriptor {
-        domain: Domain::GRANT,
-        nspace: 123,
-        alias: None,
-        blob: None,
-    };
+    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
     let decision = crate::filter::FilterDecision {
         allowed: false,
         reason: crate::filter::FilterReason::RejectedUnknownPackage,
         packages: vec![],
     };
-    let caller = CallerInfo {
-        uid: 10002,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
 
     assert!(should_allow_omk_grant_service_request_with_probe(
         &ParsedServiceRequest::GetKeyEntry { key: grant.clone() },
@@ -259,12 +204,7 @@ fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
     )
     .expect("positive grant probe should succeed"));
 
-    let grant = KeyDescriptor {
-        domain: Domain::GRANT,
-        nspace: 321,
-        alias: None,
-        blob: None,
-    };
+    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 321, alias: None, blob: None };
     let decision = crate::filter::FilterDecision {
         allowed: false,
         reason: crate::filter::FilterReason::RejectedNotInScope,
@@ -291,22 +231,13 @@ fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
 #[test]
 fn android_rejected_grant_readback_does_not_probe_omk() {
     let _guard = route_state_test_guard();
-    let grant = KeyDescriptor {
-        domain: Domain::GRANT,
-        nspace: 123,
-        alias: None,
-        blob: None,
-    };
+    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
     let decision = crate::filter::FilterDecision {
         allowed: false,
         reason: crate::filter::FilterReason::RejectedAndroidPackage,
         packages: vec!["android".to_string()],
     };
-    let caller = CallerInfo {
-        uid: 10002,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
 
     assert!(!should_allow_omk_grant_service_request_with_probe(
         &ParsedServiceRequest::GetKeyEntry { key: grant },

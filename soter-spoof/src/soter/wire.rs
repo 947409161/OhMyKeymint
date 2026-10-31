@@ -27,11 +27,7 @@ struct KeyStore {
 
 impl KeyStore {
     fn new(generate: fn() -> Option<attk::KeyPair>, attk_private: Vec<u8>) -> Self {
-        Self {
-            users: HashMap::new(),
-            generate,
-            attk_private,
-        }
+        Self { users: HashMap::new(), generate, attk_private }
     }
 
     fn make_record(&self, uid: u32, signer: &[u8]) -> Option<Record> {
@@ -52,10 +48,7 @@ impl KeyStore {
         blob.extend_from_slice(&(json.len() as u32).to_le_bytes());
         blob.extend_from_slice(json.as_bytes());
         blob.extend_from_slice(&signature);
-        Some(Record {
-            key,
-            blob: Arc::from(blob),
-        })
+        Some(Record { key, blob: Arc::from(blob) })
     }
 
     fn generate_ask(&mut self, uid: u32) -> bool {
@@ -63,13 +56,7 @@ impl KeyStore {
             return false;
         };
         // Publish only after generation and signing succeed; replacing ASK invalidates its children.
-        self.users.insert(
-            uid,
-            User {
-                ask,
-                auth: HashMap::new(),
-            },
-        );
+        self.users.insert(uid, User { ask, auth: HashMap::new() });
         true
     }
 
@@ -83,21 +70,13 @@ impl KeyStore {
         let Some(auth) = self.make_record(uid, &user.ask.key.private_der) else {
             return false;
         };
-        self.users
-            .get_mut(&uid)
-            .expect("existing ASK")
-            .auth
-            .insert(alias.to_vec(), auth);
+        self.users.get_mut(&uid).expect("existing ASK").auth.insert(alias.to_vec(), auth);
         true
     }
 
     fn record(&self, code: u32, uid: u32, alias: &[u16]) -> Option<&Record> {
         let user = self.users.get(&uid)?;
-        if matches!(code, 2 | 3) {
-            Some(&user.ask)
-        } else {
-            user.auth.get(alias)
-        }
+        if matches!(code, 2 | 3) { Some(&user.ask) } else { user.auth.get(alias) }
     }
 }
 
@@ -110,24 +89,13 @@ pub(super) fn request_alias(code: u32, bytes: &[u8], position: usize) -> Result<
     if !(1..=9).contains(&code) {
         return Ok(Vec::new());
     }
-    let position = position
-        .checked_add(4)
-        .filter(|end| *end <= bytes.len())
-        .ok_or(BAD_VALUE)?;
+    let position = position.checked_add(4).filter(|end| *end <= bytes.len()).ok_or(BAD_VALUE)?;
     if !matches!(code, 4 | 5 | 6 | 8 | 9) {
         return Ok(Vec::new());
     }
-    let length = i32::from_le_bytes(
-        bytes
-            .get(position..position + 4)
-            .ok_or(BAD_VALUE)?
-            .try_into()
-            .unwrap(),
-    );
-    let length = usize::try_from(length)
-        .ok()
-        .filter(|length| *length > 0)
-        .ok_or(BAD_VALUE)?;
+    let length =
+        i32::from_le_bytes(bytes.get(position..position + 4).ok_or(BAD_VALUE)?.try_into().unwrap());
+    let length = usize::try_from(length).ok().filter(|length| *length > 0).ok_or(BAD_VALUE)?;
     let start = position + 4;
     let end = length
         .checked_add(1)
@@ -135,10 +103,7 @@ pub(super) fn request_alias(code: u32, bytes: &[u8], position: usize) -> Result<
         .and_then(|length| start.checked_add(length))
         .ok_or(BAD_VALUE)?;
     let padded_end = end.checked_add(3).map(|end| end & !3).ok_or(BAD_VALUE)?;
-    let name = bytes
-        .get(start..end)
-        .filter(|_| padded_end <= bytes.len())
-        .ok_or(BAD_VALUE)?;
+    let name = bytes.get(start..end).filter(|_| padded_end <= bytes.len()).ok_or(BAD_VALUE)?;
     if name[name.len() - 2..] != [0, 0] {
         return Err(BAD_VALUE);
     }
@@ -159,12 +124,7 @@ pub(super) fn valid_request(code: u32, bytes: &[u8]) -> bool {
     // the native callback parses arguments; trailing OEM fields are preserved.
     let expected = DESCRIPTOR.to_bytes();
     bytes.windows(expected.len() * 2).any(|token| {
-        token
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .zip(expected)
-            .all(|(unit, byte)| *unit == [*byte, 0])
+        token.as_chunks::<2>().0.iter().zip(expected).all(|(unit, byte)| *unit == [*byte, 0])
     })
 }
 
@@ -205,11 +165,8 @@ fn write_reply_with_store(
     output.int32(0)?; // Java Parcel.writeNoException()
     match code {
         1 | 4 => {
-            let ok = if code == 1 {
-                keys.generate_ask(uid)
-            } else {
-                keys.generate_auth(uid, alias)
-            };
+            let ok =
+                if code == 1 { keys.generate_ask(uid) } else { keys.generate_auth(uid, alias) };
             if !ok {
                 crate::soter::log("Soter key generation or export signing failed");
             }
@@ -231,9 +188,7 @@ fn write_reply_with_store(
             let blob;
             let bytes: &[u8] = match code {
                 2 | 6 => {
-                    blob = keys
-                        .record(code, uid, alias)
-                        .map(|record| Arc::clone(&record.blob));
+                    blob = keys.record(code, uid, alias).map(|record| Arc::clone(&record.blob));
                     blob.as_deref().unwrap_or_default()
                 }
                 10 => &SIGNATURE,
@@ -241,11 +196,7 @@ fn write_reply_with_store(
                 _ => return Err(BAD_VALUE),
             };
             output.int32(1)?;
-            output.int32(if matches!(code, 2 | 6) && bytes.is_empty() {
-                -1
-            } else {
-                0
-            })?;
+            output.int32(if matches!(code, 2 | 6) && bytes.is_empty() { -1 } else { 0 })?;
             output.bytes(bytes)?;
             output.int32(bytes.len() as i32)
         }
@@ -367,12 +318,7 @@ mod tests {
         assert_eq!(scalar(&reply(&mut keys, 3, UID, &[])), 0);
         assert_eq!(scalar(&reply(&mut keys, 4, UID, &a)), -1);
         let missing = reply(&mut keys, 2, UID, &[]);
-        assert_eq!(
-            missing,
-            [
-                0, 0, 0, 0, 1, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0
-            ]
-        );
+        assert_eq!(missing, [0, 0, 0, 0, 1, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(scalar(&reply(&mut keys, 1, UID, &[])), 0);
         let ask = Arc::clone(&keys.record(2, UID, &[]).unwrap().blob);
         assert_eq!(scalar(&reply(&mut keys, 3, UID, &[])), 1);
@@ -392,10 +338,7 @@ mod tests {
         );
         assert!(attk::tests::verifies_export(&ask, &keys.attk_private));
         for blob in [&auth_a, &auth_b] {
-            assert!(attk::tests::verifies_export(
-                blob,
-                &keys.users[&UID].ask.key.private_der
-            ));
+            assert!(attk::tests::verifies_export(blob, &keys.users[&UID].ask.key.private_der));
             assert!(!attk::tests::verifies_export(blob, &keys.attk_private));
         }
         let exported = reply(&mut keys, 6, UID, &a);
@@ -421,16 +364,10 @@ mod tests {
         assert_eq!(scalar(&reply(&mut keys, 8, UID, &a)), 0);
         assert_eq!(&*keys.record(6, UID, &b).unwrap().blob, &*auth_b);
         assert_eq!(scalar(&reply(&mut keys, 4, UID, &a)), 0);
-        assert_ne!(
-            keys.record(6, UID, &a).unwrap().key.public_der,
-            third().unwrap().public_der
-        );
+        assert_ne!(keys.record(6, UID, &a).unwrap().key.public_der, third().unwrap().public_der);
         keys.generate = third;
         assert_eq!(scalar(&reply(&mut keys, 1, UID, &[])), 0);
-        assert_ne!(
-            keys.record(2, UID, &[]).unwrap().key.public_der,
-            second().unwrap().public_der
-        );
+        assert_ne!(keys.record(2, UID, &[]).unwrap().key.public_der, second().unwrap().public_der);
         assert_eq!(scalar(&reply(&mut keys, 8, UID, &a)), 0);
         assert_eq!(scalar(&reply(&mut keys, 8, UID, &b)), 0);
         assert_eq!(scalar(&reply(&mut keys, 7, UID, &[])), 0);

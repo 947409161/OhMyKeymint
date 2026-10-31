@@ -85,12 +85,9 @@ impl PendingCall {
             Self::InterfaceBoundaryFailure(caller) => {
                 ("boundary", "interface".to_owned(), caller.uid, caller.pid)
             }
-            Self::Authorization(call) | Self::PrecomputedAuthorization(call, _) => (
-                "authorization",
-                format!("{:?}", call.method),
-                call.caller.uid,
-                call.caller.pid,
-            ),
+            Self::Authorization(call) | Self::PrecomputedAuthorization(call, _) => {
+                ("authorization", format!("{:?}", call.method), call.caller.uid, call.caller.pid)
+            }
             Self::Maintenance(call) | Self::PrecomputedMaintenance(call, _) => (
                 "maintenance",
                 format!("{:?}", call.request.method()),
@@ -132,10 +129,8 @@ pub(in crate::hook) unsafe fn handle_bc_reply(
 ) -> Option<u64> {
     let (frame_id, pending) = PENDING_REPLY_QUEUE.with(|slot| {
         let mut slot = slot.borrow_mut();
-        let frame = slot
-            .iter_mut()
-            .rev()
-            .find(|frame| frame.connection == connection && !frame.claimed)?;
+        let frame =
+            slot.iter_mut().rev().find(|frame| frame.connection == connection && !frame.claimed)?;
         frame.claimed = true;
         Some((frame.id, frame.pending.take()))
     })?;
@@ -322,11 +317,8 @@ unsafe fn install_outbound_reply(
         tr.data_size = reply.data_size();
         tr.offsets_size = reply.offsets_size();
         tr.data.ptr.buffer = reply.data_ptr() as libc::c_ulong;
-        tr.data.ptr.offsets = if reply.offsets.is_empty() {
-            0
-        } else {
-            reply.offsets.as_ptr() as libc::c_ulong
-        };
+        tr.data.ptr.offsets =
+            if reply.offsets.is_empty() { 0 } else { reply.offsets.as_ptr() as libc::c_ulong };
     });
 }
 
@@ -358,9 +350,7 @@ pub(super) fn replace_top_pending(connection: BinderStateKey, pending: PendingCa
 pub(super) fn take_top_pending(connection: BinderStateKey) -> Option<Option<PendingCall>> {
     PENDING_REPLY_QUEUE.with(|slot| {
         let mut slot = slot.borrow_mut();
-        let position = slot
-            .iter()
-            .rposition(|frame| frame.connection == connection)?;
+        let position = slot.iter().rposition(|frame| frame.connection == connection)?;
         Some(slot.remove(position).pending)
     })
 }
@@ -411,15 +401,13 @@ pub(in crate::hook) fn abort_bc_reply(
 
 pub(in crate::hook) fn clear_outbound_reply_buffers(connection: BinderStateKey) {
     OUTBOUND_REPLY_BUFFERS.with(|slot| {
-        slot.borrow_mut()
-            .retain(|(reply_fd, _)| *reply_fd != connection);
+        slot.borrow_mut().retain(|(reply_fd, _)| *reply_fd != connection);
     });
 }
 
 pub(in crate::hook) fn clear_binder_fd_thread_state(connection: BinderStateKey) {
     PENDING_REPLY_QUEUE.with(|slot| {
-        slot.borrow_mut()
-            .retain(|frame| frame.connection != connection);
+        slot.borrow_mut().retain(|frame| frame.connection != connection);
     });
     clear_outbound_reply_buffers(connection);
 }
@@ -437,12 +425,8 @@ pub(in crate::hook) fn reset_pending_reply_frames_for_test(
 
 #[cfg(test)]
 pub(in crate::hook) fn pending_reply_frame_count_for_test(connection: BinderStateKey) -> usize {
-    PENDING_REPLY_QUEUE.with(|slot| {
-        slot.borrow()
-            .iter()
-            .filter(|frame| frame.connection == connection)
-            .count()
-    })
+    PENDING_REPLY_QUEUE
+        .with(|slot| slot.borrow().iter().filter(|frame| frame.connection == connection).count())
 }
 
 #[cfg(test)]

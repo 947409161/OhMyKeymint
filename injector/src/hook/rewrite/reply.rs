@@ -53,9 +53,7 @@ pub(super) fn build_omk_status_reply(status: &Status) -> anyhow::Result<Outbound
 }
 
 fn error_status(error: &anyhow::Error) -> Option<&Status> {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<Status>())
+    error.chain().find_map(|cause| cause.downcast_ref::<Status>())
 }
 
 fn build_omk_error_reply(error: &anyhow::Error) -> anyhow::Result<OutboundReply> {
@@ -250,12 +248,10 @@ fn build_direct_omk_security_level_reply(
                 ServiceMethod::GetSecurityLevel,
                 &pending.caller,
             )?;
-            Ok(Some(
-                parcel::build_get_security_level_reply_with_carrier_bytes(
-                    &carrier.bytes,
-                    carrier.is_object,
-                )?,
-            ))
+            Ok(Some(parcel::build_get_security_level_reply_with_carrier_bytes(
+                &carrier.bytes,
+                carrier.is_object,
+            )?))
         }
         Err(error) => omk_error_reply_for_method("getSecurityLevel", &pending.caller, &error),
     }
@@ -332,10 +328,7 @@ pub(super) unsafe fn build_service_reply_rewrite(
         return observe_system_service_reply(tr, pending);
     }
 
-    if matches!(
-        &pending.request,
-        ParsedServiceRequest::GetSecurityLevel { .. }
-    ) {
+    if matches!(&pending.request, ParsedServiceRequest::GetSecurityLevel { .. }) {
         if let Err(error) = observe_system_service_reply(tr, pending).map(|_| ()) {
             warn!(
                 "event=route failed to retain original System security-level target before OMK reply rewrite: {:#}",
@@ -366,16 +359,9 @@ pub(super) unsafe fn build_service_reply_rewrite(
                     return omk_error_reply_for_method("getKeyEntry", &pending.caller, &error);
                 }
             };
-            Ok(Some(build_no_carrier_omk_key_entry_reply(
-                entry,
-                &pending.caller,
-            )?))
+            Ok(Some(build_no_carrier_omk_key_entry_reply(entry, &pending.caller)?))
         }
-        ParsedServiceRequest::UpdateSubcomponent {
-            key,
-            public_cert,
-            certificate_chain,
-        } => {
+        ParsedServiceRequest::UpdateSubcomponent { key, public_cert, certificate_chain } => {
             match ipc::with_omk_once(|omk| {
                 Ok(omk.r#updateSubcomponent(
                     Some(caller),
@@ -398,11 +384,7 @@ pub(super) unsafe fn build_service_reply_rewrite(
                 Err(error) => omk_error_reply_for_method("listEntries", &pending.caller, &error),
             }
         }
-        ParsedServiceRequest::Grant {
-            key,
-            grantee_uid,
-            access_vector,
-        } => {
+        ParsedServiceRequest::Grant { key, grantee_uid, access_vector } => {
             let omk_grant = match ipc::with_omk_once(|omk| {
                 Ok(omk.r#grant(Some(caller), key, *grantee_uid, *access_vector)?)
             }) {
@@ -427,11 +409,7 @@ pub(super) unsafe fn build_service_reply_rewrite(
                 }
             }
         }
-        ParsedServiceRequest::ListEntriesBatched {
-            domain,
-            nspace,
-            starting_past_alias,
-        } => {
+        ParsedServiceRequest::ListEntriesBatched { domain, nspace, starting_past_alias } => {
             match ipc::with_omk_retry(|omk| {
                 Ok(omk.r#listEntriesBatched(
                     Some(caller),
@@ -470,10 +448,8 @@ pub(super) unsafe fn observe_system_security_level_reply(
     pending: &PendingSecurityLevelCall,
 ) -> anyhow::Result<Option<OutboundReply>> {
     let (data, data_size, offsets, offsets_size) = transaction_parts(tr);
-    if let ParsedSecurityLevelRequest::CreateOperation {
-        operation_parameters,
-        ..
-    } = &pending.request
+    if let ParsedSecurityLevelRequest::CreateOperation { operation_parameters, .. } =
+        &pending.request
     {
         if let Err(error) = register_operation_target_from_reply(
             tr,
@@ -528,11 +504,7 @@ pub(super) fn build_omk_security_level_reply(
         };
 
     match &pending.request {
-        ParsedSecurityLevelRequest::CreateOperation {
-            key,
-            operation_parameters,
-            forced,
-        } => {
+        ParsedSecurityLevelRequest::CreateOperation { key, operation_parameters, forced } => {
             let delay_ms = config::get().main.operation_start_delay_ms;
             if publish_operation_carrier && delay_ms > 0 {
                 // Wait before creating an operation so the delay cannot leave a
@@ -586,13 +558,7 @@ pub(super) fn build_omk_security_level_reply(
                 Err(error) => omk_status_reply_for_method("generateKey", &pending.caller, &error),
             }
         }
-        ParsedSecurityLevelRequest::ImportKey {
-            key,
-            attestation_key,
-            params,
-            flags,
-            key_data,
-        } => {
+        ParsedSecurityLevelRequest::ImportKey { key, attestation_key, params, flags, key_data } => {
             match omk_level.r#importKey(
                 Some(caller),
                 key,
@@ -649,20 +615,13 @@ fn generate_key_with_delay(
     wait: impl FnOnce(Duration),
     generate: impl FnOnce() -> Result<KeyMetadata, Status>,
 ) -> Result<KeyMetadata, Status> {
-    if delay_ms != [0, 0]
-        && params
-            .iter()
-            .any(|param| param.tag == Tag::ATTESTATION_CHALLENGE)
-    {
+    if delay_ms != [0, 0] && params.iter().any(|param| param.tag == Tag::ATTESTATION_CHALLENGE) {
         // Sample a fresh wait per call, like the TA delay ranges do, so the extra
         // cost of a challenge varies instead of being a fixed value.
         let min_us = u64::from(delay_ms[0]) * 1000;
         let max_us = u64::from(delay_ms[1]) * 1000;
-        let micros = if min_us == max_us {
-            min_us
-        } else {
-            rand::rng().random_range(min_us..=max_us)
-        };
+        let micros =
+            if min_us == max_us { min_us } else { rand::rng().random_range(min_us..=max_us) };
         // Wait before the RPC so no new key is published during this extra wait.
         // No config, RPC connection, or KeyMint/database lock is held here. The
         // Binder worker stays occupied; challenged business errors also wait.

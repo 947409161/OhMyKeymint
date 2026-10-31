@@ -5,10 +5,7 @@ pub(super) fn target_from_transaction(tr: &binder_transaction_data) -> Option<Lo
     if ptr == 0 || tr.cookie == 0 {
         return None;
     }
-    Some(LocalBinderTarget {
-        ptr,
-        cookie: tr.cookie,
-    })
+    Some(LocalBinderTarget { ptr, cookie: tr.cookie })
 }
 
 fn route_for_service_request(
@@ -221,12 +218,7 @@ unsafe fn handle_keystore_transaction(
 
         let requires_mirror = authorization_requires_mirror(&request);
         let failure_policy = authorization_mirror_failure_policy(&request);
-        let mut pending = PendingAuthorizationCall {
-            request,
-            method,
-            caller,
-            mirror_update: None,
-        };
+        let mut pending = PendingAuthorizationCall { request, method, caller, mirror_update: None };
         if requires_mirror && !expects_reply {
             if failure_policy == MirrorFailurePolicy::BestEffort {
                 warn!(
@@ -300,11 +292,7 @@ unsafe fn handle_keystore_transaction(
             ParsedMaintenanceRequest::MigrateKeyNamespace { .. } => {
                 let decision = evaluate_caller(&caller, cfg);
                 (
-                    if decision.allowed {
-                        RouteTarget::Omk
-                    } else {
-                        RouteTarget::System
-                    },
+                    if decision.allowed { RouteTarget::Omk } else { RouteTarget::System },
                     decision.packages,
                     Some(decision.reason),
                 )
@@ -318,17 +306,10 @@ unsafe fn handle_keystore_transaction(
                 false
             };
         }
-        let mut pending = PendingMaintenanceCall {
-            request,
-            caller,
-            route,
-            mirror_update: None,
-        };
+        let mut pending = PendingMaintenanceCall { request, caller, route, mirror_update: None };
         let mut precomputed = if pending.route == RouteTarget::Omk
-            && matches!(
-                &pending.request,
-                ParsedMaintenanceRequest::MigrateKeyNamespace { .. }
-            ) {
+            && matches!(&pending.request, ParsedMaintenanceRequest::MigrateKeyNamespace { .. })
+        {
             match precompute_omk_migrate_reply(&pending) {
                 OmkMigratePrecompute::Reply(reply) => {
                     block_system_request(tr);
@@ -343,14 +324,12 @@ unsafe fn handle_keystore_transaction(
             None
         };
         let mut request_rewritten = precomputed.is_some();
-        let route_note = if matches!(
-            &pending.request,
-            ParsedMaintenanceRequest::MigrateKeyNamespace { .. }
-        ) {
-            "using caller routing-scope decision as authoritative business path"
-        } else {
-            "mirroring maintenance state to OMK after system success"
-        };
+        let route_note =
+            if matches!(&pending.request, ParsedMaintenanceRequest::MigrateKeyNamespace { .. }) {
+                "using caller routing-scope decision as authoritative business path"
+            } else {
+                "mirroring maintenance state to OMK after system success"
+            };
         info!(
             "event=decision command={} maintenance_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} route={:?} reason={:?}; {}",
             command_name,
@@ -398,10 +377,7 @@ unsafe fn handle_keystore_transaction(
             return request_rewritten;
         }
         if let Some(reply) = precomputed {
-            replace_top_pending(
-                connection,
-                PendingCall::PrecomputedMaintenance(pending, reply),
-            );
+            replace_top_pending(connection, PendingCall::PrecomputedMaintenance(pending, reply));
         } else {
             replace_top_pending(connection, PendingCall::Maintenance(pending));
         }
@@ -543,12 +519,7 @@ unsafe fn handle_keystore_transaction(
             method, caller.uid, caller.pid, route
         );
 
-        let pending = PendingServiceCall {
-            request,
-            caller,
-            packages: decision.packages,
-            route,
-        };
+        let pending = PendingServiceCall { request, caller, packages: decision.packages, route };
         if !expects_reply {
             if let Some(reply) = precomputed_service_reply.as_ref() {
                 if let Err(error) = build_precomputed_service_reply(reply) {
@@ -766,11 +737,7 @@ unsafe fn handle_keystore_transaction(
             method, caller.uid, caller.pid, operation_target.route
         );
 
-        let pending = PendingOperationCall {
-            request,
-            caller,
-            target,
-        };
+        let pending = PendingOperationCall { request, caller, target };
         if !expects_reply
             && operation_target.route == RouteTarget::Omk
             && can_execute_one_way(SyntheticTargetKind::Operation, tr.code)
@@ -783,10 +750,7 @@ unsafe fn handle_keystore_transaction(
         return false;
     }
 
-    debug!(
-        "event=decision skipping unsupported keystore interface request code=0x{:x}",
-        tr.code
-    );
+    debug!("event=decision skipping unsupported keystore interface request code=0x{:x}", tr.code);
 
     false
 }

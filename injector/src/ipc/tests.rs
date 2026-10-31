@@ -4,11 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
 fn isolated_package_lookup_preserves_original_authorization_identity() {
-    let caller = CallerInfo {
-        uid: 99001,
-        pid: 42,
-        sid: "u:r:isolated_app:s0:c123,c456".into(),
-    };
+    let caller = CallerInfo { uid: 99001, pid: 42, sid: "u:r:isolated_app:s0:c123,c456".into() };
     let packages = resolve_packages_for_caller_with(
         &caller,
         |uid| {
@@ -38,24 +34,22 @@ fn isolated_package_lookup_preserves_original_authorization_identity() {
         )
         .allowed
     );
-    assert!(!crate::filter::evaluate(
-        &AppScope::default(),
-        &crate::config::FilterConfig::default(),
-        99001,
-        packages,
-    )
-    .allowed);
+    assert!(
+        !crate::filter::evaluate(
+            &AppScope::default(),
+            &crate::config::FilterConfig::default(),
+            99001,
+            packages,
+        )
+        .allowed
+    );
     assert_eq!(caller.uid, 99001);
 }
 
 #[test]
 fn isolated_package_lookup_is_only_an_unknown_uid_fallback() {
     for uid in [10371, 99001] {
-        let caller = CallerInfo {
-            uid,
-            pid: 42,
-            sid: "u:r:app:s0".into(),
-        };
+        let caller = CallerInfo { uid, pid: 42, sid: "u:r:app:s0".into() };
         assert!(matches!(
             resolve_packages_for_caller_with(
                 &caller,
@@ -65,11 +59,7 @@ fn isolated_package_lookup_is_only_an_unknown_uid_fallback() {
             PackageResolution::Known(_)
         ));
     }
-    let mut caller = CallerInfo {
-        uid: 10371,
-        pid: 42,
-        sid: "u:r:app:s0".into(),
-    };
+    let mut caller = CallerInfo { uid: 10371, pid: 42, sid: "u:r:app:s0".into() };
     assert!(matches!(
         resolve_packages_for_caller_with(
             &caller,
@@ -84,11 +74,7 @@ fn isolated_package_lookup_is_only_an_unknown_uid_fallback() {
             resolve_packages_for_caller_with(
                 &caller,
                 |_| PackageResolution::Unknown,
-                |_| if fail {
-                    Err(anyhow::anyhow!("query unavailable"))
-                } else {
-                    Ok(Vec::new())
-                }
+                |_| if fail { Err(anyhow::anyhow!("query unavailable")) } else { Ok(Vec::new()) }
             ),
             PackageResolution::Unknown
         ));
@@ -103,24 +89,16 @@ fn binder_status_classification() {
     let status = Status::from(StatusCode::Ok);
     assert!(!is_dead_object_status(&status));
 
-    for status in [
-        StatusCode::DeadObject,
-        StatusCode::RpcError,
-        StatusCode::NotEnoughData,
-    ] {
+    for status in [StatusCode::DeadObject, StatusCode::RpcError, StatusCode::NotEnoughData] {
         assert!(is_stale_rpc_status_code(status));
-        assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(
-            Status::from(status)
-        )));
+        assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(Status::from(status))));
         assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(status)));
     }
 
     let shared = Arc::new(
         anyhow::Error::new(StatusCode::DeadObject).context("failed to connect to omk service"),
     );
-    assert!(is_rpc_cache_invalidating_error(&shared_rpc_connect_error(
-        &shared
-    )));
+    assert!(is_rpc_cache_invalidating_error(&shared_rpc_connect_error(&shared)));
 
     for status in [
         StatusCode::NoInit,
@@ -129,9 +107,7 @@ fn binder_status_classification() {
         StatusCode::Errno(libc::EPIPE),
     ] {
         assert!(is_rpc_cache_invalidating_status_code(status));
-        assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(
-            Status::from(status)
-        )));
+        assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(Status::from(status))));
         assert!(is_rpc_cache_invalidating_error(&anyhow::Error::new(status)));
     }
 

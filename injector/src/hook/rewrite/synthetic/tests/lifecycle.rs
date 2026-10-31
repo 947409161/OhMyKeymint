@@ -32,10 +32,7 @@ fn acquire_before_completion_finishes_publication() {
     register_operation_publication(target).unwrap();
     let retirement = publication_retirement(target);
     bind_operation_publication_connection(retirement, 11);
-    assert_eq!(
-        mark_operation_publication_acquire_pending(target, 11),
-        Some(retirement)
-    );
+    assert_eq!(mark_operation_publication_acquire_pending(target, 11), Some(retirement));
     mark_operation_publication_acquire_committed(retirement);
     assert!(OPERATION_PUBLICATIONS
         .lock()
@@ -57,24 +54,15 @@ fn cancelled_acquire_requeues_publication_probe() {
     register_operation_publication(target).unwrap();
     let retirement = complete_test_publication(target, 12);
     let probe = take_ready_operation_publication_probe().unwrap();
-    assert_eq!(
-        mark_operation_publication_acquire_pending(target, 12),
-        Some(retirement)
-    );
+    assert_eq!(mark_operation_publication_acquire_pending(target, 12), Some(retirement));
     let requeued_at = Instant::now();
-    assert_eq!(
-        finish_operation_publication_probe(probe, Ok(false), requeued_at),
-        None
-    );
+    assert_eq!(finish_operation_publication_probe(probe, Ok(false), requeued_at), None);
 
     cancel_operation_publication_acquire_pending(retirement);
     let probe = take_operation_publication_probe(requeued_at + OPERATION_PUBLICATION_REPROBE_DELAY)
         .unwrap();
     assert_eq!(probe.target, target);
-    assert_eq!(
-        finish_operation_publication_probe_for_test(probe, Ok(false)),
-        Some(retirement)
-    );
+    assert_eq!(finish_operation_publication_probe_for_test(probe, Ok(false)), Some(retirement));
 }
 
 #[test]
@@ -84,17 +72,11 @@ fn retired_connection_waits_for_committed_acquire() {
     register_operation_publication(target).unwrap();
     let retirement = complete_test_publication(target, 13);
     let probe = take_ready_operation_publication_probe().unwrap();
-    assert_eq!(
-        mark_operation_publication_acquire_pending(target, 13),
-        Some(retirement)
-    );
+    assert_eq!(mark_operation_publication_acquire_pending(target, 13), Some(retirement));
 
     retire_binder_connection_publications(13);
     assert!(operation_publication_acquire_is_pending(probe));
-    assert_eq!(
-        finish_operation_publication_probe_for_test(probe, Err(libc::ESTALE)),
-        None
-    );
+    assert_eq!(finish_operation_publication_probe_for_test(probe, Err(libc::ESTALE)), None);
     assert!(OPERATION_PUBLICATIONS
         .lock()
         .expect("operation publication map poisoned")
@@ -143,30 +125,23 @@ fn intercepted_operation_transaction_does_not_replace_acquire_ack() {
     let (_, retirement) = register_synthetic_operation_carrier(
         backend,
         false,
-        &CallerInfo {
-            uid: 10002,
-            sid: String::new(),
-            pid: 2000,
-        },
+        &CallerInfo { uid: 10002, sid: String::new(), pid: 2000 },
     )
     .expect("synthetic operation carrier should register");
     let target = retirement.target;
     bind_operation_publication_connection(retirement, 26);
     mark_operation_publication_completed(retirement, binder_token(26));
-    assert_eq!(
-        mark_operation_publication_acquire_pending(target, 26),
-        Some(retirement)
-    );
+    assert_eq!(mark_operation_publication_acquire_pending(target, 26), Some(retirement));
     assert!(OPERATION_PUBLICATIONS
         .lock()
         .expect("operation publication map poisoned")
         .contains_key(&target));
 
-    let request = request_parcel(identify::KEYSTORE_OPERATION_INTERFACE);
+    let mut request = request_parcel(identify::KEYSTORE_OPERATION_INTERFACE);
     let tr = transaction_for_parcel(
         target,
         identify::AIDL_GET_INTERFACE_VERSION_TRANSACTION,
-        &request,
+        &mut request,
     );
     assert!(unsafe { handle_synthetic_br_transaction(&tr, None, "BR_TRANSACTION") }.is_some());
     assert!(OPERATION_PUBLICATIONS
@@ -182,10 +157,7 @@ fn intercepted_operation_transaction_does_not_replace_acquire_ack() {
         .contains_key(&target));
     assert!(lookup_native_binder(target).is_none());
     assert!(lookup_operation_target(target).is_some());
-    assert_eq!(
-        lookup_synthetic_target(target),
-        Some(SyntheticTargetKind::Operation)
-    );
+    assert_eq!(lookup_synthetic_target(target), Some(SyntheticTargetKind::Operation));
     drop(acquired);
     assert!(lookup_operation_target(target).is_none());
     assert_eq!(aborts.load(Ordering::SeqCst), 0);
@@ -204,11 +176,7 @@ fn local_operation_publication_handoff_releases_initial_strong() {
     let (_, retirement) = register_synthetic_operation_carrier(
         backend,
         false,
-        &CallerInfo {
-            uid: 10002,
-            sid: String::new(),
-            pid: 2000,
-        },
+        &CallerInfo { uid: 10002, sid: String::new(), pid: 2000 },
     )
     .expect("synthetic operation carrier should register");
     let target = retirement.target;
@@ -240,27 +208,19 @@ fn terminal_publication_with_live_node_waits_for_acquire() {
     let in_flight_probe = take_ready_operation_publication_probe().unwrap();
     retire_synthetic_operation_target(target);
     let requeued_at = Instant::now();
-    assert_eq!(
-        finish_operation_publication_probe(in_flight_probe, Ok(true), requeued_at),
-        None
-    );
+    assert_eq!(finish_operation_publication_probe(in_flight_probe, Ok(true), requeued_at), None);
     assert!(OPERATION_PUBLICATIONS
         .lock()
         .expect("operation publication map poisoned")
         .contains_key(&target));
-    assert_eq!(
-        mark_operation_publication_acquire_pending(target, 27),
-        Some(retirement)
-    );
+    assert_eq!(mark_operation_publication_acquire_pending(target, 27), Some(retirement));
     mark_operation_publication_acquire_committed(retirement);
     assert!(!OPERATION_PUBLICATIONS
         .lock()
         .expect("operation publication map poisoned")
         .contains_key(&target));
-    assert!(
-        take_operation_publication_probe(requeued_at + OPERATION_PUBLICATION_REPROBE_DELAY)
-            .is_none()
-    );
+    assert!(take_operation_publication_probe(requeued_at + OPERATION_PUBLICATION_REPROBE_DELAY)
+        .is_none());
 }
 
 #[test]
@@ -271,10 +231,7 @@ fn terminal_publication_without_node_is_reclaimed() {
     let retirement = complete_test_publication(target, 28);
     let probe = take_ready_operation_publication_probe().unwrap();
     retire_synthetic_operation_target(target);
-    assert_eq!(
-        finish_operation_publication_probe_for_test(probe, Ok(false)),
-        Some(retirement)
-    );
+    assert_eq!(finish_operation_publication_probe_for_test(probe, Ok(false)), Some(retirement));
     assert!(!OPERATION_PUBLICATIONS
         .lock()
         .expect("operation publication map poisoned")
@@ -294,11 +251,7 @@ fn native_retirement_releases_unfinished_publication() {
     let (_, retirement) = register_synthetic_operation_carrier(
         backend,
         false,
-        &CallerInfo {
-            uid: 10002,
-            sid: String::new(),
-            pid: 2000,
-        },
+        &CallerInfo { uid: 10002, sid: String::new(), pid: 2000 },
     )
     .expect("synthetic operation carrier should register");
     let target = retirement.target;
@@ -333,11 +286,7 @@ fn terminal_reply_retires_backend_before_native_publication() {
     let (_, retirement) = register_synthetic_operation_carrier(
         backend,
         false,
-        &CallerInfo {
-            uid: 10002,
-            sid: String::new(),
-            pid: 2000,
-        },
+        &CallerInfo { uid: 10002, sid: String::new(), pid: 2000 },
     )
     .expect("synthetic operation carrier should register");
     let target = retirement.target;
@@ -358,10 +307,7 @@ fn terminal_reply_retires_backend_before_native_publication() {
     let probe = take_operation_publication_probe(Instant::now())
         .expect("terminal retirement should make the queued probe immediately ready");
     assert_eq!(probe.target, target);
-    assert_eq!(
-        finish_operation_publication_probe_for_test(probe, Ok(false)),
-        Some(retirement)
-    );
+    assert_eq!(finish_operation_publication_probe_for_test(probe, Ok(false)), Some(retirement));
     drop_synthetic_operation_retirement(retirement);
     assert_eq!(aborts.load(Ordering::SeqCst), 1);
     assert!(lookup_native_binder(target).is_none());

@@ -66,10 +66,7 @@ mod tests {
             assert_eq!(parse(canonical_bytes(enabled)).unwrap(), enabled);
         }
         for invalid in [b"".as_slice(), b"true", b"2", b" 1", b"1\n", b"0\0"] {
-            assert_eq!(
-                parse(invalid).unwrap_err().kind(),
-                io::ErrorKind::InvalidData
-            );
+            assert_eq!(parse(invalid).unwrap_err().kind(), io::ErrorKind::InvalidData);
         }
     }
 

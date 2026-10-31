@@ -82,9 +82,7 @@ fn wait_for_operation_publication_deadline() {
     loop {
         match next_operation_publication_probe_deadline() {
             None => {
-                guard = wake
-                    .wait(guard)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                guard = wake.wait(guard).unwrap_or_else(|poisoned| poisoned.into_inner());
             }
             Some(deadline) => {
                 let now = Instant::now();
@@ -158,13 +156,8 @@ impl DerefMut for BinderFdRegistryGuard {
 
 fn binder_fd_registry() -> BinderFdRegistryGuard {
     let signals = SignalMaskGuard::block();
-    let registry = BINDER_FD_REGISTRY
-        .lock()
-        .expect("binder fd registry poisoned");
-    BinderFdRegistryGuard {
-        registry,
-        _signals: signals,
-    }
+    let registry = BINDER_FD_REGISTRY.lock().expect("binder fd registry poisoned");
+    BinderFdRegistryGuard { registry, _signals: signals }
 }
 
 fn ensure_binder_fd_lifecycle(
@@ -179,9 +172,7 @@ fn ensure_binder_fd_lifecycle(
         state: Mutex::new(BinderFdLifecycleState::default()),
         pinned_fd: OnceLock::new(),
     });
-    registry
-        .by_connection
-        .insert(lifecycle.connection, lifecycle.clone());
+    registry.by_connection.insert(lifecycle.connection, lifecycle.clone());
     registry.by_fd.insert(fd, lifecycle.clone());
     lifecycle
 }
@@ -200,27 +191,15 @@ fn existing_binder_fd_lifecycle(fd: c_int) -> Option<Arc<BinderFdLifecycle>> {
 pub(super) fn binder_fd_token(fd: c_int) -> BinderFdToken {
     let mut registry = binder_fd_registry();
     let lifecycle = ensure_binder_fd_lifecycle(&mut registry, fd);
-    let generation = lifecycle
-        .state
-        .lock()
-        .expect("binder fd lifecycle poisoned")
-        .generation;
-    BinderFdToken {
-        fd,
-        generation,
-        connection: lifecycle.connection,
-    }
+    let generation = lifecycle.state.lock().expect("binder fd lifecycle poisoned").generation;
+    BinderFdToken { fd, generation, connection: lifecycle.connection }
 }
 
 #[cfg(test)]
 pub(super) fn binder_fd_token_is_current(token: BinderFdToken) -> bool {
     existing_binder_fd_lifecycle(token.fd).is_some_and(|lifecycle| {
         lifecycle.connection == token.connection
-            && lifecycle
-                .state
-                .lock()
-                .expect("binder fd lifecycle poisoned")
-                .generation
+            && lifecycle.state.lock().expect("binder fd lifecycle poisoned").generation
                 == token.generation
     })
 }
@@ -230,10 +209,7 @@ pub(super) fn binder_connection_cleanup_ready(connection: BinderStateKey) -> boo
     let Some(lifecycle) = registry.by_connection.get(&connection) else {
         return true;
     };
-    let state = lifecycle
-        .state
-        .lock()
-        .expect("binder fd lifecycle poisoned");
+    let state = lifecycle.state.lock().expect("binder fd lifecycle poisoned");
     state.retired && state.in_flight == 0
 }
 
@@ -242,10 +218,7 @@ pub(super) fn binder_connection_is_retired(token: BinderFdToken) -> bool {
     let Some(lifecycle) = registry.by_connection.get(&token.connection) else {
         return true;
     };
-    let state = lifecycle
-        .state
-        .lock()
-        .expect("binder fd lifecycle poisoned");
+    let state = lifecycle.state.lock().expect("binder fd lifecycle poisoned");
     state.generation != token.generation || state.retired && state.in_flight == 0
 }
 
@@ -253,17 +226,10 @@ fn retire_unaliased_lifecycle(
     registry: &mut BinderFdRegistry,
     lifecycle: &Arc<BinderFdLifecycle>,
 ) -> bool {
-    if registry
-        .by_fd
-        .values()
-        .any(|candidate| Arc::ptr_eq(candidate, lifecycle))
-    {
+    if registry.by_fd.values().any(|candidate| Arc::ptr_eq(candidate, lifecycle)) {
         return false;
     }
-    let mut state = lifecycle
-        .state
-        .lock()
-        .expect("binder fd lifecycle poisoned");
+    let mut state = lifecycle.state.lock().expect("binder fd lifecycle poisoned");
     state.retired = true;
     state.generation = state.generation.wrapping_add(1);
     if state.in_flight == 0 {
@@ -275,11 +241,7 @@ fn retire_unaliased_lifecycle(
 pub(super) fn invalidate_binder_fd_token(token: BinderFdToken) -> Option<BinderStateKey> {
     let mut registry = binder_fd_registry();
     let lifecycle = registry.by_fd.get(&token.fd).cloned()?;
-    let generation = lifecycle
-        .state
-        .lock()
-        .expect("binder fd lifecycle poisoned")
-        .generation;
+    let generation = lifecycle.state.lock().expect("binder fd lifecycle poisoned").generation;
     if lifecycle.connection != token.connection || generation != token.generation {
         return None;
     }
@@ -329,12 +291,8 @@ where
             libc::fstat(fd, &mut stat) == 0 && stat.st_mode & libc::S_IFMT == libc::S_IFCHR;
         let mut version = binder_version::default();
         let is_binder = is_character_device
-            && libc::syscall(
-                libc::SYS_ioctl,
-                fd,
-                BINDER_VERSION as libc::c_ulong,
-                &mut version,
-            ) == 0;
+            && libc::syscall(libc::SYS_ioctl, fd, BINDER_VERSION as libc::c_ulong, &mut version)
+                == 0;
         *libc::__errno() = saved_errno;
         is_binder
     }
@@ -381,10 +339,7 @@ impl BinderIoctlGuard {
         if lifecycle.connection != token.connection {
             return Err(libc::ESTALE);
         }
-        let mut state = lifecycle
-            .state
-            .lock()
-            .expect("binder fd lifecycle poisoned");
+        let mut state = lifecycle.state.lock().expect("binder fd lifecycle poisoned");
         if state.retired || state.generation != token.generation {
             return Err(libc::ESTALE);
         }
@@ -415,10 +370,7 @@ impl BinderIoctlGuard {
         state.in_flight += 1;
         drop(state);
         drop(registry);
-        Ok(Self {
-            lifecycle,
-            pinned_fd,
-        })
+        Ok(Self { lifecycle, pinned_fd })
     }
 
     pub(super) fn fd(&self) -> c_int {
@@ -430,11 +382,7 @@ impl Drop for BinderIoctlGuard {
     fn drop(&mut self) {
         let error = unsafe { *libc::__errno() };
         let mut registry = binder_fd_registry();
-        let mut state = self
-            .lifecycle
-            .state
-            .lock()
-            .expect("binder fd lifecycle poisoned");
+        let mut state = self.lifecycle.state.lock().expect("binder fd lifecycle poisoned");
         state.in_flight = state.in_flight.saturating_sub(1);
         let retired = (state.retired && state.in_flight == 0).then_some(self.lifecycle.connection);
         if retired.is_some() {
@@ -488,25 +436,17 @@ pub(super) unsafe fn call_binder_connection_ioctl(
         let Some(fd) = fd else {
             return BinderIoctlCall::Stale;
         };
-        let generation = lifecycle
-            .state
-            .lock()
-            .expect("binder fd lifecycle poisoned")
-            .generation;
+        let generation = lifecycle.state.lock().expect("binder fd lifecycle poisoned").generation;
         (fd, lifecycle, generation)
     };
-    let current = BinderFdToken {
-        fd,
-        generation,
-        connection: lifecycle.connection,
-    };
+    let current = BinderFdToken { fd, generation, connection: lifecycle.connection };
     if generation != token.generation {
         return BinderIoctlCall::Retired;
     }
     call_binder_ioctl(current, old_ioctl_fn, request, arg)
 }
 
-pub(in crate::hook) unsafe fn new_close(fd: c_int) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_close(fd: c_int) -> c_int {
     let mut old_close = OLD_CLOSE.load(Ordering::Relaxed);
     if old_close.is_null() {
         extern "C" {
@@ -518,7 +458,7 @@ pub(in crate::hook) unsafe fn new_close(fd: c_int) -> c_int {
     close_with_binder_fd_lifecycle(fd, || close(fd))
 }
 
-pub(in crate::hook) unsafe fn new_fdsan_close(fd: c_int, tag: u64) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_fdsan_close(fd: c_int, tag: u64) -> c_int {
     let old_close = OLD_FDSAN_CLOSE.load(Ordering::Relaxed);
     if old_close.is_null() {
         return new_close(fd);
@@ -527,7 +467,7 @@ pub(in crate::hook) unsafe fn new_fdsan_close(fd: c_int, tag: u64) -> c_int {
     close_with_binder_fd_lifecycle(fd, || close(fd, tag))
 }
 
-pub(in crate::hook) unsafe fn new_dup(fd: c_int) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_dup(fd: c_int) -> c_int {
     let mut old_dup = OLD_DUP.load(Ordering::Relaxed);
     if old_dup.is_null() {
         extern "C" {
@@ -539,7 +479,7 @@ pub(in crate::hook) unsafe fn new_dup(fd: c_int) -> c_int {
     duplicate_binder_fd_with_lifecycle(fd, None, || dup(fd))
 }
 
-pub(in crate::hook) unsafe fn new_dup2(old_fd: c_int, new_fd: c_int) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_dup2(old_fd: c_int, new_fd: c_int) -> c_int {
     let mut old_dup2 = OLD_DUP2.load(Ordering::Relaxed);
     if old_dup2.is_null() {
         extern "C" {
@@ -551,7 +491,11 @@ pub(in crate::hook) unsafe fn new_dup2(old_fd: c_int, new_fd: c_int) -> c_int {
     duplicate_binder_fd_with_lifecycle(old_fd, Some(new_fd), || dup2(old_fd, new_fd))
 }
 
-pub(in crate::hook) unsafe fn new_dup3(old_fd: c_int, new_fd: c_int, flags: c_int) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_dup3(
+    old_fd: c_int,
+    new_fd: c_int,
+    flags: c_int,
+) -> c_int {
     let mut old_dup3 = OLD_DUP3.load(Ordering::Relaxed);
     if old_dup3.is_null() {
         extern "C" {
@@ -563,7 +507,11 @@ pub(in crate::hook) unsafe fn new_dup3(old_fd: c_int, new_fd: c_int, flags: c_in
     duplicate_binder_fd_with_lifecycle(old_fd, Some(new_fd), || dup3(old_fd, new_fd, flags))
 }
 
-pub(in crate::hook) unsafe fn new_fcntl(fd: c_int, command: c_int, arg: libc::c_ulong) -> c_int {
+pub(in crate::hook) unsafe extern "C" fn new_fcntl(
+    fd: c_int,
+    command: c_int,
+    arg: libc::c_ulong,
+) -> c_int {
     let mut old_fcntl = OLD_FCNTL.load(Ordering::Relaxed);
     if old_fcntl.is_null() {
         extern "C" {

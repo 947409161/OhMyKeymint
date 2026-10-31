@@ -46,9 +46,7 @@ fn property(name: &str) -> Option<String> {
         return None;
     }
     let bytes = value[..length as usize].to_vec();
-    String::from_utf8(bytes)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+    String::from_utf8(bytes).ok().filter(|value| !value.trim().is_empty())
 }
 
 /// Read a small text file and trim surrounding whitespace, keeping any other byte as the
@@ -72,28 +70,21 @@ fn serial_from_block_devices() -> Option<String> {
     // directory listing.
     names.sort();
     names.into_iter().find_map(|name| {
-        read_trimmed(&format!(
-            "/sys/block/{}/device/serial",
-            name.to_string_lossy()
-        ))
+        read_trimmed(&format!("/sys/block/{}/device/serial", name.to_string_lossy()))
     })
 }
 
 /// Resolve the unit serial together with the source that supplied it, so the log can name the
 /// source without ever recording the serial itself.
 fn device_serial() -> Option<(String, &'static str)> {
-    for (name, source) in [
-        ("ro.serialno", "the Android property"),
-        ("ro.boot.serialno", "the bootloader property"),
-    ] {
+    for (name, source) in
+        [("ro.serialno", "the Android property"), ("ro.boot.serialno", "the bootloader property")]
+    {
         if let Some(value) = property(name) {
             return Some((value, source));
         }
     }
-    for path in [
-        "/proc/device-tree/serial-number",
-        "/sys/firmware/devicetree/base/serial-number",
-    ] {
+    for path in ["/proc/device-tree/serial-number", "/sys/firmware/devicetree/base/serial-number"] {
         if let Some(value) = read_trimmed(path) {
             return Some((value, "the device tree"));
         }
@@ -109,9 +100,7 @@ fn identifier_material(label: &str) -> Vec<u8> {
         crate::soter::log(&format!("{label} derived from {source}"));
         return serial.into_bytes();
     }
-    crate::soter::log(&format!(
-        "no device serial readable; minted a per-process {label}"
-    ));
+    crate::soter::log(&format!("no device serial readable; minted a per-process {label}"));
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos() as u64);
@@ -160,11 +149,7 @@ mod tests {
     fn fingerprint_matches_the_reference_lanes() {
         assert_eq!(hex_fingerprint32(b""), "cbf29ce4842223259e3779b97f4a7c15");
         assert_eq!(hex_fingerprint32(b"abc").len(), 32);
-        assert!(
-            hex_fingerprint32(b"abc")
-                .chars()
-                .all(|c| c.is_ascii_hexdigit())
-        );
+        assert!(hex_fingerprint32(b"abc").chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -175,9 +160,6 @@ mod tests {
         assert_eq!(blob.len(), 16);
         assert_ne!(blob, cpu.as_bytes());
         assert!(std::ptr::eq(cpu, cpu_id()), "cpu_id must be cached");
-        assert!(
-            std::ptr::eq(blob, device_blob()),
-            "device blob must be cached"
-        );
+        assert!(std::ptr::eq(blob, device_blob()), "device blob must be cached");
     }
 }

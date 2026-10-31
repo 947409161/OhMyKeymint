@@ -20,7 +20,15 @@ pub(in crate::hook::intercept) use write::{
     abort_prepared_bc_replies_for_connection, complete_inbound_free_buffers,
 };
 
-pub(in crate::hook) unsafe fn new_ioctl(fd: c_int, request: c_int, arg: *mut c_void) -> c_int {
+/// # Safety
+///
+/// Called by the installed ioctl hook with the same ABI and pointer validity
+/// requirements as libc ioctl. `arg` must be valid for the request being made.
+pub(in crate::hook) unsafe extern "C" fn new_ioctl(
+    fd: c_int,
+    request: c_int,
+    arg: *mut c_void,
+) -> c_int {
     let mut old_ioctl_ptr = OLD_IOCTL.load(Ordering::Relaxed);
     if old_ioctl_ptr.is_null() {
         extern "C" {
@@ -129,11 +137,8 @@ pub(in crate::hook) unsafe fn new_ioctl(fd: c_int, request: c_int, arg: *mut c_v
     bwr.write_size = write_remaining;
     bwr.write_consumed = 0;
 
-    let ret = old_ioctl_fn(
-        binder_ioctl_guard.fd(),
-        request,
-        (&mut bwr as *mut binder_write_read).cast(),
-    );
+    let ret =
+        old_ioctl_fn(binder_ioctl_guard.fd(), request, (&mut bwr as *mut binder_write_read).cast());
     let ioctl_errno = *libc::__errno();
     let ioctl_error = (ret < 0).then_some(ioctl_errno);
     let driver_write_consumed = bwr.write_consumed;
@@ -174,9 +179,8 @@ pub(in crate::hook) unsafe fn new_ioctl(fd: c_int, request: c_int, arg: *mut c_v
     bwr.write_buffer = original_write_buffer;
     bwr.read_buffer = original_read_buffer;
 
-    for &(_, reply_data, expects_reply, acquire_target) in completion_commands
-        .iter()
-        .take_while(|(end, _, _, _)| *end <= bwr.write_consumed)
+    for &(_, reply_data, expects_reply, acquire_target) in
+        completion_commands.iter().take_while(|(end, _, _, _)| *end <= bwr.write_consumed)
     {
         if let Some(target) = acquire_target {
             complete_operation_acquire(target);
@@ -226,20 +230,14 @@ pub(in crate::hook) unsafe fn new_ioctl(fd: c_int, request: c_int, arg: *mut c_v
                     );
                     read_copy_back_ok = false;
                 }
-                pending_read = PendingReadCopyback::Processed {
-                    address: read_address,
-                    data: read,
-                };
+                pending_read = PendingReadCopyback::Processed { address: read_address, data: read };
             }
             Err(_) => {
                 warn!(
                     "event=binder failed to read driver output after ioctl fd={} previous={} consumed={}",
                     fd, input_read_consumed, bwr.read_consumed
                 );
-                pending_read = PendingReadCopyback::Unread {
-                    address: read_address,
-                    len: read_len,
-                };
+                pending_read = PendingReadCopyback::Unread { address: read_address, len: read_len };
                 read_copy_back_ok = false;
             }
         }
@@ -253,10 +251,7 @@ pub(in crate::hook) unsafe fn new_ioctl(fd: c_int, request: c_int, arg: *mut c_v
     }
     let counters_copy_back_ok = write_process_value(arg.cast::<binder_write_read>(), &visible_bwr);
     if !counters_copy_back_ok {
-        warn!(
-            "event=binder failed to copy consumed counters after ioctl fd={}",
-            fd
-        );
+        warn!("event=binder failed to copy consumed counters after ioctl fd={}", fd);
     }
     if !read_copy_back_ok || !counters_copy_back_ok {
         PENDING_IOCTL_COPYBACKS.with(|slot| {

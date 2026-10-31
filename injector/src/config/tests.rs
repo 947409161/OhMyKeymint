@@ -17,21 +17,16 @@ impl Drop for TempConfigPath {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
         if let (Some(parent), Some(file_name)) = (self.0.parent(), self.0.file_name()) {
-            let temp = parent.join(format!(
-                ".{}.tmp-{}",
-                file_name.to_string_lossy(),
-                std::process::id()
-            ));
+            let temp =
+                parent.join(format!(".{}.tmp-{}", file_name.to_string_lossy(), std::process::id()));
             let _ = fs::remove_file(temp);
         }
     }
 }
 
 fn temp_config_path(name: &str) -> TempConfigPath {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time should move forward")
-        .as_nanos();
+    let unique =
+        SystemTime::now().duration_since(UNIX_EPOCH).expect("time should move forward").as_nanos();
     TempConfigPath(std::env::temp_dir().join(format!("omk-injector-{name}-{unique}.toml")))
 }
 
@@ -64,24 +59,13 @@ fn config_defaults_and_log_levels_match_contract() {
 
 #[test]
 fn attestation_generation_delay_is_optional_bounded_and_preserved() {
-    assert_eq!(
-        parse_config("")
-            .unwrap()
-            .main
-            .attestation_generation_delay_ms,
-        [20, 30]
-    );
+    assert_eq!(parse_config("").unwrap().main.attestation_generation_delay_ms, [20, 30]);
     for delay in ["[0, 0]", "[20, 30]", "[25, 25]", "[250, 250]"] {
-        let config = parse_config(&format!(
-            "[main]\nattestation_generation_delay_ms = {delay}\n"
-        ))
-        .unwrap();
+        let config =
+            parse_config(&format!("[main]\nattestation_generation_delay_ms = {delay}\n")).unwrap();
         let rendered = render_config(&config).unwrap();
         assert_eq!(
-            parse_config(&rendered)
-                .unwrap()
-                .main
-                .attestation_generation_delay_ms,
+            parse_config(&rendered).unwrap().main.attestation_generation_delay_ms,
             config.main.attestation_generation_delay_ms,
             "range {delay} must survive a render and reparse round trip"
         );
@@ -97,35 +81,22 @@ fn attestation_generation_delay_is_optional_bounded_and_preserved() {
         "[-1, 25]",
         "[1.5, 2]",
     ] {
-        assert!(parse_config(&format!(
-            "[main]\nattestation_generation_delay_ms = {delay}\n"
-        ))
-        .is_err());
+        assert!(
+            parse_config(&format!("[main]\nattestation_generation_delay_ms = {delay}\n")).is_err()
+        );
     }
 }
 
 #[test]
 fn operation_start_delay_is_optional_bounded_and_preserved() {
     for contents in ["", "version = 1\n[main]\nenabled = true\n"] {
-        assert_eq!(
-            parse_config(contents)
-                .unwrap()
-                .main
-                .operation_start_delay_ms,
-            0
-        );
+        assert_eq!(parse_config(contents).unwrap().main.operation_start_delay_ms, 0);
     }
     for delay in [0, 12, 250] {
         let config =
             parse_config(&format!("[main]\noperation_start_delay_ms = {delay}\n")).unwrap();
         let rendered = render_config(&config).unwrap();
-        assert_eq!(
-            parse_config(&rendered)
-                .unwrap()
-                .main
-                .operation_start_delay_ms,
-            delay
-        );
+        assert_eq!(parse_config(&rendered).unwrap().main.operation_start_delay_ms, delay);
     }
     for delay in ["-1", "251", "65536", "1.5", "true", "\"12\""] {
         assert!(parse_config(&format!("[main]\noperation_start_delay_ms = {delay}\n")).is_err());
@@ -135,11 +106,7 @@ fn operation_start_delay_is_optional_bounded_and_preserved() {
 #[test]
 fn invalid_operation_start_delay_reload_is_rejected_without_rewriting() {
     let path = temp_config_path("operation-start-delay-reload");
-    fs::write(
-        &*path,
-        "version = 1\n[main]\noperation_start_delay_ms = 12\n",
-    )
-    .unwrap();
+    fs::write(&*path, "version = 1\n[main]\noperation_start_delay_ms = 12\n").unwrap();
     let loaded = load_or_seed(&path, LoadContext::Reload(WatchTrigger::CloseWrite))
         .expect("valid delay should load");
     assert_eq!(loaded.main.operation_start_delay_ms, 12);
@@ -189,14 +156,8 @@ fn rendered_config_contains_no_routing_list() {
         reparsed.main.attestation_generation_delay_ms,
         config.main.attestation_generation_delay_ms
     );
-    assert_eq!(
-        reparsed.filter.block_android_package,
-        config.filter.block_android_package
-    );
-    assert_eq!(
-        reparsed.filter.allow_unknown_package,
-        config.filter.allow_unknown_package
-    );
+    assert_eq!(reparsed.filter.block_android_package, config.filter.block_android_package);
+    assert_eq!(reparsed.filter.allow_unknown_package, config.filter.allow_unknown_package);
 }
 
 #[test]
@@ -210,20 +171,14 @@ fn missing_config_is_seeded_but_invalid_startup_config_is_untouched() {
     let on_disk = fs::read_to_string(&*path).expect("written config should be readable");
     let reparsed = parse_config(&on_disk).expect("written config should parse");
     assert_eq!(reparsed.main.enabled, loaded.main.enabled);
-    assert_eq!(
-        reparsed.filter.block_android_package,
-        loaded.filter.block_android_package
-    );
+    assert_eq!(reparsed.filter.block_android_package, loaded.filter.block_android_package);
 
     let path = temp_config_path("invalid");
     let invalid = "[main\nbroken";
     fs::write(&*path, invalid).expect("invalid config should be written");
 
     let loaded = load_or_seed(&path, LoadContext::Startup).unwrap();
-    assert!(
-        !loaded.main.enabled,
-        "invalid startup config must disable injection"
-    );
+    assert!(!loaded.main.enabled, "invalid startup config must disable injection");
     assert_eq!(fs::read_to_string(&*path).unwrap(), invalid);
     assert!(!PathBuf::from(format!("{}.bak", path.display())).exists());
 }
@@ -302,19 +257,10 @@ fn template_matches_defaults_and_contains_no_routing_list() {
         parsed.main.attestation_generation_delay_ms,
         defaults.main.attestation_generation_delay_ms
     );
-    assert_eq!(
-        parsed.main.operation_start_delay_ms,
-        defaults.main.operation_start_delay_ms
-    );
+    assert_eq!(parsed.main.operation_start_delay_ms, defaults.main.operation_start_delay_ms);
     assert_eq!(parsed.filter.enabled, defaults.filter.enabled);
-    assert_eq!(
-        parsed.filter.block_android_package,
-        defaults.filter.block_android_package
-    );
-    assert_eq!(
-        parsed.filter.allow_unknown_package,
-        defaults.filter.allow_unknown_package
-    );
+    assert_eq!(parsed.filter.block_android_package, defaults.filter.block_android_package);
+    assert_eq!(parsed.filter.allow_unknown_package, defaults.filter.allow_unknown_package);
 }
 
 #[test]
@@ -330,9 +276,7 @@ fn replace_save_retry_only_retries_read_failures() {
             attempts += 1;
             match attempts {
                 1 => Err(LoadError::Io(io::Error::from(io::ErrorKind::NotFound))),
-                2 => Err(LoadError::Io(io::Error::from(
-                    io::ErrorKind::PermissionDenied,
-                ))),
+                2 => Err(LoadError::Io(io::Error::from(io::ErrorKind::PermissionDenied))),
                 _ => Ok(InjectorConfig::default()),
             }
         },
@@ -343,9 +287,7 @@ fn replace_save_retry_only_retries_read_failures() {
     assert_eq!(loaded.retries, 2);
     assert_eq!(attempts, 3);
     assert_eq!(sleeps.len(), 2);
-    assert!(sleeps
-        .iter()
-        .all(|duration| *duration == REPLACE_SAVE_RETRY_INTERVAL));
+    assert!(sleeps.iter().all(|duration| *duration == REPLACE_SAVE_RETRY_INTERVAL));
 
     let path = temp_config_path("replace-save-parse");
     let mut sleeps = Vec::new();

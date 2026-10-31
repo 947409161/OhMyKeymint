@@ -4,46 +4,33 @@ use crate::hook::rewrite::tests::{raw_parts, route_state_test_guard};
 #[test]
 fn mirror_recovery_retries_sensitive_events_in_global_sequence() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: "u:r:keystore:s0".into(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: "u:r:keystore:s0".into(), pid: 2000 };
 
-    reserve_mirror_update(
-        MirrorStateKind::Maintenance,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("onUserAdded should reserve")
-    .enqueue(MirrorReplayEvent::Maintenance {
-        request: ParsedMaintenanceRequest::OnUserAdded { user_id: 10 },
-        caller: caller.clone(),
-    })
-    .expect("onUserAdded should queue");
-    reserve_mirror_update(
-        MirrorStateKind::Maintenance,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("initUserSuperKeys should reserve")
-    .enqueue(MirrorReplayEvent::Maintenance {
-        request: ParsedMaintenanceRequest::InitUserSuperKeys {
-            user_id: 10,
-            password: vec![1, 2, 3],
-            allow_existing: false,
-        },
-        caller: caller.clone(),
-    })
-    .expect("initUserSuperKeys should queue");
-    reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("onUserStorageLocked should reserve")
-    .enqueue(MirrorReplayEvent::Authorization {
-        request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
-        caller: caller.clone(),
-    })
-    .expect("onUserStorageLocked should queue");
+    reserve_mirror_update(MirrorStateKind::Maintenance, MirrorFailurePolicy::FailClosed)
+        .expect("onUserAdded should reserve")
+        .enqueue(MirrorReplayEvent::Maintenance {
+            request: ParsedMaintenanceRequest::OnUserAdded { user_id: 10 },
+            caller: caller.clone(),
+        })
+        .expect("onUserAdded should queue");
+    reserve_mirror_update(MirrorStateKind::Maintenance, MirrorFailurePolicy::FailClosed)
+        .expect("initUserSuperKeys should reserve")
+        .enqueue(MirrorReplayEvent::Maintenance {
+            request: ParsedMaintenanceRequest::InitUserSuperKeys {
+                user_id: 10,
+                password: vec![1, 2, 3],
+                allow_existing: false,
+            },
+            caller: caller.clone(),
+        })
+        .expect("initUserSuperKeys should queue");
+    reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+        .expect("onUserStorageLocked should reserve")
+        .enqueue(MirrorReplayEvent::Authorization {
+            request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
+            caller: caller.clone(),
+        })
+        .expect("onUserStorageLocked should queue");
 
     let mut executed = Vec::new();
     let mut fail_sensitive = true;
@@ -60,16 +47,11 @@ fn mirror_recovery_retries_sensitive_events_in_global_sequence() {
     assert_eq!(executed, ["OnUserAdded", "InitUserSuperKeys"]);
 
     {
-        let mut state = MIRROR_RECOVERY_STATE
-            .lock()
-            .expect("mirror recovery state poisoned");
+        let mut state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
         assert_eq!(state.maintenance.pending.len(), 1);
         assert_eq!(state.authorization.pending.len(), 1);
-        let pending = state
-            .maintenance
-            .pending
-            .front_mut()
-            .expect("sensitive replay should remain queued");
+        let pending =
+            state.maintenance.pending.front_mut().expect("sensitive replay should remain queued");
         assert!(pending.retry_not_before.is_some());
         let Some(MirrorReplayEvent::Maintenance {
             request: ParsedMaintenanceRequest::InitUserSuperKeys { password, .. },
@@ -110,12 +92,7 @@ fn mirror_recovery_retries_sensitive_events_in_global_sequence() {
 
     assert_eq!(
         executed,
-        [
-            "OnUserAdded",
-            "InitUserSuperKeys",
-            "InitUserSuperKeys",
-            "OnUserStorageLocked",
-        ]
+        ["OnUserAdded", "InitUserSuperKeys", "InitUserSuperKeys", "OnUserStorageLocked",]
     );
     assert!(!mirror_state_dirty(MirrorStateKind::Authorization));
     assert!(!mirror_state_dirty(MirrorStateKind::Maintenance));
@@ -125,26 +102,17 @@ fn mirror_recovery_retries_sensitive_events_in_global_sequence() {
 #[test]
 fn mirror_reservation_holds_global_order_and_lost_reply_fails_closed() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
-    let earlier = reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("authorization update should reserve");
-    reserve_mirror_update(
-        MirrorStateKind::Maintenance,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("maintenance update should reserve")
-    .enqueue(MirrorReplayEvent::Maintenance {
-        request: ParsedMaintenanceRequest::OnUserRemoved { user_id: 11 },
-        caller,
-    })
-    .expect("later System reply should publish its event");
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
+    let earlier =
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+            .expect("authorization update should reserve");
+    reserve_mirror_update(MirrorStateKind::Maintenance, MirrorFailurePolicy::FailClosed)
+        .expect("maintenance update should reserve")
+        .enqueue(MirrorReplayEvent::Maintenance {
+            request: ParsedMaintenanceRequest::OnUserRemoved { user_id: 11 },
+            caller,
+        })
+        .expect("later System reply should publish its event");
 
     let mut replayed = 0;
     assert!(recover_mirror_state_with(&mut |_| {
@@ -171,15 +139,10 @@ fn mirror_reservation_holds_global_order_and_lost_reply_fails_closed() {
     assert_eq!(replayed, 1);
 
     drop(
-        reserve_mirror_update(
-            MirrorStateKind::Authorization,
-            MirrorFailurePolicy::FailClosed,
-        )
-        .expect("lost authorization update should reserve"),
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+            .expect("lost authorization update should reserve"),
     );
-    let state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     assert!(state.authorization.poisoned);
     assert!(state.authorization.pending.is_empty());
     drop(state);
@@ -189,29 +152,21 @@ fn mirror_reservation_holds_global_order_and_lost_reply_fails_closed() {
 #[test]
 fn full_mirror_queue_rejects_only_the_new_fail_closed_mutation() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
     for _ in 0..MAX_PENDING_MIRROR_REPLAYS {
-        reserve_mirror_update(
-            MirrorStateKind::Authorization,
-            MirrorFailurePolicy::FailClosed,
-        )
-        .expect("queue slot should reserve")
-        .enqueue(MirrorReplayEvent::Authorization {
-            request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
-            caller: caller.clone(),
-        })
-        .expect("reserved event should queue");
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+            .expect("queue slot should reserve")
+            .enqueue(MirrorReplayEvent::Authorization {
+                request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
+                caller: caller.clone(),
+            })
+            .expect("reserved event should queue");
     }
 
-    assert!(reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .is_err());
+    assert!(
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed,)
+            .is_err()
+    );
     assert!(
         !MIRROR_RECOVERY_STATE
             .lock()
@@ -246,21 +201,12 @@ fn non_ok_system_reply_cancels_mirror_reservation() {
     tr.data_size = data_size;
     tr.offsets_size = offsets_size;
     let mut call = PendingAuthorizationCall {
-        request: ParsedAuthorizationRequest::AddAuthToken {
-            auth_token: Default::default(),
-        },
+        request: ParsedAuthorizationRequest::AddAuthToken { auth_token: Default::default() },
         method: AuthorizationMethod::AddAuthToken,
-        caller: CallerInfo {
-            uid: 1000,
-            sid: String::new(),
-            pid: 2000,
-        },
+        caller: CallerInfo { uid: 1000, sid: String::new(), pid: 2000 },
         mirror_update: Some(
-            reserve_mirror_update(
-                MirrorStateKind::Authorization,
-                MirrorFailurePolicy::BestEffort,
-            )
-            .expect("authorization update should reserve"),
+            reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::BestEffort)
+                .expect("authorization update should reserve"),
         ),
     };
 
@@ -274,36 +220,26 @@ fn non_ok_system_reply_cancels_mirror_reservation() {
 #[test]
 fn best_effort_add_auth_token_failures_do_not_block_later_events() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
 
     for _ in 0..2 {
-        reserve_mirror_update(
-            MirrorStateKind::Authorization,
-            MirrorFailurePolicy::BestEffort,
-        )
-        .expect("addAuthToken should reserve")
-        .enqueue(MirrorReplayEvent::Authorization {
-            request: ParsedAuthorizationRequest::AddAuthToken {
-                auth_token: Default::default(),
-            },
-            caller: caller.clone(),
-        })
-        .expect("addAuthToken should queue");
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::BestEffort)
+            .expect("addAuthToken should reserve")
+            .enqueue(MirrorReplayEvent::Authorization {
+                request: ParsedAuthorizationRequest::AddAuthToken {
+                    auth_token: Default::default(),
+                },
+                caller: caller.clone(),
+            })
+            .expect("addAuthToken should queue");
     }
-    reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("onUserStorageLocked should reserve")
-    .enqueue(MirrorReplayEvent::Authorization {
-        request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
-        caller,
-    })
-    .expect("onUserStorageLocked should queue");
+    reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+        .expect("onUserStorageLocked should reserve")
+        .enqueue(MirrorReplayEvent::Authorization {
+            request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
+            caller,
+        })
+        .expect("onUserStorageLocked should queue");
 
     let mut attempts = 0;
     let mut executed = Vec::new();
@@ -313,9 +249,7 @@ fn best_effort_add_auth_token_failures_do_not_block_later_events() {
         if method == "AddAuthToken" {
             attempts += 1;
             if attempts == 1 {
-                return Err(anyhow::Error::new(Status::new_service_specific_error(
-                    7, None,
-                )));
+                return Err(anyhow::Error::new(Status::new_service_specific_error(7, None)));
             }
             return Err(anyhow::Error::new(StatusCode::DeadObject));
         }
@@ -323,10 +257,7 @@ fn best_effort_add_auth_token_failures_do_not_block_later_events() {
     })
     .expect("best-effort failures should be dropped and later state should replay");
 
-    assert_eq!(
-        executed,
-        ["AddAuthToken", "AddAuthToken", "OnUserStorageLocked"]
-    );
+    assert_eq!(executed, ["AddAuthToken", "AddAuthToken", "OnUserStorageLocked"]);
     assert!(!mirror_state_dirty(MirrorStateKind::Authorization));
     assert!(ensure_mirror_state_recovered().is_ok());
 }
@@ -334,26 +265,17 @@ fn best_effort_add_auth_token_failures_do_not_block_later_events() {
 #[test]
 fn lost_best_effort_reply_does_not_poison_mirror_state() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
-    let lost = reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::BestEffort,
-    )
-    .expect("addAuthToken should reserve");
-    reserve_mirror_update(
-        MirrorStateKind::Authorization,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("onUserStorageLocked should reserve")
-    .enqueue(MirrorReplayEvent::Authorization {
-        request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
-        caller,
-    })
-    .expect("onUserStorageLocked should queue");
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
+    let lost =
+        reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::BestEffort)
+            .expect("addAuthToken should reserve");
+    reserve_mirror_update(MirrorStateKind::Authorization, MirrorFailurePolicy::FailClosed)
+        .expect("onUserStorageLocked should reserve")
+        .enqueue(MirrorReplayEvent::Authorization {
+            request: ParsedAuthorizationRequest::OnUserStorageLocked { user_id: 10 },
+            caller,
+        })
+        .expect("onUserStorageLocked should queue");
 
     drop(lost);
 
@@ -380,15 +302,9 @@ fn missing_best_effort_reservation_preserves_system_success() {
     tr.data_size = data_size;
     tr.offsets_size = offsets_size;
     let mut call = PendingAuthorizationCall {
-        request: ParsedAuthorizationRequest::AddAuthToken {
-            auth_token: Default::default(),
-        },
+        request: ParsedAuthorizationRequest::AddAuthToken { auth_token: Default::default() },
         method: AuthorizationMethod::AddAuthToken,
-        caller: CallerInfo {
-            uid: 1000,
-            sid: String::new(),
-            pid: 2000,
-        },
+        caller: CallerInfo { uid: 1000, sid: String::new(), pid: 2000 },
         mirror_update: None,
     };
 
@@ -401,32 +317,21 @@ fn missing_best_effort_reservation_preserves_system_success() {
 #[test]
 fn mirror_business_error_preserves_event_and_blocks_routes() {
     let _guard = route_state_test_guard();
-    reserve_mirror_update(
-        MirrorStateKind::Maintenance,
-        MirrorFailurePolicy::FailClosed,
-    )
-    .expect("onUserRemoved should reserve")
-    .enqueue(MirrorReplayEvent::Maintenance {
-        request: ParsedMaintenanceRequest::OnUserRemoved { user_id: 11 },
-        caller: CallerInfo {
-            uid: 1000,
-            sid: String::new(),
-            pid: 2000,
-        },
-    })
-    .expect("onUserRemoved should queue");
+    reserve_mirror_update(MirrorStateKind::Maintenance, MirrorFailurePolicy::FailClosed)
+        .expect("onUserRemoved should reserve")
+        .enqueue(MirrorReplayEvent::Maintenance {
+            request: ParsedMaintenanceRequest::OnUserRemoved { user_id: 11 },
+            caller: CallerInfo { uid: 1000, sid: String::new(), pid: 2000 },
+        })
+        .expect("onUserRemoved should queue");
 
     let error = recover_mirror_state_with(&mut |_| {
-        Err(anyhow::Error::new(Status::new_service_specific_error(
-            7, None,
-        )))
+        Err(anyhow::Error::new(Status::new_service_specific_error(7, None)))
     })
     .expect_err("business error must stop automatic retry");
     assert!(!omk_unavailable_error(&error));
 
-    let state = MIRROR_RECOVERY_STATE
-        .lock()
-        .expect("mirror recovery state poisoned");
+    let state = MIRROR_RECOVERY_STATE.lock().expect("mirror recovery state poisoned");
     assert!(state.maintenance.poisoned);
     assert_eq!(state.maintenance.pending.len(), 1);
     assert_eq!(

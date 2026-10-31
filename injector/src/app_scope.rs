@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, RwLock};
 
-use kmr_common::app_scope::{AppScope, read_scope_file, SCOPE_PATH};
+use kmr_common::app_scope::{read_scope_file, AppScope, SCOPE_PATH};
 use kmr_common::runtime::file_watch;
 
 fn scope_path() -> PathBuf {
@@ -71,10 +71,7 @@ fn reload_scope(path: &Path) {
     let next = match read_scope_file(path) {
         Ok(Some(file)) => AppScope::from_file(file),
         Ok(None) => {
-            log::warn!(
-                "app scope {} disappeared; keeping the last valid scope",
-                path.display()
-            );
+            log::warn!("app scope {} disappeared; keeping the last valid scope", path.display());
             return;
         }
         Err(error) => {

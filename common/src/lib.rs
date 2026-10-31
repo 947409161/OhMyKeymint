@@ -80,10 +80,7 @@ pub struct Error {
 impl Error {
     /// Creates a new error at a given source location.
     pub fn new_at(location: ErrorLocation, kind: ErrorKind) -> Error {
-        Error {
-            location: Some(location),
-            kind,
-        }
+        Error { location: Some(location), kind }
     }
 
     /// Gets the source location of the error.
@@ -250,10 +247,7 @@ impl<T> FallibleAllocExt<T> for Vec<T> {
 
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
-        Error {
-            location: None,
-            kind,
-        }
+        Error { location: None, kind }
     }
 }
 

@@ -100,10 +100,7 @@ fn matches_upstream_descriptor_scan_across_header_layouts() {
         bytes.extend_from_slice(descriptor);
         bytes.extend_from_slice(&[0xff; 19]);
         for code in 1..=13 {
-            assert!(
-                wire::valid_request(code, &bytes),
-                "code {code} prefix {prefix}"
-            );
+            assert!(wire::valid_request(code, &bytes), "code {code} prefix {prefix}");
         }
     }
 }
@@ -130,10 +127,7 @@ fn rejects_missing_corrupt_truncated_or_oversized_descriptors() {
 
 #[test]
 fn preserves_all_transaction_fields_except_selected_target() {
-    let destination = Target {
-        ptr: 0x8000,
-        cookie: 0x9000,
-    };
+    let destination = Target { ptr: 0x8000, cookie: 0x9000 };
     for code in 1..=13 {
         let bytes = request(code);
         let before = transaction(code, &bytes);
@@ -141,11 +135,7 @@ fn preserves_all_transaction_fields_except_selected_target() {
         assert!(retarget(&mut after, &bytes, destination));
         assert_eq!(
             after,
-            Transaction {
-                target: destination.ptr,
-                cookie: destination.cookie,
-                ..before
-            }
+            Transaction { target: destination.ptr, cookie: destination.cookie, ..before }
         );
     }
 }
@@ -163,14 +153,7 @@ fn preserves_oem_flags_and_argument_objects_when_redirecting() {
         };
         let mut after = before;
         assert!(retarget(&mut after, &bytes, Target { ptr: 1, cookie: 2 }));
-        assert_eq!(
-            after,
-            Transaction {
-                target: 1,
-                cookie: 2,
-                ..before
-            }
-        );
+        assert_eq!(after, Transaction { target: 1, cookie: 2, ..before });
     }
 }
 
@@ -181,19 +164,10 @@ fn leaves_unrelated_unsupported_or_malformed_transactions_unchanged() {
     for before in [
         Transaction { target: 0, ..base },
         Transaction { code: 14, ..base },
-        Transaction {
-            data_size: MAX_REQUEST_BYTES as u64 + 1,
-            ..base
-        },
+        Transaction { data_size: MAX_REQUEST_BYTES as u64 + 1, ..base },
         Transaction { buffer: 0, ..base },
-        Transaction {
-            buffer: u64::MAX,
-            ..base
-        },
-        Transaction {
-            data_size: base.data_size - 1,
-            ..base
-        },
+        Transaction { buffer: u64::MAX, ..base },
+        Transaction { data_size: base.data_size - 1, ..base },
     ] {
         let mut after = before;
         assert!(!retarget(&mut after, &bytes, Target { ptr: 1, cookie: 2 }));
@@ -202,11 +176,7 @@ fn leaves_unrelated_unsupported_or_malformed_transactions_unchanged() {
     let mut malformed = bytes.clone();
     malformed[16] ^= 1;
     let mut after = base;
-    assert!(!retarget(
-        &mut after,
-        &malformed,
-        Target { ptr: 1, cookie: 2 }
-    ));
+    assert!(!retarget(&mut after, &malformed, Target { ptr: 1, cookie: 2 }));
     assert_eq!(after, base);
 }
 
@@ -229,22 +199,12 @@ fn validates_full_command_buffer_before_visiting_and_handles_secctx() {
     assert_eq!(size_of::<Transaction>(), 64);
     assert_eq!(size_of::<WriteRead>(), 48);
     let mut commands = Vec::new();
-    append_command(
-        &mut commands,
-        BR_TRANSACTION,
-        Transaction {
-            code: 2,
-            ..Default::default()
-        },
-    );
+    append_command(&mut commands, BR_TRANSACTION, Transaction { code: 2, ..Default::default() });
     commands.extend_from_slice(&0x720cu32.to_ne_bytes()); // BR_NOOP
     append_command(
         &mut commands,
         BR_TRANSACTION_SEC_CTX,
-        Transaction {
-            code: 6,
-            ..Default::default()
-        },
+        Transaction { code: 6, ..Default::default() },
     );
     assert!(valid_read_commands(&commands));
     let mut visited = Vec::new();
@@ -282,13 +242,7 @@ fn rejects_invalid_binder_carriers() {
     carrier[..4].copy_from_slice(&BINDER_TYPE_BINDER.to_ne_bytes());
     carrier[8..16].copy_from_slice(&0x1000u64.to_ne_bytes());
     carrier[16..24].copy_from_slice(&0x2000u64.to_ne_bytes());
-    assert_eq!(
-        parse_carrier(&carrier),
-        Some(Target {
-            ptr: 0x1000,
-            cookie: 0x2000
-        })
-    );
+    assert_eq!(parse_carrier(&carrier), Some(Target { ptr: 0x1000, cookie: 0x2000 }));
     for length in 0..28 {
         assert!(parse_carrier(&carrier[..length]).is_none());
     }
@@ -373,10 +327,7 @@ fn stops_on_native_write_errors_and_rejects_unknown_codes_without_output() {
     }
     for code in [0, 14, u32::MAX] {
         let mut output = Buffer::default();
-        assert_eq!(
-            wire::write_reply(code, UID, &[], &mut output),
-            Err(UNKNOWN_TRANSACTION)
-        );
+        assert_eq!(wire::write_reply(code, UID, &[], &mut output), Err(UNKNOWN_TRANSACTION));
         assert!(output.0.is_empty());
     }
 }
@@ -396,10 +347,7 @@ fn parses_arguments_after_the_platform_header_and_preserves_utf16_aliases() {
         for code in [4, 5, 6, 8, 9] {
             assert_eq!(wire::request_alias(code, &bytes.0, prefix).unwrap(), alias);
             for length in prefix..end {
-                assert_eq!(
-                    wire::request_alias(code, &bytes.0[..length], prefix),
-                    Err(BAD_VALUE)
-                );
+                assert_eq!(wire::request_alias(code, &bytes.0[..length], prefix), Err(BAD_VALUE));
             }
         }
         bytes.0.extend_from_slice(&[0xff; 17]);

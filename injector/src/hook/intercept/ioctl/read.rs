@@ -36,18 +36,13 @@ pub(in crate::hook::intercept) unsafe fn parse_read_buffer(
 
         let cmd_nr = _ioc_nr(cmd);
         let is_read = _ioc_dir(cmd) == 2;
-        let terminal_reply = matches!(
-            cmd_nr,
-            BR_DEAD_REPLY_NR | BR_FAILED_REPLY_NR | BR_FROZEN_REPLY_NR
-        );
+        let terminal_reply =
+            matches!(cmd_nr, BR_DEAD_REPLY_NR | BR_FAILED_REPLY_NR | BR_FROZEN_REPLY_NR);
 
         if cmd == BR_TRANSACTION_COMPLETE_CMD {
             complete_transaction_submission(fd);
         } else if terminal_reply
-            || matches!(
-                cmd_nr,
-                BR_ONEWAY_SPAM_SUSPECT_NR | BR_TRANSACTION_PENDING_FROZEN_NR
-            )
+            || matches!(cmd_nr, BR_ONEWAY_SPAM_SUSPECT_NR | BR_TRANSACTION_PENDING_FROZEN_NR)
         {
             complete_failed_transaction_submission(fd, cmd_nr);
         } else if is_read {
@@ -109,10 +104,8 @@ pub(in crate::hook::intercept) unsafe fn parse_read_buffer(
                     if cmd_size == size_of::<binder_ptr_cookie>() {
                         let ptr_cookie =
                             std::ptr::read_unaligned(payload as *const binder_ptr_cookie);
-                        let target = LocalBinderTarget {
-                            ptr: ptr_cookie.ptr,
-                            cookie: ptr_cookie.cookie,
-                        };
+                        let target =
+                            LocalBinderTarget { ptr: ptr_cookie.ptr, cookie: ptr_cookie.cookie };
                         if let Some(retirement) = observe_operation_acquire(fd, target) {
                             effects.operation_acquires.push(retirement);
                         }
@@ -166,10 +159,7 @@ unsafe fn handle_incoming_transaction(
     caller_sid: Option<String>,
     label: &str,
 ) -> bool {
-    let target = LocalBinderTarget {
-        ptr: tr.target.ptr,
-        cookie: tr.cookie,
-    };
+    let target = LocalBinderTarget { ptr: tr.target.ptr, cookie: tr.cookie };
     if lookup_synthetic_target(target).is_some() {
         if (tr.flags & TF_ONE_WAY) == 0 {
             push_pending_frame(binder_state_key(fd));
@@ -189,11 +179,7 @@ pub(super) fn record_transaction_completion(
     let pending_count = PENDING_TRANSACTION_COMPLETIONS.with(|pending| {
         let mut pending = pending.borrow_mut();
         let queue = pending.entry(connection).or_default();
-        queue.push_back(PendingTransactionCompletion {
-            is_reply,
-            expects_reply,
-            operation_target,
-        });
+        queue.push_back(PendingTransactionCompletion { is_reply, expects_reply, operation_target });
         queue.len()
     });
     if expects_reply {
@@ -286,9 +272,7 @@ unsafe fn operation_binder_node_exists(
         }
     };
     if ret < 0 {
-        let error = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::EIO);
+        let error = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
         if error == libc::EBADF {
             debug!(
                 "event=synthetic operation node query fd no longer references its Binder connection; retaining because process-wide acquire work may still be in flight fd={} ptr=0x{:x} cookie=0x{:x} errno={}",
@@ -390,10 +374,8 @@ fn complete_sync_transaction(fd: c_int, expected: SyncTransactionState) -> bool 
 
 fn complete_failed_transaction_submission(fd: c_int, cmd_nr: u32) {
     let connection = binder_state_key(fd);
-    let terminal_reply = matches!(
-        cmd_nr,
-        BR_DEAD_REPLY_NR | BR_FAILED_REPLY_NR | BR_FROZEN_REPLY_NR
-    );
+    let terminal_reply =
+        matches!(cmd_nr, BR_DEAD_REPLY_NR | BR_FAILED_REPLY_NR | BR_FROZEN_REPLY_NR);
     if terminal_reply {
         let failed_reply = PENDING_TRANSACTION_COMPLETIONS.with(|pending| {
             let mut pending = pending.borrow_mut();

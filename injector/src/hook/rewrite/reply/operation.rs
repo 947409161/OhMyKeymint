@@ -152,9 +152,7 @@ pub(in crate::hook::rewrite) fn build_operation_reply_rewrite(
     let _call_guard = match target.call_gate.try_lock() {
         Ok(guard) => guard,
         Err(std::sync::TryLockError::WouldBlock) => {
-            return Ok(Some(build_service_specific_reply(
-                ResponseCode::OPERATION_BUSY.0,
-            )?));
+            return Ok(Some(build_service_specific_reply(ResponseCode::OPERATION_BUSY.0)?));
         }
         Err(std::sync::TryLockError::Poisoned(_)) => {
             return Ok(Some(synthetic_fallback_reply()));

@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use kmr_common::app_scope::{
-    CURRENT_SCOPE_VERSION, encode_scope_file, global_packages, is_valid_package_name, MAX_BYTES,
-    MAX_USERS, read_scope_file, SCOPE_PATH, ScopeFile,
+    encode_scope_file, global_packages, is_valid_package_name, read_scope_file, ScopeFile,
+    CURRENT_SCOPE_VERSION, MAX_BYTES, MAX_USERS, SCOPE_PATH,
 };
 use kmr_common::consts::{AID_USER_OFFSET, KEYSTORE_GID, KEYSTORE_UID};
 use kmr_common::runtime::{file_watch, fs::atomic_replace_preserving_metadata};
@@ -31,10 +31,7 @@ struct Discovery {
 
 /// Start one discovery thread inside the long-lived root helper.
 pub(crate) fn start() {
-    if let Err(error) = std::thread::Builder::new()
-        .name("omk-app-scope".into())
-        .spawn(run)
-    {
+    if let Err(error) = std::thread::Builder::new().name("omk-app-scope".into()).spawn(run) {
         log::warn!("cannot start app scope discovery: {error}");
     }
 }
@@ -131,14 +128,8 @@ fn discover() -> Result<Discovery> {
     let users = parse_users(&output)?;
     let mut discovery = Discovery::default();
     for user in users {
-        let output = run_command(&[
-            "package",
-            "list",
-            "packages",
-            "-3",
-            "--user",
-            &user.to_string(),
-        ]);
+        let output =
+            run_command(&["package", "list", "packages", "-3", "--user", &user.to_string()]);
         let packages = output.and_then(|output| parse_packages(&output)).ok();
         discovery.users.insert(user, packages);
     }
@@ -170,11 +161,7 @@ fn merge(previous: Option<&ScopeFile>, discovery: Discovery) -> Option<ScopeFile
     if !any_success {
         return None;
     }
-    Some(ScopeFile {
-        version: CURRENT_SCOPE_VERSION,
-        global: global_packages(),
-        users,
-    })
+    Some(ScopeFile { version: CURRENT_SCOPE_VERSION, global: global_packages(), users })
 }
 
 fn poll() -> Result<()> {
@@ -202,10 +189,7 @@ fn run_command(args: &[&str]) -> Result<String> {
         .stderr(Stdio::null())
         .spawn()?;
     let result = (|| {
-        let mut stdout = child
-            .stdout
-            .take()
-            .context("missing package manager stdout")?;
+        let mut stdout = child.stdout.take().context("missing package manager stdout")?;
         let fd = stdout.as_raw_fd();
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
@@ -234,9 +218,7 @@ fn run_command(args: &[&str]) -> Result<String> {
                     bail!("package manager query failed: {status}");
                 }
                 // Drain the final bytes emitted between the last read and exit.
-                stdout
-                    .take((MAX_BYTES - output.len() + 1) as u64)
-                    .read_to_end(&mut output)?;
+                stdout.take((MAX_BYTES - output.len() + 1) as u64).read_to_end(&mut output)?;
                 if output.len() > MAX_BYTES {
                     bail!("package manager output is too large");
                 }
@@ -291,9 +273,7 @@ mod tests {
 
         let removed = merge(
             Some(&previous),
-            Discovery {
-                users: BTreeMap::from([(0, packages(&["com.old"]))]),
-            },
+            Discovery { users: BTreeMap::from([(0, packages(&["com.old"]))]) },
         )
         .unwrap();
         assert!(!removed.users.contains_key(&10));
@@ -301,13 +281,7 @@ mod tests {
 
     #[test]
     fn merge_without_any_success_keeps_the_previous_file() {
-        assert!(merge(
-            None,
-            Discovery {
-                users: BTreeMap::from([(0, None)]),
-            },
-        )
-        .is_none());
+        assert!(merge(None, Discovery { users: BTreeMap::from([(0, None)]) },).is_none());
     }
 
     #[test]
@@ -319,12 +293,7 @@ mod tests {
         assert!(parse_users("Error: service unavailable").is_err());
         assert!(parse_packages("Error: permission denied").is_err());
         assert!(parse_packages("package:com.app@0").is_err());
-        assert_eq!(
-            parse_packages("package:com.app\npackage:com.app\n")
-                .unwrap()
-                .len(),
-            1
-        );
+        assert_eq!(parse_packages("package:com.app\npackage:com.app\n").unwrap().len(), 1);
         assert!(parse_packages("").unwrap().is_empty());
     }
 }

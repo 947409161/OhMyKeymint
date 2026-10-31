@@ -70,9 +70,7 @@ pub fn evaluate(
     };
 
     let reason = if config.block_android_package
-        && packages
-            .iter()
-            .any(|pkg| pkg == "android" || pkg.starts_with("android."))
+        && packages.iter().any(|pkg| pkg == "android" || pkg.starts_with("android."))
     {
         FilterReason::RejectedAndroidPackage
     } else if !packages.iter().any(|pkg| scope.contains(uid / AID_USER_OFFSET, pkg)) {
@@ -81,11 +79,7 @@ pub fn evaluate(
         FilterReason::Allowed
     };
 
-    FilterDecision {
-        allowed: reason == FilterReason::Allowed,
-        reason,
-        packages,
-    }
+    FilterDecision { allowed: reason == FilterReason::Allowed, reason, packages }
 }
 
 #[cfg(test)]

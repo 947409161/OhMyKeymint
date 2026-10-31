@@ -29,10 +29,7 @@ fn log_runtime_identity(role: &str) {
     let euid = unsafe { libc::geteuid() };
     let gid = unsafe { libc::getgid() };
     let egid = unsafe { libc::getegid() };
-    info!(
-        "runtime identity role={} uid={} euid={} gid={} egid={}",
-        role, uid, euid, gid, egid
-    );
+    info!("runtime identity role={} uid={} euid={} gid={} egid={}", role, uid, euid, gid, egid);
 }
 
 const WEBUI_GET_TEE_STATUS: &str = "--webui-get-tee-status";
@@ -43,9 +40,7 @@ fn parse_webui_tee_status_args(args: &[String]) -> Option<Result<(), String>> {
         return None;
     }
     if args.len() != 1 {
-        return Some(Err(format!(
-            "{WEBUI_GET_TEE_STATUS} does not accept arguments"
-        )));
+        return Some(Err(format!("{WEBUI_GET_TEE_STATUS} does not accept arguments")));
     }
     Some(Ok(()))
 }
@@ -93,11 +88,7 @@ fn probe_tee_status() -> anyhow::Result<()> {
 fn handle_webui_tee_status_command() -> Option<Result<&'static str, String>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     match parse_webui_tee_status_args(&args)? {
-        Ok(()) => Some(
-            probe_tee_status()
-                .map(|()| "normal")
-                .map_err(|error| format!("{error:#}")),
-        ),
+        Ok(()) => Some(probe_tee_status().map(|()| "normal").map_err(|error| format!("{error:#}"))),
         Err(error) => Some(Err(error)),
     }
 }
@@ -171,11 +162,9 @@ fn main() {
             identity.sha256,
             identity.elf,
         ),
-        Err(error) => error!(
-            "failed to describe keystore2 executable {}: {:#}",
-            target_path.display(),
-            error
-        ),
+        Err(error) => {
+            error!("failed to describe keystore2 executable {}: {:#}", target_path.display(), error)
+        }
     }
     let pid = Pid::from_raw(pid);
     match inject::inject_library(pid) {
@@ -236,28 +225,20 @@ mod tests {
 
     #[test]
     fn tee_status_command_is_dispatched_without_arguments() {
-        assert_eq!(
-            parse_webui_tee_status_args(&args(&[WEBUI_GET_TEE_STATUS])),
-            Some(Ok(()))
-        );
+        assert_eq!(parse_webui_tee_status_args(&args(&[WEBUI_GET_TEE_STATUS])), Some(Ok(())));
     }
 
     #[test]
     fn tee_status_command_rejects_extra_arguments() {
         assert_eq!(
             parse_webui_tee_status_args(&args(&[WEBUI_GET_TEE_STATUS, "extra"])),
-            Some(Err(format!(
-                "{WEBUI_GET_TEE_STATUS} does not accept arguments"
-            )))
+            Some(Err(format!("{WEBUI_GET_TEE_STATUS} does not accept arguments")))
         );
     }
 
     #[test]
     fn tee_status_parser_leaves_other_commands_for_existing_dispatch() {
-        assert_eq!(
-            parse_webui_tee_status_args(&args(&["--webui-removed-command"])),
-            None
-        );
+        assert_eq!(parse_webui_tee_status_args(&args(&["--webui-removed-command"])), None);
         assert_eq!(parse_webui_tee_status_args(&[]), None);
     }
 

@@ -15,11 +15,8 @@ mod operation_dispatch;
 #[test]
 fn untracked_native_target_is_not_intercepted() {
     let _guard = route_state_test_guard();
-    let target = LocalBinderTarget {
-        ptr: 0x1234,
-        cookie: 0x5678,
-    };
-    let empty = rsbinder::Parcel::new();
-    let tr = transaction_for_parcel(target, rsbinder::FIRST_CALL_TRANSACTION, &empty);
+    let target = LocalBinderTarget { ptr: 0x1234, cookie: 0x5678 };
+    let mut empty = rsbinder::Parcel::new();
+    let tr = transaction_for_parcel(target, rsbinder::FIRST_CALL_TRANSACTION, &mut empty);
     assert!(unsafe { handle_synthetic_br_transaction(&tr, None, "BR_TRANSACTION") }.is_none());
 }

@@ -127,10 +127,7 @@ fn connect_rpc_session_once(connect_context: &'static str) -> Result<RpcCache> {
     let session = RpcSession::setup_unix_client_android13plus(rpc::SOCKET, rpc::WIRE_MAX_VERSION)
         .context(connect_context)?;
     let service = session.get_service(rpc::SERVICE).context(connect_context)?;
-    Ok(RpcCache {
-        session,
-        services: HashMap::from([(rpc::SERVICE, service)]),
-    })
+    Ok(RpcCache { session, services: HashMap::from([(rpc::SERVICE, service)]) })
 }
 
 fn ensure_rpc_cache(connect_context: &'static str) -> Result<()> {
@@ -217,11 +214,7 @@ where
             };
             (
                 cache.session.clone(),
-                cache
-                    .services
-                    .get(rpc::SERVICE)
-                    .expect("RPC cache missing base service")
-                    .clone(),
+                cache.services.get(rpc::SERVICE).expect("RPC cache missing base service").clone(),
                 cache.services.get(service_name).cloned(),
             )
         };
@@ -229,10 +222,7 @@ where
         if let Some(binder) = cached.filter(|_| !refresh) {
             let client = <T as FromIBinder>::try_from(binder).context(connect_context)?;
             let state = RPC_CACHE.lock().expect("RPC cache poisoned");
-            if state
-                .cache
-                .as_ref()
-                .and_then(|cache| cache.services.get(rpc::SERVICE))
+            if state.cache.as_ref().and_then(|cache| cache.services.get(rpc::SERVICE))
                 == Some(&identity)
             {
                 return Ok(client);
@@ -242,10 +232,7 @@ where
 
         let result = session.get_service(service_name);
         let mut state = RPC_CACHE.lock().expect("RPC cache poisoned");
-        if state
-            .cache
-            .as_ref()
-            .and_then(|cache| cache.services.get(rpc::SERVICE))
+        if state.cache.as_ref().and_then(|cache| cache.services.get(rpc::SERVICE))
             != Some(&identity)
         {
             drop(state);
@@ -388,11 +375,7 @@ where
 }
 
 fn get_omk_maintenance_fresh() -> Result<Strong<dyn IOhMyMaintenanceService>> {
-    get_rpc_binder(
-        rpc::MAINTENANCE_SERVICE,
-        "failed to connect to omk_maintenance service",
-        true,
-    )
+    get_rpc_binder(rpc::MAINTENANCE_SERVICE, "failed to connect to omk_maintenance service", true)
 }
 
 pub fn with_omk_maintenance_once<T, F>(f: F) -> Result<T>
@@ -514,9 +497,7 @@ where
 
 pub(crate) fn is_dead_object_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
-        cause
-            .downcast_ref::<Status>()
-            .is_some_and(is_dead_object_status)
+        cause.downcast_ref::<Status>().is_some_and(is_dead_object_status)
             || cause
                 .downcast_ref::<StatusCode>()
                 .is_some_and(|status| *status == StatusCode::DeadObject)
@@ -524,10 +505,7 @@ pub(crate) fn is_dead_object_error(error: &anyhow::Error) -> bool {
 }
 
 pub(crate) fn is_stale_rpc_status_code(status: StatusCode) -> bool {
-    matches!(
-        status,
-        StatusCode::DeadObject | StatusCode::RpcError | StatusCode::NotEnoughData
-    )
+    matches!(status, StatusCode::DeadObject | StatusCode::RpcError | StatusCode::NotEnoughData)
 }
 
 pub(crate) fn is_rpc_cache_invalidating_status_code(status: StatusCode) -> bool {
@@ -564,11 +542,8 @@ fn clear_pm_cache() {
 fn clear_rpc_cache_if(service_name: &'static str, failed: &SIBinder) {
     let old = {
         let mut state = RPC_CACHE.lock().expect("RPC cache poisoned");
-        let still_failed = state
-            .cache
-            .as_ref()
-            .and_then(|cache| cache.services.get(service_name))
-            == Some(failed);
+        let still_failed =
+            state.cache.as_ref().and_then(|cache| cache.services.get(service_name)) == Some(failed);
         still_failed.then(|| {
             state.generation = state.generation.wrapping_add(1);
             state.cache.take()

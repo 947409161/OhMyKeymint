@@ -57,20 +57,18 @@ pub fn log_key_deleted(key: &KeyDescriptor, calling_app: uid_t, success: bool) {
 /// Logs key integrity violation to NIAP audit log.
 pub fn log_key_integrity_violation(key: &KeyDescriptor) {
     let owner = key_owner(key.domain, key.nspace, key.nspace as i32);
-    let alias_present = key.alias.is_some();
-    let domain = key.domain;
+    let alias = String::from(key.alias.as_ref().map_or("none", String::as_str));
     ASYNC_TASK.queue_lo(move |_| {
-        info!("event=key_audit tag={TAG_KEY_INTEGRITY_VIOLATION} alias_present={alias_present} owner={owner} domain={domain:?}");
+        info!("audit tag={TAG_KEY_INTEGRITY_VIOLATION} alias={alias} owner={owner}");
     });
 }
 
 fn log_key_event(tag: u32, key: &KeyDescriptor, calling_app: uid_t, success: bool) {
     let owner = key_owner(key.domain, key.nspace, calling_app as i32);
-    let alias_present = key.alias.is_some();
-    let domain = key.domain;
+    let alias = String::from(key.alias.as_ref().map_or("none", String::as_str));
     ASYNC_TASK.queue_lo(move |_| {
         info!(
-            "event=key_audit tag={tag} success={} alias_present={alias_present} owner={owner} domain={domain:?}",
+            "audit tag={tag} success={} alias={alias} owner={owner}",
             i32::from(success)
         );
     });

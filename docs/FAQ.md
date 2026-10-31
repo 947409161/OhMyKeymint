@@ -414,6 +414,21 @@ patch-level settings cannot extend a certificate's lifetime or remove a
 revocation. Use a currently valid, complete keybox and do not alter certificate
 dates.
 
+### Why did apps sign out after I changed the keybox?
+
+Some apps bind their login or encryption keys to the attestation identity that
+was active when the keys were created. After a keybox change, those apps may
+require sign-in, identity verification, or device registration again. This
+cannot always be avoided.
+
+OMK deletes those keys by default. If
+[`main.retire_stale_keybox_bound_keys`](CONFIGURATION.md#retire_stale_keybox_bound_keys)
+is disabled, the keybox change instead keeps client keys created under the
+previous keybox identity.
+
+Change a keybox only when you have time to re-register important apps. Back up
+first, but do not delete the whole OMK data directory.
+
 ### Should I delete `/data/misc/keystore/omk/data/`?
 
 Not during a normal update, keybox change, or first troubleshooting attempt.
@@ -562,6 +577,16 @@ information.
 The app may require the lock-screen PIN or password instead of a fingerprint,
 or the authorization may have expired before the operation started. A log such
 as `KEY_USER_NOT_AUTHENTICATED` does not always mean OMK is broken.
+
+After System accepts an authentication or maintenance update, the injector
+forwards it to OMK once before returning the System reply. Auth tokens use a
+separate RPC session from key operations and lifecycle updates. Business RPC
+sessions use up to four connections; auth-token and lifecycle sessions each use
+one. Failed updates are discarded without retries or a global recovery gate.
+A mirror failure returns an OMK error for a caller allowed by the filter and
+preserves the System reply for other callers. A stalled synchronous RPC can still
+wait without a separate timeout. Authentication and lock-state checks apply when
+the operation runs.
 
 Authenticate in the way the app requests and retry promptly. Keep
 `force_skip_system_biometric_hat_verification` at `false` unless a maintainer

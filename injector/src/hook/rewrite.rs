@@ -222,11 +222,7 @@ fn precompute_omk_service_mutator_reply(
         ));
     }
     match request {
-        ParsedServiceRequest::UpdateSubcomponent {
-            key,
-            public_cert,
-            certificate_chain,
-        } => {
+        ParsedServiceRequest::UpdateSubcomponent { key, public_cert, certificate_chain } => {
             match ipc::with_omk_once(|omk| {
                 Ok(omk.r#updateSubcomponent(
                     Some(caller),
@@ -292,31 +288,29 @@ fn precompute_omk_grant_service_reply_with(
     mut ungrant: impl FnMut(&CallerInfo, &KeyDescriptor, i32) -> anyhow::Result<()>,
 ) -> OmkServicePrecompute {
     match request {
-        ParsedServiceRequest::Grant {
-            key,
-            grantee_uid,
-            access_vector,
-        } => match grant(caller, key, *grantee_uid, *access_vector) {
-            Ok(omk_grant) => {
-                OmkServicePrecompute::Reply(PrecomputedServiceReply::GrantSuccess(omk_grant))
-            }
-            Err(error) if omk_unavailable_error(&error) => {
-                warn!(
+        ParsedServiceRequest::Grant { key, grantee_uid, access_vector } => {
+            match grant(caller, key, *grantee_uid, *access_vector) {
+                Ok(omk_grant) => {
+                    OmkServicePrecompute::Reply(PrecomputedServiceReply::GrantSuccess(omk_grant))
+                }
+                Err(error) if omk_unavailable_error(&error) => {
+                    warn!(
                     "event=route OMK grant unavailable for uid={} pid={}: {:#}; leaving original system request untouched",
                     caller.uid, caller.pid, error
                 );
-                OmkServicePrecompute::PreserveSystem
+                    OmkServicePrecompute::PreserveSystem
+                }
+                Err(error) => {
+                    warn!(
+                        "event=route OMK grant failed for uid={} pid={}: {:#}; returning OMK error",
+                        caller.uid, caller.pid, error
+                    );
+                    OmkServicePrecompute::Reply(PrecomputedServiceReply::Error(
+                        precomputed_omk_error_reply(&error),
+                    ))
+                }
             }
-            Err(error) => {
-                warn!(
-                    "event=route OMK grant failed for uid={} pid={}: {:#}; returning OMK error",
-                    caller.uid, caller.pid, error
-                );
-                OmkServicePrecompute::Reply(PrecomputedServiceReply::Error(
-                    precomputed_omk_error_reply(&error),
-                ))
-            }
-        },
+        }
         ParsedServiceRequest::Ungrant { key, grantee_uid } => {
             match ungrant(caller, key, *grantee_uid) {
                 Ok(()) => OmkServicePrecompute::Reply(PrecomputedServiceReply::UngrantSuccess),
@@ -362,14 +356,9 @@ fn omk_unavailable_status_code(status: StatusCode) -> bool {
 
 fn omk_unavailable_error(error: &anyhow::Error) -> bool {
     if let Some(unavailable) = error.chain().find_map(|cause| {
-        cause
-            .downcast_ref::<Status>()
-            .map(omk_unavailable_status)
-            .or_else(|| {
-                cause
-                    .downcast_ref::<StatusCode>()
-                    .map(|status| omk_unavailable_status_code(*status))
-            })
+        cause.downcast_ref::<Status>().map(omk_unavailable_status).or_else(|| {
+            cause.downcast_ref::<StatusCode>().map(|status| omk_unavailable_status_code(*status))
+        })
     }) {
         return unavailable;
     }
@@ -390,15 +379,9 @@ fn synthetic_fallback_reply() -> parcel::OwnedReply {
 }
 
 fn precompute_omk_migrate_reply(call: &PendingMaintenanceCall) -> OmkMigratePrecompute {
-    let ParsedMaintenanceRequest::MigrateKeyNamespace {
-        source,
-        destination,
-    } = &call.request
+    let ParsedMaintenanceRequest::MigrateKeyNamespace { source, destination } = &call.request
     else {
-        unreachable!(
-            "OMK migrate precompute called for {:?}",
-            call.request.method()
-        );
+        unreachable!("OMK migrate precompute called for {:?}", call.request.method());
     };
     debug_assert_eq!(call.route, RouteTarget::Omk);
 

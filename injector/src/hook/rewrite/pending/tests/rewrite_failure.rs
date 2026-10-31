@@ -2,37 +2,23 @@ use super::*;
 
 #[test]
 fn service_rewrite_failure_preserves_only_system_route() {
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
     let pending = |route| {
         PendingCall::Service(PendingServiceCall {
-            request: ParsedServiceRequest::GetKeyEntry {
-                key: sample_key_descriptor(),
-            },
+            request: ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
             caller: caller.clone(),
             packages: vec!["com.example".to_string()],
             route,
         })
     };
 
-    assert!(!pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::Omk
-    )));
-    assert!(pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::System
-    )));
+    assert!(!pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::Omk)));
+    assert!(pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::System)));
 }
 
 #[test]
 fn security_level_rewrite_failure_preserves_only_system_route() {
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
     let pending = |route| {
         PendingCall::SecurityLevel(PendingSecurityLevelCall {
             request: ParsedSecurityLevelRequest::CreateOperation {
@@ -47,26 +33,15 @@ fn security_level_rewrite_failure_preserves_only_system_route() {
         })
     };
 
-    assert!(!pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::Omk
-    )));
-    assert!(pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::System
-    )));
+    assert!(!pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::Omk)));
+    assert!(pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::System)));
 }
 
 #[test]
 fn operation_rewrite_failure_preserves_only_system_route() {
     let _guard = route_state_test_guard();
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
-    let omk_target = LocalBinderTarget {
-        ptr: 0x1111,
-        cookie: 0x2222,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
+    let omk_target = LocalBinderTarget { ptr: 0x1111, cookie: 0x2222 };
     remember_operation_target(
         omk_target,
         OperationTargetInfo {
@@ -77,10 +52,7 @@ fn operation_rewrite_failure_preserves_only_system_route() {
             call_gate: Arc::new(Mutex::new(())),
         },
     );
-    let system_target = LocalBinderTarget {
-        ptr: 0x3333,
-        cookie: 0x4444,
-    };
+    let system_target = LocalBinderTarget { ptr: 0x3333, cookie: 0x4444 };
     remember_operation_target(
         system_target,
         OperationTargetInfo {
@@ -99,25 +71,15 @@ fn operation_rewrite_failure_preserves_only_system_route() {
             target,
         })
     };
-    assert!(!pending_preserves_system_on_rewrite_failure(&pending(
-        omk_target
-    )));
-    assert!(pending_preserves_system_on_rewrite_failure(&pending(
-        system_target
-    )));
+    assert!(!pending_preserves_system_on_rewrite_failure(&pending(omk_target)));
+    assert!(pending_preserves_system_on_rewrite_failure(&pending(system_target)));
 }
 
 #[test]
 fn authorization_and_ordinary_maintenance_rewrite_failures_preserve_system() {
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
     let authorization = PendingCall::Authorization(PendingAuthorizationCall {
-        request: ParsedAuthorizationRequest::AddAuthToken {
-            auth_token: Default::default(),
-        },
+        request: ParsedAuthorizationRequest::AddAuthToken { auth_token: Default::default() },
         method: AuthorizationMethod::AddAuthToken,
         caller: caller.clone(),
         mirror_update: None,
@@ -135,11 +97,7 @@ fn authorization_and_ordinary_maintenance_rewrite_failures_preserve_system() {
 
 #[test]
 fn migration_rewrite_failure_preserves_only_system_route() {
-    let caller = CallerInfo {
-        uid: 1000,
-        sid: String::new(),
-        pid: 2000,
-    };
+    let caller = CallerInfo { uid: 1000, sid: String::new(), pid: 2000 };
     let request = ParsedMaintenanceRequest::MigrateKeyNamespace {
         source: sample_key_descriptor(),
         destination: sample_key_descriptor(),
@@ -153,10 +111,6 @@ fn migration_rewrite_failure_preserves_only_system_route() {
         })
     };
 
-    assert!(pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::System
-    )));
-    assert!(!pending_preserves_system_on_rewrite_failure(&pending(
-        RouteTarget::Omk
-    )));
+    assert!(pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::System)));
+    assert!(!pending_preserves_system_on_rewrite_failure(&pending(RouteTarget::Omk)));
 }

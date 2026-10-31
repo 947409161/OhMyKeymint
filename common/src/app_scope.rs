@@ -10,11 +10,8 @@ use serde::{Deserialize, Serialize};
 
 pub const SCOPE_PATH: &str = "/data/misc/keystore/omk/data/app_scope.json";
 pub const CURRENT_SCOPE_VERSION: u32 = 1;
-pub const GLOBAL_PACKAGES: [&str; 3] = [
-    "com.android.vending",
-    "com.google.android.gms",
-    "com.google.android.gsf",
-];
+pub const GLOBAL_PACKAGES: [&str; 3] =
+    ["com.android.vending", "com.google.android.gms", "com.google.android.gsf"];
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_USERS: usize = 128;
 
@@ -23,9 +20,7 @@ pub fn is_valid_package_name(value: &str) -> bool {
         && value.len() <= 255
         && value.split('.').all(|segment| {
             !segment.is_empty()
-                && segment
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                && segment.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
         })
 }
 
@@ -81,16 +76,10 @@ pub struct AppScope {
 
 impl AppScope {
     pub fn from_file(file: ScopeFile) -> Self {
-        Self {
-            global: file.global,
-            users: file.users,
-        }
+        Self { global: file.global, users: file.users }
     }
 
-    pub fn from_parts(
-        global: BTreeSet<String>,
-        users: BTreeMap<u32, BTreeSet<String>>,
-    ) -> Self {
+    pub fn from_parts(global: BTreeSet<String>, users: BTreeMap<u32, BTreeSet<String>>) -> Self {
         Self { global, users }
     }
 
@@ -154,10 +143,7 @@ mod tests {
 
     #[test]
     fn scope_file_is_validated() {
-        let path = std::env::temp_dir().join(format!(
-            "omk-app-scope-test-{}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("omk-app-scope-test-{}", std::process::id()));
         let write = |contents: &str| {
             std::fs::write(&path, contents).unwrap();
             read_scope_file(&path)
@@ -172,10 +158,7 @@ mod tests {
         assert!(write(r#"{"version":1,"extra":true}"#).is_err());
         assert!(write(r#"{"version":1,"users":{"0":["bad package"]}}"#).is_err());
         assert!(write(r#"{"version":1,"users":{"42950":["com.app"]}}"#).is_err());
-        let long_name = format!(
-            r#"{{"version":1,"users":{{"0":["{}"]}}}}"#,
-            "a".repeat(256)
-        );
+        let long_name = format!(r#"{{"version":1,"users":{{"0":["{}"]}}}}"#, "a".repeat(256));
         assert!(write(&long_name).is_err());
         std::fs::remove_file(&path).unwrap();
         assert!(read_scope_file(&path).unwrap().is_none());

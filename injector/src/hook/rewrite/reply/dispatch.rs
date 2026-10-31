@@ -20,9 +20,7 @@ fn synthetic_target_interface(kind: SyntheticTargetKind) -> &'static str {
 }
 
 fn error_status_code(error: &anyhow::Error) -> Option<StatusCode> {
-    error
-        .chain()
-        .find_map(|cause| cause.downcast_ref::<StatusCode>().copied())
+    error.chain().find_map(|cause| cause.downcast_ref::<StatusCode>().copied())
 }
 
 fn synthetic_parse_error_status_code(error: &anyhow::Error) -> StatusCode {
@@ -31,9 +29,7 @@ fn synthetic_parse_error_status_code(error: &anyhow::Error) -> StatusCode {
 
 fn synthetic_parse_error_reply(status: StatusCode) -> anyhow::Result<SyntheticReply> {
     if status == StatusCode::UnexpectedNull {
-        return Ok(synthetic_parcel_reply(parcel::build_status_reply(
-            &Status::from(status),
-        )?));
+        return Ok(synthetic_parcel_reply(parcel::build_status_reply(&Status::from(status))?));
     }
     Ok(SyntheticReply::Status(status.into()))
 }
@@ -72,9 +68,9 @@ fn build_synthetic_aidl_metadata_reply(
             let hash = metadata.hash.to_string();
             Ok(synthetic_parcel_reply(parcel::build_plain_reply(&hash)?))
         }
-        AidlMetadataMethod::GetInterfaceVersion => Ok(synthetic_parcel_reply(
-            parcel::build_plain_reply(&metadata.version)?,
-        )),
+        AidlMetadataMethod::GetInterfaceVersion => {
+            Ok(synthetic_parcel_reply(parcel::build_plain_reply(&metadata.version)?))
+        }
     }
 }
 
@@ -498,11 +494,7 @@ unsafe fn build_synthetic_br_transaction_reply_inner(
         command_name, method, caller.uid, caller.pid, target.ptr, target.cookie,
     );
 
-    let pending = PendingOperationCall {
-        request,
-        caller,
-        target,
-    };
+    let pending = PendingOperationCall { request, caller, target };
     let reply = build_operation_reply_rewrite(&pending)?;
     Ok(synthetic_reply_from_outbound(reply))
 }

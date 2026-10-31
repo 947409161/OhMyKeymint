@@ -140,9 +140,7 @@ impl NativeBinder {
     pub(crate) fn arm_retirement(&self, generation: u64) {
         unsafe {
             let user_data = &*(self.user_data as *const NativeBinderUserData);
-            user_data
-                .retirement_generation
-                .store(generation, Ordering::Relaxed);
+            user_data.retirement_generation.store(generation, Ordering::Relaxed);
             user_data.retire_on_destroy.store(true, Ordering::Release);
         }
     }
@@ -316,11 +314,7 @@ unsafe fn native_binder_on_transact_inner(
         }
     };
     let user_data = (api.binder_get_user_data)(binder) as *const NativeBinderUserData;
-    let Some(target) = user_data
-        .as_ref()
-        .and_then(|data| data.target.get())
-        .copied()
-    else {
+    let Some(target) = user_data.as_ref().and_then(|data| data.target.get()).copied() else {
         error!("native synthetic Binder callback has no registered target");
         return rsbinder::StatusCode::InvalidOperation.into();
     };
@@ -503,10 +497,7 @@ fn dl_error() -> String {
 }
 
 unsafe fn open_library(name: &'static [u8]) -> Result<usize> {
-    let handle = libc::dlopen(
-        name.as_ptr() as *const c_char,
-        libc::RTLD_NOW | libc::RTLD_LOCAL,
-    );
+    let handle = libc::dlopen(name.as_ptr() as *const c_char, libc::RTLD_NOW | libc::RTLD_LOCAL);
     if handle.is_null() {
         bail!(
             "failed to load {}: {}",
@@ -569,10 +560,7 @@ impl NativeBinderApi {
         let legacy_aparcel_layout =
             parcel_view_platform_const.is_none() || parcel_view_platform_mut.is_none();
         if legacy_aparcel_layout
-            && !matches!(
-                kmr_common::android_version::android_major_version(),
-                Some(12 | 13)
-            )
+            && !matches!(kmr_common::android_version::android_major_version(), Some(12 | 13))
         {
             bail!("AParcel_viewPlatformParcel is unavailable outside Android 12/13");
         }
@@ -665,15 +653,9 @@ fn create_native_binder_with_api(
         unsafe {
             drop(Box::from_raw(user_data));
         }
-        bail!(
-            "AIBinder_new returned null for native {} carrier",
-            kind.label()
-        );
+        bail!("AIBinder_new returned null for native {} carrier", kind.label());
     }
-    let binder = RawBinder {
-        binder: binder as usize,
-        dec_strong: api.binder_dec_strong,
-    };
+    let binder = RawBinder { binder: binder as usize, dec_strong: api.binder_dec_strong };
 
     unsafe {
         (api.binder_set_requesting_sid)(binder.binder as *mut c_void, true);
@@ -691,10 +673,7 @@ fn create_native_binder_with_api(
         );
     }
     if (object.flags & FLAT_BINDER_FLAG_TXN_SECURITY_CTX) == 0 {
-        bail!(
-            "native {} carrier does not request caller SID",
-            kind.label()
-        );
+        bail!("native {} carrier does not request caller SID", kind.label());
     }
     let ptr = unsafe { object.handle_or_ptr.binder };
     if ptr == 0 || object.cookie == 0 {
@@ -711,10 +690,7 @@ fn create_native_binder_with_api(
         );
     }
 
-    let target = LocalBinderTarget {
-        ptr,
-        cookie: object.cookie,
-    };
+    let target = LocalBinderTarget { ptr, cookie: object.cookie };
     unsafe {
         (*user_data)
             .target
@@ -734,10 +710,7 @@ fn native_binder_carrier(api: &NativeBinderApi, binder: &RawBinder) -> Result<Ve
     if parcel.is_null() {
         bail!("AParcel_create returned null for Binder carrier");
     }
-    let parcel = RawParcel {
-        parcel,
-        delete: api.parcel_delete,
-    };
+    let parcel = RawParcel { parcel, delete: api.parcel_delete };
     let status =
         unsafe { (api.parcel_write_strong_binder)(parcel.parcel, binder.binder as *mut c_void) };
     if status != 0 {
