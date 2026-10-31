@@ -35,12 +35,19 @@ jobs:
       if: steps.boringssl-cache.outputs.cache-hit != 'true'
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly
+        # Pinned: nightly 2026-10-28 replaced compiler-builtins' unconditional
+        # aarch64 out-of-line atomic shims with a target-feature-gated module.
+        # aarch64-linux-android does not enable outline-atomics, so NDK-built C
+        # objects still reference __aarch64_cas4_* and the keymint link fails.
+        # Unpin once the upstream compiler-builtins regression is fixed.
+        toolchain: nightly-2026-10-24
         target: aarch64-linux-android
 
     - name: Install Android SDK
       if: steps.boringssl-cache.outputs.cache-hit != 'true'
       uses: android-actions/setup-android@v4
+      with:
+        packages: platform-tools
     - name: Install Android NDK and bindgen
       if: steps.boringssl-cache.outputs.cache-hit != 'true'
       run: |
@@ -97,10 +104,39 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 10.15.1
+        run_install: false
+
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 24
+        cache: pnpm
+        cache-dependency-path: webui/pnpm-lock.yaml
+
+    - name: Build WebUI
+      run: |
+        pnpm --dir webui install --frozen-lockfile
+        pnpm --dir webui build
+
+    - name: Verify committed WebUI build
+      run: |
+        webroot_status="$(git status --porcelain=v1 --untracked-files=all -- template/webroot)"
+        if ! git diff --exit-code -- template/webroot || [ -n "$webroot_status" ]; then
+          git status --short --untracked-files=all -- template/webroot
+          git diff -- template/webroot
+          echo "template/webroot does not match the reproducible WebUI build" >&2
+          exit 1
+        fi
+
     - name: Install Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly
+        # Pinned for the same compiler-builtins regression as build-boringssl.
+        toolchain: nightly-2026-10-24
         target: aarch64-linux-android
 
     - name: Cache Cargo registry and build artifacts
@@ -115,9 +151,12 @@ jobs:
 
     - name: Install Android SDK
       uses: android-actions/setup-android@v4
+      with:
+        packages: platform-tools
     - name: Install Android NDK
       run: |
         echo "y" | sdkmanager --install "ndk;29.0.14206865" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
+        echo "y" | sdkmanager --install "build-tools;35.0.0" --sdk_root=${ANDROID_SDK_ROOT} &> /dev/null
     - name: Install protoc
       run: |
         sudo apt-get update

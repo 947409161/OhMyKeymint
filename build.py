@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import zipfile
 
 try:
@@ -45,26 +46,36 @@ BINARY_SPECS = (
     {"package": "injector", "bin": "inject", "output_name": "inject"},
 )
 
+SOTER_SPOOF_PACKAGE = "soter-spoof"
+SOTER_SPOOF_LIBRARY = "libsoter_spoof.so"
 REQUIRED_TEMPLATE_FILES = (
     "customize.sh",
     "daemon",
     "daemon-injector",
     "injector.toml",
     "module.prop",
+    "uninstall.sh",
     "post-fs-data.sh",
     "service.sh",
     "verify.sh",
+    "webroot",
 )
 
 MODULE_TEXT_FILES = (
     "AOSP.Apache-license-2.0.txt",
+    "LICENSE-2",
+    "LICENSE.md",
     "README.md",
+    "THIRD_PARTY_LICENSES/Tricky-Addon-Update-Target-List.txt",
+    "THIRD_PARTY_LICENSES/D-soter.txt",
     "customize.sh",
     "daemon",
     "daemon-injector",
     "injector.toml",
     "keybox.xml",
+    "google_attestation_status.json",
     "module.prop",
+    "uninstall.sh",
     "post-fs-data.sh",
     "sepolicy.rule",
     "service.sh",
@@ -111,7 +122,16 @@ def get_git_commit_hash() -> str:
     )
     if result.returncode != 0:
         raise RuntimeError("Failed to get git commit hash")
-    return result.stdout.strip()[:7]
+    git_hash = result.stdout.strip()[:7]
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode != 0:
+        raise RuntimeError("Failed to inspect git worktree state")
+    return f"{git_hash}-dirty" if status.stdout.strip() else git_hash
 
 
 def cargo_context_for_target(target: str) -> tuple[dict[str, str], str]:
@@ -187,6 +207,37 @@ def copy_binary(binary: Path, output_name: str, abi: str, stage_dir: Path) -> No
     print(f"Copied {binary} to {dest_path}")
 
 
+def build_cdylib(
+    *,
+    abi: str,
+    target: str,
+    release: bool,
+    package: str,
+    library_name: str,
+) -> Path:
+    build_type = "release" if release else "debug"
+    print(f"Building {package} cdylib for {abi} ({target}, {build_type})...")
+
+    env, cargo_patch = cargo_context_for_target(target)
+    cmd = ["cargo", "--config", cargo_patch, "build", "--target", target, "-p", package, "--lib"]
+    if release:
+        cmd.append("--release")
+    run(cmd, env=env)
+
+    library_path = TARGET_ROOT / target / build_type / library_name
+    if not library_path.exists():
+        raise FileNotFoundError(f"Built cdylib not found at {library_path}")
+    return library_path
+
+
+def copy_zygisk_payload(library: Path, abi: str, stage_dir: Path) -> None:
+    payload_dir = stage_dir / "zygisk"
+    payload_dir.mkdir(parents=True, exist_ok=True)
+    destination = payload_dir / f"{abi}.so"
+    shutil.copy2(library, destination)
+    print(f"Copied {library} to {destination}")
+
+
 def copy_template_files(stage_dir: Path) -> None:
     template_dir = REPO_ROOT / "template"
     if not template_dir.exists():
@@ -203,6 +254,27 @@ def copy_template_files(stage_dir: Path) -> None:
             shutil.copytree(item, dst, dirs_exist_ok=True)
         else:
             shutil.copy2(item, dst)
+
+
+def copy_project_documents(stage_dir: Path) -> None:
+    documents = (
+        (REPO_ROOT / "README.md", stage_dir / "README.md"),
+        (REPO_ROOT / "LICENSE.md", stage_dir / "LICENSE.md"),
+        (REPO_ROOT / "LICENSE-2", stage_dir / "LICENSE-2"),
+        (
+            REPO_ROOT / "soter-spoof" / "D-soter.NOTICE",
+            stage_dir / "THIRD_PARTY_LICENSES" / "D-soter.txt",
+        ),
+        (
+            REPO_ROOT / "webui" / "LICENSE.upstream",
+            stage_dir / "THIRD_PARTY_LICENSES" / "Tricky-Addon-Update-Target-List.txt",
+        ),
+    )
+    for source, destination in documents:
+        if not source.is_file():
+            raise FileNotFoundError(f"Required license file not found: {source}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
 
 
 def write_text_lf(path: Path, content: str) -> None:
@@ -232,12 +304,19 @@ def configure_template_for_abi(stage_dir: Path, abi: str) -> None:
     print(f"Updated customize.sh supported ABI to {supported_arch}")
 
 
-def modify_module_prop(stage_dir: Path, version: str, git_count: str, git_hash: str) -> None:
+def modify_module_prop(
+    stage_dir: Path,
+    version: str,
+    git_count: str,
+    git_hash: str,
+    release: bool,
+) -> None:
     module_prop_path = stage_dir / "module.prop"
     if not module_prop_path.exists():
         raise FileNotFoundError(f"module.prop not found at {module_prop_path}")
 
-    version_name = f"{version}-{git_hash}"
+    build_type = "release" if release else "debug"
+    version_name = f"{version} ({git_count}-{git_hash}-{build_type})"
     content = module_prop_path.read_text(encoding="utf-8")
     content = content.replace("${versionName}", version_name)
     content = content.replace("${versionCode}", git_count)
@@ -263,12 +342,47 @@ def generate_hash_files(stage_dir: Path) -> None:
             generate_hash_for_file(item)
 
 
-def delete_old_zips(release: bool, selected_abis: list[str]) -> None:
+def generate_webroot_manifest(stage_dir: Path) -> None:
+    webroot = stage_dir / "webroot"
+    required = (webroot / "index.html", webroot / "config.json")
+    missing = [path.relative_to(stage_dir).as_posix() for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(f"WebUI build is incomplete; missing: {', '.join(missing)}")
+
+    assets = sorted(
+        path.relative_to(stage_dir).as_posix()
+        for path in webroot.rglob("*")
+        if path.is_file() and not path.name.endswith(".sha256")
+    )
+    if not assets:
+        raise FileNotFoundError("WebUI build did not produce any files")
+    write_text_lf(stage_dir / "webroot.manifest", "\n".join(assets) + "\n")
+    print(f"Created WebUI manifest with {len(assets)} asset(s)")
+
+
+def delete_old_zips(release: bool, selected_abis: list[str], version: str) -> None:
     build_type = "release" if release else "debug"
-    old_zips: list[str] = []
+    old_zips: set[str] = set()
     for abi in selected_abis:
-        pattern = TARGET_ROOT / f"OhMyKeymint-{build_type}-{abi}-*.zip"
-        old_zips.extend(glob.glob(os.fspath(pattern)))
+        # Remove packages produced by the previous naming scheme as well as
+        # packages for this version produced by an earlier build.  The latter
+        # is useful when the working tree hash changes between builds.
+        old_pattern = TARGET_ROOT / f"OhMyKeymint-{build_type}-{abi}-*.zip"
+        old_zips.update(glob.glob(os.fspath(old_pattern)))
+
+        if abi == "arm64-v8a":
+            new_pattern = TARGET_ROOT / f"OhMyKeymint-{version}-*-{build_type}.zip"
+            new_candidates = glob.glob(os.fspath(new_pattern))
+            # The arm64 package intentionally omits its ABI in the filename;
+            # retain a separately built x86_64 package with the same version.
+            old_zips.update(
+                path
+                for path in new_candidates
+                if not path.endswith(f"-x86_64-{build_type}.zip")
+            )
+        else:
+            new_pattern = TARGET_ROOT / f"OhMyKeymint-{version}-*-{abi}-{build_type}.zip"
+            old_zips.update(glob.glob(os.fspath(new_pattern)))
     if not old_zips:
         print(f"No old zip files found for build type {build_type} and ABIs {selected_abis}")
         return
@@ -283,15 +397,22 @@ def create_zip_package(
     *,
     stage_dir: Path,
     version: str,
+    git_count: str,
     git_hash: str,
     abi: str,
     release: bool,
 ) -> Path:
     build_type = "release" if release else "debug"
-    zip_path = TARGET_ROOT / f"OhMyKeymint-{build_type}-{abi}-{version}-{git_hash}.zip"
+    # The default arm64 package follows the same version identity order as
+    # Trickystore: version, commit count, short commit hash, build type.  An
+    # explicit x86_64 build gets an ABI discriminator so separate ABI builds
+    # cannot overwrite one another.
+    abi_suffix = f"-{abi}" if abi != "arm64-v8a" else ""
+    zip_name = f"OhMyKeymint-{version}-{git_count}-{git_hash}{abi_suffix}-{build_type}.zip"
+    zip_path = TARGET_ROOT / zip_name
     print(f"Creating zip package: {zip_path}")
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
         for root, _, files in os.walk(stage_dir):
             for file_name in files:
                 file_path = Path(root) / file_name
@@ -328,8 +449,15 @@ def build_package_for_abi(
                 package=spec["package"],
                 bin_name=spec["bin"],
             )
-
+        soter_payload = build_cdylib(
+            abi=abi,
+            target=target,
+            release=release,
+            package=SOTER_SPOOF_PACKAGE,
+            library_name=SOTER_SPOOF_LIBRARY,
+        )
         copy_template_files(stage_dir)
+        copy_project_documents(stage_dir)
         normalize_module_text_files(stage_dir)
         configure_template_for_abi(stage_dir, abi)
         for spec in BINARY_SPECS:
@@ -339,13 +467,16 @@ def build_package_for_abi(
                 abi,
                 stage_dir,
             )
+        copy_zygisk_payload(soter_payload, abi, stage_dir)
 
-        modify_module_prop(stage_dir, version, git_count, git_hash)
+        modify_module_prop(stage_dir, version, git_count, git_hash, release)
         normalize_module_text_files(stage_dir)
+        generate_webroot_manifest(stage_dir)
         generate_hash_files(stage_dir)
         return create_zip_package(
             stage_dir=stage_dir,
             version=version,
+            git_count=git_count,
             git_hash=git_hash,
             abi=abi,
             release=release,
@@ -386,7 +517,7 @@ def main() -> None:
     print(f"Build mode: {'Release' if args.release else 'Debug'}")
     print(f"Target ABIs: {', '.join(selected_abis)}")
 
-    delete_old_zips(args.release, selected_abis)
+    delete_old_zips(args.release, selected_abis, version)
     built_packages = []
     for abi in selected_abis:
         built_packages.append(

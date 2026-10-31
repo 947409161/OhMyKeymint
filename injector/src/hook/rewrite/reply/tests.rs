@@ -1,9 +1,107 @@
+use std::cell::Cell;
 use std::mem::size_of;
 
 use rsbinder::{ExceptionCode, Status, StatusCode};
 
 use super::*;
 use crate::hook::rewrite::tests::*;
+
+#[test]
+fn generation_delay_precedes_key_publication_and_preserves_metadata() {
+    use crate::android::hardware::security::keymint::KeyParameterValue::KeyParameterValue;
+
+    let challenge = vec![KeyParameter {
+        tag: Tag::ATTESTATION_CHALLENGE,
+        value: KeyParameterValue::Blob(vec![7]),
+    }];
+    let plain = vec![KeyParameter {
+        tag: Tag::APPLICATION_DATA,
+        value: KeyParameterValue::Blob(vec![7]),
+    }];
+    for (params, delay, expects_wait) in [
+        (&challenge, [20u16, 30u16], true),
+        (&challenge, [0u16, 0u16], false),
+        (&plain, [20u16, 30u16], false),
+    ] {
+        let waited = Cell::new(None);
+        let generation_calls = Cell::new(0);
+        let generated = generate_key_with_delay(
+            params,
+            delay,
+            |duration| {
+                assert_eq!(generation_calls.get(), 0, "key must not exist during wait");
+                assert!(
+                    duration >= Duration::from_millis(20) && duration <= Duration::from_millis(30),
+                    "sampled wait must stay inside the configured range, got {duration:?}"
+                );
+                waited.set(Some(duration));
+            },
+            || {
+                assert_eq!(
+                    waited.get().is_some(),
+                    expects_wait,
+                    "a wait must precede generation exactly when a range is configured"
+                );
+                generation_calls.set(generation_calls.get() + 1);
+                Ok(KeyMetadata {
+                    key: KeyDescriptor {
+                        domain: Domain::KEY_ID,
+                        nspace: 123,
+                        ..Default::default()
+                    },
+                    certificate: Some(vec![1, 2, 3]),
+                    ..Default::default()
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(waited.get().is_some(), expects_wait);
+        assert_eq!(generation_calls.get(), 1);
+        let mut reply = parcel::build_plain_reply(&generated).unwrap();
+        let decoded: KeyMetadata = parcel::parse_owned_success_reply(&mut reply).unwrap();
+        assert_eq!(decoded.key.domain, Domain::KEY_ID);
+        assert_eq!(decoded.key.nspace, 123);
+        assert_eq!(decoded.certificate, Some(vec![1, 2, 3]));
+    }
+}
+
+#[test]
+fn generation_delay_precedes_failure_and_preserves_error() {
+    use crate::android::hardware::security::keymint::KeyParameterValue::KeyParameterValue;
+
+    let challenge = vec![KeyParameter {
+        tag: Tag::ATTESTATION_CHALLENGE,
+        value: KeyParameterValue::Blob(vec![7]),
+    }];
+    for error in [
+        Status::new_service_specific_error(ResponseCode::PERMISSION_DENIED.0, None),
+        Status::from(StatusCode::DeadObject),
+    ] {
+        let expected_error = format!("{error:?}");
+        let waited = Cell::new(false);
+        let generation_calls = Cell::new(0);
+        let error = generate_key_with_delay(
+            &challenge,
+            [20, 30],
+            |duration| {
+                assert_eq!(generation_calls.get(), 0);
+                assert!(
+                    duration >= Duration::from_millis(20) && duration <= Duration::from_millis(30),
+                    "sampled wait must stay inside the configured range, got {duration:?}"
+                );
+                waited.set(true);
+            },
+            || {
+                assert!(waited.get(), "errors must also follow the configured wait");
+                generation_calls.set(generation_calls.get() + 1);
+                Err(error)
+            },
+        )
+        .unwrap_err();
+        assert_eq!(generation_calls.get(), 1);
+        assert_eq!(format!("{error:?}"), expected_error);
+    }
+}
 
 pub(super) fn assert_unknown_transaction_reply(reply: SyntheticReply) {
     let SyntheticReply::Status(status) = reply else {

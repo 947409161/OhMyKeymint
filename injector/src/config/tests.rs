@@ -39,9 +39,10 @@ fn temp_config_path(name: &str) -> TempConfigPath {
 fn config_defaults_and_log_levels_match_contract() {
     let config = InjectorConfig::default();
     assert!(config.main.enabled);
-    assert_eq!(config.scoop, default_scoop());
-    assert!(config.scoop_details.is_empty());
+    assert_eq!(config.main.attestation_generation_delay_ms, [20, 30]);
+    assert_eq!(config.main.operation_start_delay_ms, 0);
     assert_eq!(config.main.log_level_filter(), LevelFilter::Debug);
+    assert!(config.filter.enabled);
     assert!(config.filter.block_android_package);
     assert!(!config.filter.allow_unknown_package);
     assert!(config.intercept.get_security_level);
@@ -62,106 +63,140 @@ fn config_defaults_and_log_levels_match_contract() {
 }
 
 #[test]
-fn parses_new_scoop_format_and_preserves_package_details() {
-    let parsed = parse_config(
-        r#"
-scoop = ["com.example.app", "com.other.app", "com.example.app"]
-
-[scoop."com.example.app"]
-mode = "strict"
-
-[main]
-enabled = false
-log_level = "trace"
-
-[filter]
-enabled = true
-deny_packages = ["com.blocked"]
-block_android_package = false
-allow_unknown_package = true
-
-[intercept]
-get_security_level = false
-get_key_entry = true
-update_subcomponent = false
-list_entries = false
-delete_key = false
-grant = false
-ungrant = false
-get_number_of_entries = false
-list_entries_batched = false
-get_supplementary_attestation_info = true
-"#,
-    )
-    .expect("config should parse");
-
+fn attestation_generation_delay_is_optional_bounded_and_preserved() {
     assert_eq!(
-        parsed.scoop,
-        vec!["com.example.app".to_string(), "com.other.app".to_string()]
+        parse_config("")
+            .unwrap()
+            .main
+            .attestation_generation_delay_ms,
+        [20, 30]
     );
-    assert_eq!(parsed.main.log_level_filter(), LevelFilter::Trace);
-    assert!(!parsed.main.enabled);
-    assert_eq!(
-        parsed
-            .scoop_details
-            .get("com.example.app")
-            .and_then(|table| table.get("mode"))
-            .and_then(toml::Value::as_str),
-        Some("strict")
-    );
-    assert!(!parsed.intercept.get_security_level);
-    assert!(parsed.intercept.get_key_entry);
-    assert!(!parsed.intercept.update_subcomponent);
-    assert!(!parsed.intercept.list_entries);
-    assert!(!parsed.intercept.delete_key);
-    assert!(!parsed.intercept.grant);
-    assert!(!parsed.intercept.ungrant);
-    assert!(!parsed.intercept.get_number_of_entries);
-    assert!(!parsed.intercept.list_entries_batched);
-    assert!(parsed.intercept.get_supplementary_attestation_info);
+    for delay in ["[0, 0]", "[20, 30]", "[25, 25]", "[250, 250]"] {
+        let config = parse_config(&format!(
+            "[main]\nattestation_generation_delay_ms = {delay}\n"
+        ))
+        .unwrap();
+        let rendered = render_config(&config).unwrap();
+        assert_eq!(
+            parse_config(&rendered)
+                .unwrap()
+                .main
+                .attestation_generation_delay_ms,
+            config.main.attestation_generation_delay_ms,
+            "range {delay} must survive a render and reparse round trip"
+        );
+    }
+    for delay in [
+        "25",
+        "true",
+        "\"25\"",
+        "[25]",
+        "[25, 30, 40]",
+        "[30, 20]",
+        "[0, 251]",
+        "[-1, 25]",
+        "[1.5, 2]",
+    ] {
+        assert!(parse_config(&format!(
+            "[main]\nattestation_generation_delay_ms = {delay}\n"
+        ))
+        .is_err());
+    }
 }
 
 #[test]
-fn legacy_config_syntax_is_rejected() {
-    let error = parse_config(
-        r#"
-[[scope]]
-package = "com.legacy.app"
-"#,
-    )
-    .expect_err("legacy scope syntax should be rejected");
-    assert!(error.contains("unknown field"));
-
-    let error = parse_config(
-        r#"
-scoop = ["com.example.app"]
-
-[filter]
-allow_packages = ["com.legacy.app"]
-"#,
-    )
-    .expect_err("legacy allow_packages should be rejected");
-    assert!(error.contains("unknown field"));
+fn operation_start_delay_is_optional_bounded_and_preserved() {
+    for contents in ["", "version = 1\n[main]\nenabled = true\n"] {
+        assert_eq!(
+            parse_config(contents)
+                .unwrap()
+                .main
+                .operation_start_delay_ms,
+            0
+        );
+    }
+    for delay in [0, 12, 250] {
+        let config =
+            parse_config(&format!("[main]\noperation_start_delay_ms = {delay}\n")).unwrap();
+        let rendered = render_config(&config).unwrap();
+        assert_eq!(
+            parse_config(&rendered)
+                .unwrap()
+                .main
+                .operation_start_delay_ms,
+            delay
+        );
+    }
+    for delay in ["-1", "251", "65536", "1.5", "true", "\"12\""] {
+        assert!(parse_config(&format!("[main]\noperation_start_delay_ms = {delay}\n")).is_err());
+    }
 }
 
 #[test]
-fn rendered_config_uses_new_scoop_format() {
-    let mut config = InjectorConfig {
-        scoop: vec!["com.example.app".to_string()],
-        ..Default::default()
-    };
-    let mut table = toml::Table::new();
-    table.insert("enabled".to_string(), toml::Value::Boolean(true));
-    config
-        .scoop_details
-        .insert("com.example.app".to_string(), table);
+fn invalid_operation_start_delay_reload_is_rejected_without_rewriting() {
+    let path = temp_config_path("operation-start-delay-reload");
+    fs::write(
+        &*path,
+        "version = 1\n[main]\noperation_start_delay_ms = 12\n",
+    )
+    .unwrap();
+    let loaded = load_or_seed(&path, LoadContext::Reload(WatchTrigger::CloseWrite))
+        .expect("valid delay should load");
+    assert_eq!(loaded.main.operation_start_delay_ms, 12);
 
+    for delay in ["-1", "251", "1.5", "\"12\""] {
+        let contents = format!("version = 1\n[main]\noperation_start_delay_ms = {delay}\n");
+        fs::write(&*path, &contents).unwrap();
+        assert!(load_or_seed(&path, LoadContext::Reload(WatchTrigger::CloseWrite)).is_none());
+        assert_eq!(fs::read_to_string(&*path).unwrap(), contents);
+    }
+}
+
+#[test]
+fn removed_routing_lists_are_rejected() {
+    for contents in [
+        "version = 1\nscoop = [\"com.example.app\"]\n",
+        "version = 1\nscoop_details = {}\n",
+        "version = 1\n[scoop.com.example.app]\nmode = \"strict\"\n",
+        "version = 1\n[filter]\ndeny_packages = [\"com.example.app\"]\n",
+    ] {
+        let error = parse_config(contents).expect_err("removed routing lists must be rejected");
+        assert!(error.contains("unknown field"), "{error}");
+    }
+}
+
+#[test]
+fn startup_with_removed_routing_lists_disables_without_rewriting() {
+    let path = temp_config_path("removed-routing-lists");
+    let contents = "version = 1\nscoop = [\"com.example.app\"]\n";
+    fs::write(&*path, contents).unwrap();
+
+    let loaded = load_or_seed(&path, LoadContext::Startup).unwrap();
+    assert!(!loaded.main.enabled);
+    assert_eq!(fs::read_to_string(&*path).unwrap(), contents);
+}
+
+#[test]
+fn rendered_config_contains_no_routing_list() {
+    let config = InjectorConfig::default();
     let rendered = render_config(&config).expect("config should render");
-    assert!(rendered.contains("scoop = ["));
-    assert!(rendered.contains("[scoop.com.example.app]"));
-    assert!(!rendered.contains("[[scope]]"));
+    assert!(!rendered.contains("scoop"));
+    assert!(rendered.contains(&format!("version = {CURRENT_CONFIG_VERSION}")));
+
     let reparsed = parse_config(&rendered).expect("rendered config should parse");
-    assert_eq!(reparsed.scoop_details, config.scoop_details);
+    assert_eq!(reparsed.main.enabled, config.main.enabled);
+    assert_eq!(
+        reparsed.main.attestation_generation_delay_ms,
+        config.main.attestation_generation_delay_ms
+    );
+    assert_eq!(
+        reparsed.filter.block_android_package,
+        config.filter.block_android_package
+    );
+    assert_eq!(
+        reparsed.filter.allow_unknown_package,
+        config.filter.allow_unknown_package
+    );
 }
 
 #[test]
@@ -174,7 +209,11 @@ fn missing_config_is_seeded_but_invalid_startup_config_is_untouched() {
 
     let on_disk = fs::read_to_string(&*path).expect("written config should be readable");
     let reparsed = parse_config(&on_disk).expect("written config should parse");
-    assert_eq!(reparsed.scoop, loaded.scoop);
+    assert_eq!(reparsed.main.enabled, loaded.main.enabled);
+    assert_eq!(
+        reparsed.filter.block_android_package,
+        loaded.filter.block_android_package
+    );
 
     let path = temp_config_path("invalid");
     let invalid = "[main\nbroken";
@@ -190,46 +229,46 @@ fn missing_config_is_seeded_but_invalid_startup_config_is_untouched() {
 }
 
 #[test]
-fn v0_config_migrates_through_public_scoop_syntax_and_preserves_mode() {
+fn v0_config_migrates_and_preserves_mode() {
     let path = temp_config_path("v0-migration");
-    let v0 = "\u{feff}scoop = [\"com.example.app\"]\r\n\r\n\
-              [scoop.com.example.app]\r\nmode = \"strict\"\r\n";
+    let v0 = "\u{feff}version = 0\r\n\r\n[main]\r\nenabled = false\r\n";
     fs::write(&*path, v0).unwrap();
     fs::set_permissions(&*path, fs::Permissions::from_mode(0o640)).unwrap();
 
     let loaded = load_from_path(&path, true).expect("v0 config should migrate");
     assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
-    assert_eq!(
-        loaded
-            .scoop_details
-            .get("com.example.app")
-            .and_then(|table| table.get("mode"))
-            .and_then(toml::Value::as_str),
-        Some("strict")
-    );
+    assert!(!loaded.main.enabled);
 
     let migrated = fs::read_to_string(&*path).unwrap();
-    assert_eq!(
-        migrated,
-        v0.replacen('\u{feff}', "\u{feff}version = 1\r\n", 1)
-    );
+    assert_eq!(migrated, v0.replacen("version = 0", "version = 1", 1));
     assert_eq!(fs::metadata(&*path).unwrap().mode() & 0o777, 0o640);
 }
 
 #[test]
 fn explicit_v0_migration_only_replaces_the_version_value() {
-    let v0 = "# keep this comment\nversion = 0 # and this one\nscoop = [\"com.example.app\"]\n";
+    let v0 = "# keep this comment\nversion = 0 # and this one\n[main]\nenabled = true\n";
     let (_, migrated) = parse_versioned_config(v0, true).expect("v0 config should migrate");
     assert_eq!(
         migrated.as_deref(),
-        Some("# keep this comment\nversion = 1 # and this one\nscoop = [\"com.example.app\"]\n")
+        Some("# keep this comment\nversion = 1 # and this one\n[main]\nenabled = true\n")
+    );
+}
+
+#[test]
+fn quoted_version_key_migrates_without_changing_other_text() {
+    let v0 = "\"version\" = 0 # keep this comment\n[main]\nenabled = true\n";
+    let (_, migrated) = parse_versioned_config(v0, true).expect("v0 config should migrate");
+
+    assert_eq!(
+        migrated.as_deref(),
+        Some("\"version\" = 1 # keep this comment\n[main]\nenabled = true\n")
     );
 }
 
 #[test]
 fn reload_rejects_v0_without_rewriting() {
     let path = temp_config_path("reload-v0");
-    let v0 = "scoop = [\"com.example.app\"]\n";
+    let v0 = "[main]\nenabled = true\n";
     fs::write(&*path, v0).unwrap();
 
     assert!(load_or_seed(&path, LoadContext::Reload(WatchTrigger::CloseWrite)).is_none());
@@ -251,10 +290,31 @@ fn unsupported_versions_are_rejected_without_rewriting() {
 }
 
 #[test]
-fn template_scope_matches_default_scope() {
+fn template_matches_defaults_and_contains_no_routing_list() {
     let template = include_str!("../../../template/injector.toml");
+    assert!(!template.contains("scoop"));
     let parsed = parse_config(template).expect("template injector config should parse");
-    assert_eq!(parsed.scoop, default_scoop());
+    let defaults = InjectorConfig::default();
+    assert_eq!(parsed.version, defaults.version);
+    assert_eq!(parsed.main.enabled, defaults.main.enabled);
+    assert_eq!(parsed.main.log_level, defaults.main.log_level);
+    assert_eq!(
+        parsed.main.attestation_generation_delay_ms,
+        defaults.main.attestation_generation_delay_ms
+    );
+    assert_eq!(
+        parsed.main.operation_start_delay_ms,
+        defaults.main.operation_start_delay_ms
+    );
+    assert_eq!(parsed.filter.enabled, defaults.filter.enabled);
+    assert_eq!(
+        parsed.filter.block_android_package,
+        defaults.filter.block_android_package
+    );
+    assert_eq!(
+        parsed.filter.allow_unknown_package,
+        defaults.filter.allow_unknown_package
+    );
 }
 
 #[test]

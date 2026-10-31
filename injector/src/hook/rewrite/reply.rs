@@ -1,4 +1,7 @@
 use super::*;
+use crate::android::hardware::security::keymint::{KeyParameter::KeyParameter, Tag::Tag};
+use crate::android::system::keystore2::KeyMetadata::KeyMetadata;
+use rand::RngExt;
 
 mod dispatch;
 mod operation;
@@ -530,6 +533,14 @@ pub(super) fn build_omk_security_level_reply(
             operation_parameters,
             forced,
         } => {
+            let delay_ms = config::get().main.operation_start_delay_ms;
+            if publish_operation_carrier && delay_ms > 0 {
+                // Wait before creating an operation so the delay cannot leave a
+                // new operation occupying a slot before delivery. No config,
+                // RPC connection, or KeyMint/database lock is held here. The
+                // Binder worker stays occupied; even business errors are delayed.
+                std::thread::sleep(Duration::from_millis(u64::from(delay_ms)));
+            }
             let omk_response =
                 match omk_level.r#createOperation(Some(caller), key, operation_parameters, *forced)
                 {
@@ -556,13 +567,20 @@ pub(super) fn build_omk_security_level_reply(
             flags,
             entropy,
         } => {
-            match omk_level.r#generateKey(
-                Some(caller),
-                key,
-                attestation_key.as_ref(),
+            match generate_key_with_delay(
                 params,
-                *flags,
-                entropy,
+                config::get().main.attestation_generation_delay_ms,
+                std::thread::sleep,
+                || {
+                    omk_level.r#generateKey(
+                        Some(caller),
+                        key,
+                        attestation_key.as_ref(),
+                        params,
+                        *flags,
+                        entropy,
+                    )
+                },
             ) {
                 Ok(metadata) => Ok(Some(parcel::build_plain_reply(&metadata)?)),
                 Err(error) => omk_status_reply_for_method("generateKey", &pending.caller, &error),
@@ -623,6 +641,34 @@ pub(super) fn build_omk_security_level_reply(
             }
         }
     }
+}
+
+fn generate_key_with_delay(
+    params: &[KeyParameter],
+    delay_ms: [u16; 2],
+    wait: impl FnOnce(Duration),
+    generate: impl FnOnce() -> Result<KeyMetadata, Status>,
+) -> Result<KeyMetadata, Status> {
+    if delay_ms != [0, 0]
+        && params
+            .iter()
+            .any(|param| param.tag == Tag::ATTESTATION_CHALLENGE)
+    {
+        // Sample a fresh wait per call, like the TA delay ranges do, so the extra
+        // cost of a challenge varies instead of being a fixed value.
+        let min_us = u64::from(delay_ms[0]) * 1000;
+        let max_us = u64::from(delay_ms[1]) * 1000;
+        let micros = if min_us == max_us {
+            min_us
+        } else {
+            rand::rng().random_range(min_us..=max_us)
+        };
+        // Wait before the RPC so no new key is published during this extra wait.
+        // No config, RPC connection, or KeyMint/database lock is held here. The
+        // Binder worker stays occupied; challenged business errors also wait.
+        wait(Duration::from_micros(micros));
+    }
+    generate()
 }
 
 #[cfg(test)]

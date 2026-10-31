@@ -114,32 +114,28 @@ fn fallback_keystore2_aidl_version_from_android() -> i32 {
 }
 
 fn probe_keystore2_aidl_version_from_vintf() -> Option<i32> {
-    for path in kmr_common::vintf::manifest_paths() {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        match parse_keystore2_aidl_version_xml(&contents) {
-            Ok(Some(version)) => return Some(version),
-            Ok(None) => {}
-            Err(error) => {
-                warn!(
-                    "event=synthetic ignoring invalid VINTF manifest {}: {error:#}",
-                    path.display()
-                );
-            }
-        }
-    }
-    None
-}
-
-fn parse_keystore2_aidl_version_xml(xml: &str) -> anyhow::Result<Option<i32>> {
-    kmr_common::vintf::parse_aidl_hal_version_xml(
-        xml,
+    match kmr_common::vintf::resolve_aidl_hal_version(
+        kmr_common::vintf::ManifestKind::Framework,
         KEYSTORE2_HAL_NAME,
         KEYSTORE2_SERVICE_INTERFACE,
         KEYSTORE2_SERVICE_INSTANCE,
-        normalize_keystore2_aidl_version,
-    )
+    ) {
+        Ok(Some(version)) => normalize_keystore2_aidl_version(version).or_else(|| {
+            warn!(
+                "event=synthetic unsupported {} AIDL version {} resolved from VINTF",
+                KEYSTORE2_HAL_NAME, version
+            );
+            None
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            warn!(
+                "event=synthetic failed to resolve {} AIDL version from VINTF: {error:#}",
+                KEYSTORE2_HAL_NAME
+            );
+            None
+        }
+    }
 }
 
 fn normalize_keystore2_aidl_version(version: i32) -> Option<i32> {
@@ -415,7 +411,7 @@ unsafe fn build_synthetic_br_transaction_reply_inner(
             }
         };
         let method = request.method();
-        if decision.allowed && !security_level_scoop_enabled(&cfg.intercept) {
+        if decision.allowed && !security_level_intercept_enabled(&cfg.intercept) {
             warn!(
                 "event=synthetic security-level interception disabled while target ptr=0x{:x} cookie=0x{:x} is still live; returning SYSTEM_ERROR",
                 target.ptr, target.cookie

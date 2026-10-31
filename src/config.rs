@@ -1,10 +1,11 @@
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock, RwLock},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use kmr_common::{
     consts::{KEYSTORE_GID, KEYSTORE_UID},
     crypto::Rng,
@@ -98,6 +99,116 @@ pub fn load_config_file() -> Result<ConfigFile> {
 
 pub fn persist_config_file(config_file: &ConfigFile) -> Result<()> {
     persist_config_file_to_path(Path::new(CONFIG_PATH), config_file)
+}
+
+/// Replace only the four trust patch-level fields with a validated value.
+///
+/// This is intentionally separate from [`persist_config_file`]. The WebUI
+/// receives values from an external bulletin or requests the `auto` defaults
+/// but must not be able to overwrite generated secrets, device identity, or
+/// any unknown config data.
+pub fn sync_security_patch(value: &str) -> Result<()> {
+    sync_security_patch_to_path(Path::new(CONFIG_PATH), value)
+}
+
+fn sync_security_patch_to_path(path: &Path, value: &str) -> Result<()> {
+    validate_security_patch_sync_value(value)?;
+
+    let _write_guard = CONFIG_FILE_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow!("config file write lock poisoned"))?;
+    let existing = fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file {}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&existing).context("refusing to overwrite invalid existing config.toml")?;
+    parse_config_file(&existing, false)
+        .context("refusing to overwrite config.toml that is not a current valid config")?;
+
+    let trust = table
+        .get_mut("trust")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| anyhow!("config is missing a valid [trust] table"))?;
+    for field in [
+        "security_patch",
+        "os_patchlevel",
+        "vendor_patchlevel",
+        "boot_patchlevel",
+    ] {
+        trust.insert(field.to_string(), toml::Value::String(value.to_string()));
+    }
+
+    let serialized = toml::to_string_pretty(&table).context("failed to serialize config.toml")?;
+    parse_config_file(&serialized, false)
+        .context("refusing to write an invalid synchronized config.toml")?;
+    if existing == serialized {
+        return Ok(());
+    }
+    persist_config_contents_unlocked(path, &serialized)
+}
+
+pub(crate) fn validate_security_patch_sync_value(value: &str) -> Result<()> {
+    if value == "auto" {
+        return Ok(());
+    }
+    validate_security_patch_sync_date(value)
+}
+
+fn validate_security_patch_sync_date(date: &str) -> Result<()> {
+    if !is_security_patch_date(date) {
+        bail!("security patch value must be `auto` or an exact YYYY-MM-DD date");
+    }
+
+    let year = date[0..4]
+        .parse::<i32>()
+        .map_err(|_| anyhow!("security patch year is invalid"))?;
+    let month = date[5..7]
+        .parse::<u32>()
+        .map_err(|_| anyhow!("security patch month is invalid"))?;
+    let day = date[8..10]
+        .parse::<u32>()
+        .map_err(|_| anyhow!("security patch day is invalid"))?;
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => unreachable!("is_security_patch_date validates the month"),
+    };
+    if day > days_in_month {
+        bail!("security patch date is not a valid calendar date");
+    }
+
+    let (current_year, current_month, current_day) = current_local_date()?;
+    if (year, month, day) > (current_year, current_month, current_day) {
+        bail!("security patch date cannot be in the future");
+    }
+    Ok(())
+}
+
+fn current_local_date() -> Result<(i32, u32, u32)> {
+    #[cfg(unix)]
+    unsafe {
+        let now = libc::time(std::ptr::null_mut());
+        if now < 0 {
+            bail!("libc::time returned a negative timestamp");
+        }
+        let mut local = std::mem::zeroed::<libc::tm>();
+        if libc::localtime_r(&now, &mut local).is_null() {
+            bail!("libc::localtime_r failed");
+        }
+        Ok((
+            local.tm_year + 1900,
+            (local.tm_mon + 1) as u32,
+            local.tm_mday as u32,
+        ))
+    }
+
+    #[cfg(not(unix))]
+    {
+        Err(anyhow!(
+            "current_local_date is unsupported on this platform"
+        ))
+    }
 }
 
 fn bootstrap_config_file_to_path(path: &Path) -> Result<ConfigFile> {
@@ -315,7 +426,9 @@ fn parse_config_file(contents: &str, allow_migration: bool) -> Result<ParsedConf
         toml::to_string_pretty(&table).context("failed to serialize migrated config.toml")?;
     let config_file: ConfigFile =
         toml::from_str(&serialized).context("failed to validate migrated config.toml")?;
+    validate_main_config(&config_file.main)?;
     validate_trust_config(&config_file.trust)?;
+    validate_app_patch_levels(&config_file.app_patch_levels)?;
     Ok(ParsedConfigFile {
         config_file,
         table,
@@ -386,6 +499,15 @@ fn start_config_watcher() -> Result<()> {
 }
 
 fn reload_runtime_config(trigger: WatchTrigger) {
+    let _security_patch_lock = match crate::security_patch::acquire_operation_lock() {
+        Ok(lock) => lock,
+        Err(error) => {
+            log::error!(
+                "failed to lock security-patch operations for config reload: {error:#}; keeping current config"
+            );
+            return;
+        }
+    };
     let new_config_file = match load_config_file_with_retry(trigger) {
         Ok(loaded) => {
             if loaded.retries > 0 {
@@ -491,6 +613,19 @@ fn reload_runtime_config(trigger: WatchTrigger) {
     }
 }
 
+fn validate_main_config(main: &MainConfig) -> Result<()> {
+    for (field, [minimum, maximum]) in [
+        ("ta_operation_delay_ms", main.ta_operation_delay_ms),
+        ("ta_generation_delay_ms", main.ta_generation_delay_ms),
+        ("ta_control_delay_ms", main.ta_control_delay_ms),
+    ] {
+        if minimum > maximum || maximum > 250 {
+            bail!("main.{field} must be [minimum, maximum] with 0 <= minimum <= maximum <= 250");
+        }
+    }
+    Ok(())
+}
+
 fn validate_trust_config(trust: &RawTrustConfig) -> Result<()> {
     if let OsVersionSpec::Fixed(value) = trust.os_version {
         if !(0..=99).contains(&value) {
@@ -528,7 +663,11 @@ fn validate_patchlevel(field: &str, value: &str) -> Result<()> {
 }
 
 pub fn is_security_patch_date(value: &str) -> bool {
-    regex::Regex::new(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
+    // Keep this byte-oriented date format ASCII-only.  Rust's `\d` is
+    // Unicode-aware by default, which would allow non-ASCII decimal digits
+    // through this shape check even though the rest of the code slices the
+    // date at fixed byte offsets.
+    regex::Regex::new(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
         .expect("security patch regex must compile")
         .is_match(value)
 }
@@ -555,6 +694,7 @@ pub struct Config {
     pub crypto: CryptoConfig,
     pub trust: ResolvedTrust,
     pub device: DeviceProperty,
+    pub app_patch_levels: BTreeMap<String, AppPatchLevels>,
     trust_intent: RawTrustConfig,
 }
 
@@ -565,6 +705,7 @@ impl Config {
             crypto: config_file.crypto.clone(),
             trust: resolved_trust,
             device: config_file.device.clone(),
+            app_patch_levels: config_file.app_patch_levels.clone(),
             trust_intent: config_file.trust.clone(),
         }
     }
@@ -577,6 +718,8 @@ pub struct ConfigFile {
     pub crypto: CryptoConfig,
     pub trust: RawTrustConfig,
     pub device: DeviceProperty,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub app_patch_levels: BTreeMap<String, AppPatchLevels>,
 }
 
 impl Default for ConfigFile {
@@ -587,8 +730,193 @@ impl Default for ConfigFile {
             crypto: CryptoConfig::default(),
             trust: RawTrustConfig::default(),
             device: DeviceProperty::default(),
+            app_patch_levels: BTreeMap::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct AppPatchLevels {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub os_patchlevel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor_patchlevel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot_patchlevel: Option<String>,
+}
+
+fn app_patch_target(target: &str) -> Option<(&str, Option<u32>)> {
+    let (package, user) = match target.split_once('@') {
+        Some((package, user)) if !user.is_empty() && user.bytes().all(|b| b.is_ascii_digit()) => {
+            let parsed_user = user.parse::<u32>().ok()?;
+            if parsed_user.to_string() != user
+                || parsed_user > u32::MAX / kmr_common::consts::AID_USER_OFFSET
+            {
+                return None;
+            }
+            (package, Some(parsed_user))
+        }
+        Some(_) => return None,
+        None => (target, None),
+    };
+    package
+        .split('.')
+        .all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .next()
+                    .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+        .then_some((package, user))
+}
+
+fn validate_app_patch_levels(profiles: &BTreeMap<String, AppPatchLevels>) -> Result<()> {
+    for (target, profile) in profiles {
+        if app_patch_target(target).is_none() {
+            bail!("invalid app patch-level target {target:?}; expected package or package@user_id");
+        }
+        for (field, value) in [
+            ("os_patchlevel", &profile.os_patchlevel),
+            ("vendor_patchlevel", &profile.vendor_patchlevel),
+            ("boot_patchlevel", &profile.boot_patchlevel),
+        ] {
+            if let Some(value) = value {
+                if value == "auto" {
+                    continue;
+                }
+                if field == "boot_patchlevel" && value.parse::<u32>().is_ok() {
+                    continue;
+                }
+                validate_security_patch_sync_date(value)
+                    .with_context(|| format!("invalid {field} for {target}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+impl AppPatchLevels {
+    fn effective(&self, global: kmr_ta::RequestPatchLevels) -> Result<kmr_ta::RequestPatchLevels> {
+        use crate::keymaster::keymint_device::{
+            extract_boot_patchlevel, extract_patchlevel, extract_truncated_patchlevel,
+        };
+        fn explicit(value: &Option<String>) -> Option<&str> {
+            value.as_deref().filter(|value| *value != "auto")
+        }
+        Ok(kmr_ta::RequestPatchLevels {
+            os_patchlevel: explicit(&self.os_patchlevel)
+                .map(extract_truncated_patchlevel)
+                .transpose()
+                .map_err(anyhow::Error::msg)?
+                .unwrap_or(global.os_patchlevel),
+            vendor_patchlevel: explicit(&self.vendor_patchlevel)
+                .map(extract_patchlevel)
+                .transpose()
+                .map_err(anyhow::Error::msg)?
+                .unwrap_or(global.vendor_patchlevel),
+            boot_patchlevel: explicit(&self.boot_patchlevel)
+                .map(extract_boot_patchlevel)
+                .transpose()
+                .map_err(anyhow::Error::msg)?
+                .unwrap_or(global.boot_patchlevel),
+        })
+    }
+}
+
+impl Config {
+    pub fn app_patch_profile(
+        &self,
+        uid: u32,
+        packages: &[String],
+    ) -> Result<Option<kmr_ta::RequestPatchLevels>> {
+        use crate::keymaster::keymint_device::{
+            extract_boot_patchlevel, extract_patchlevel, extract_truncated_patchlevel,
+        };
+        let user = uid / kmr_common::consts::AID_USER_OFFSET;
+        let global = kmr_ta::RequestPatchLevels {
+            os_patchlevel: extract_truncated_patchlevel(&self.trust.os_patchlevel)
+                .map_err(anyhow::Error::msg)?,
+            vendor_patchlevel: extract_patchlevel(&self.trust.vendor_patchlevel)
+                .map_err(anyhow::Error::msg)?,
+            boot_patchlevel: extract_boot_patchlevel(&self.trust.boot_patchlevel)
+                .map_err(anyhow::Error::msg)?,
+        };
+        let mut selected = None;
+        for package in packages {
+            let profile = self
+                .app_patch_levels
+                .get(&format!("{package}@{user}"))
+                .or_else(|| self.app_patch_levels.get(package));
+            if let Some(profile) = profile {
+                let effective = profile.effective(global)?;
+                if selected.is_some_and(|previous| previous != effective) {
+                    return Err(crate::keymaster::error::Error::Km(
+                        crate::android::hardware::security::keymint::ErrorCode::ErrorCode::INVALID_ARGUMENT,
+                    )).context("Shared UID packages have conflicting app patch-level profiles.");
+                }
+                selected = Some(effective);
+            }
+        }
+        Ok(selected)
+    }
+}
+
+pub fn app_patch_levels_json() -> Result<String> {
+    let config_file = load_config_file()?;
+    serde_json::to_string(&serde_json::json!({ "app_patch_levels": config_file.app_patch_levels }))
+        .context("failed to encode app patch-level profiles")
+}
+
+pub fn save_app_patch_levels_base64(payload: &str) -> Result<()> {
+    if unsafe { libc::geteuid() } != 0 {
+        bail!("saving app patch-level profiles requires root");
+    }
+    save_app_patch_levels_base64_to_path(Path::new(CONFIG_PATH), payload)
+}
+
+fn save_app_patch_levels_base64_to_path(path: &Path, payload: &str) -> Result<()> {
+    use base64::Engine;
+    if payload.len() > 4096 {
+        bail!("app patch-level payload is too large");
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Update {
+        target: String,
+        os_patchlevel: Option<String>,
+        vendor_patchlevel: Option<String>,
+        boot_patchlevel: Option<String>,
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .context("invalid app patch-level base64")?;
+    let update: Update =
+        serde_json::from_slice(&decoded).context("invalid app patch-level JSON")?;
+    let profile = AppPatchLevels {
+        os_patchlevel: update.os_patchlevel,
+        vendor_patchlevel: update.vendor_patchlevel,
+        boot_patchlevel: update.boot_patchlevel,
+    };
+    let profiles = BTreeMap::from([(update.target.clone(), profile.clone())]);
+    validate_app_patch_levels(&profiles)?;
+    let _write_guard = CONFIG_FILE_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow!("config file write lock poisoned"))?;
+    let existing = fs::read_to_string(path).context("failed to read config.toml")?;
+    let mut parsed = parse_config_file(&existing, false)?;
+    let profiles = parsed
+        .table
+        .entry("app_patch_levels")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| anyhow!("invalid app_patch_levels table"))?;
+    profiles.insert(update.target, toml::Value::try_from(profile)?);
+    let contents = toml::to_string_pretty(&parsed.table)?;
+    parse_config_file(&contents, false)?;
+    persist_config_contents_unlocked(path, &contents)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -644,10 +972,28 @@ pub struct MainConfig {
     /// Only the injector backend is currently enabled.
     pub backend: Backend,
     pub log_level: String,
+    /// Inclusive extra delay range in milliseconds for each software TA operation call.
+    #[serde(deserialize_with = "deserialize_ta_delay_range")]
+    pub ta_operation_delay_ms: [u16; 2],
+    /// Inclusive extra delay range in milliseconds for each software TA key generation call.
+    #[serde(deserialize_with = "deserialize_ta_delay_range")]
+    pub ta_generation_delay_ms: [u16; 2],
+    /// Inclusive extra delay range in milliseconds for each software TA control call.
+    #[serde(deserialize_with = "deserialize_ta_delay_range")]
+    pub ta_control_delay_ms: [u16; 2],
     /// Insecure fallback for devices whose system TEE cannot verify HATs.
     /// When enabled, OMK accepts shape-valid HATs without system KeyMint MAC verification.
     #[serde(default)]
     pub force_skip_system_biometric_hat_verification: bool,
+}
+
+fn deserialize_ta_delay_range<'de, D>(deserializer: D) -> Result<[u16; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<u16>::deserialize(deserializer)?
+        .try_into()
+        .map_err(|_| serde::de::Error::custom("TA delay range must contain exactly two integers"))
 }
 
 impl Default for MainConfig {
@@ -655,6 +1001,9 @@ impl Default for MainConfig {
         Self {
             backend: Backend::Injector,
             log_level: "debug".to_string(),
+            ta_operation_delay_ms: [9, 21],
+            ta_generation_delay_ms: [6, 16],
+            ta_control_delay_ms: [1, 4],
             force_skip_system_biometric_hat_verification: false,
         }
     }
@@ -887,6 +1236,7 @@ impl<'de> Deserialize<'de> for TrustValueSpec {
 #[serde(rename_all = "snake_case")]
 pub enum TrustValueSource {
     ExplicitHex,
+    Persisted,
     Property,
     Computed,
     Original,
@@ -898,6 +1248,7 @@ impl std::fmt::Display for TrustValueSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TrustValueSource::ExplicitHex => write!(f, "explicit_hex"),
+            TrustValueSource::Persisted => write!(f, "persisted"),
             TrustValueSource::Property => write!(f, "property"),
             TrustValueSource::Computed => write!(f, "computed"),
             TrustValueSource::Original => write!(f, "original"),
@@ -1057,6 +1408,178 @@ mod tests {
     }
 
     #[test]
+    fn sync_security_patch_updates_only_patch_fields_and_preserves_unknown_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        let mut table: toml::Table =
+            toml::from_str(&toml::to_string_pretty(&ConfigFile::default()).unwrap()).unwrap();
+        table.insert(
+            "future_key".to_string(),
+            toml::Value::String("preserve-me".to_string()),
+        );
+        table
+            .get_mut("trust")
+            .and_then(toml::Value::as_table_mut)
+            .unwrap()
+            .insert(
+                "future_trust_key".to_string(),
+                toml::Value::String("preserve-me-too".to_string()),
+            );
+        let original_crypto = table.get("crypto").cloned();
+        fs::write(&path, toml::to_string_pretty(&table).unwrap()).unwrap();
+
+        sync_security_patch_to_path(&path, "2020-01-05").unwrap();
+
+        let persisted: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            persisted.get("future_key").and_then(toml::Value::as_str),
+            Some("preserve-me")
+        );
+        assert_eq!(
+            persisted
+                .get("trust")
+                .and_then(toml::Value::as_table)
+                .and_then(|trust| trust.get("future_trust_key"))
+                .and_then(toml::Value::as_str),
+            Some("preserve-me-too")
+        );
+        let trust = persisted
+            .get("trust")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        for field in [
+            "security_patch",
+            "os_patchlevel",
+            "vendor_patchlevel",
+            "boot_patchlevel",
+        ] {
+            assert_eq!(
+                trust.get(field).and_then(toml::Value::as_str),
+                Some("2020-01-05")
+            );
+        }
+        assert_eq!(persisted.get("crypto"), original_crypto.as_ref());
+    }
+
+    #[test]
+    fn sync_security_patch_auto_preserves_unknown_and_unrelated_config() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        let mut original: toml::Table =
+            toml::from_str(&toml::to_string_pretty(&ConfigFile::default()).unwrap()).unwrap();
+        original.insert(
+            "future_key".to_string(),
+            toml::Value::String("preserve-me".to_string()),
+        );
+        let trust = original
+            .get_mut("trust")
+            .and_then(toml::Value::as_table_mut)
+            .unwrap();
+        trust.insert(
+            "future_trust_key".to_string(),
+            toml::Value::String("preserve-me-too".to_string()),
+        );
+        for field in [
+            "security_patch",
+            "os_patchlevel",
+            "vendor_patchlevel",
+            "boot_patchlevel",
+        ] {
+            trust.insert(
+                field.to_string(),
+                toml::Value::String("2020-01-05".to_string()),
+            );
+        }
+        fs::write(&path, toml::to_string_pretty(&original).unwrap()).unwrap();
+
+        let mut expected = original;
+        let expected_trust = expected
+            .get_mut("trust")
+            .and_then(toml::Value::as_table_mut)
+            .unwrap();
+        for field in [
+            "security_patch",
+            "os_patchlevel",
+            "vendor_patchlevel",
+            "boot_patchlevel",
+        ] {
+            expected_trust.insert(field.to_string(), toml::Value::String("auto".to_string()));
+        }
+
+        sync_security_patch_to_path(&path, "auto").unwrap();
+
+        let persisted: toml::Table = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted, expected);
+        let trust = persisted
+            .get("trust")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+        for field in [
+            "security_patch",
+            "os_patchlevel",
+            "vendor_patchlevel",
+            "boot_patchlevel",
+        ] {
+            assert_eq!(trust.get(field).and_then(toml::Value::as_str), Some("auto"));
+        }
+        assert_eq!(
+            persisted.get("future_key").and_then(toml::Value::as_str),
+            Some("preserve-me")
+        );
+        assert_eq!(
+            trust.get("future_trust_key").and_then(toml::Value::as_str),
+            Some("preserve-me-too")
+        );
+    }
+
+    #[test]
+    fn sync_security_patch_rejects_invalid_or_future_dates_without_overwriting() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        let original = toml::to_string_pretty(&ConfigFile::default()).unwrap();
+        fs::write(&path, &original).unwrap();
+
+        // Arabic-Indic digits must be rejected before the fixed-byte slices
+        // in `validate_security_patch_sync_date`; this also guards against a
+        // panic if the helper receives non-ASCII command-line input.
+        for date in [
+            "2020-02-30",
+            "2020-01-05 ",
+            "latest",
+            "AUTO",
+            "9999-12-31",
+            "\u{0662}\u{0660}\u{0662}\u{0666}-\u{0660}\u{0668}-\u{0660}\u{0665}",
+        ] {
+            assert!(
+                sync_security_patch_to_path(&path, date).is_err(),
+                "{date:?}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn sync_security_patch_rejects_future_version_and_damaged_config_without_overwriting() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        let mut future: toml::Table =
+            toml::from_str(&toml::to_string_pretty(&ConfigFile::default()).unwrap()).unwrap();
+        future.insert(
+            "version".to_string(),
+            toml::Value::Integer(i64::from(CURRENT_CONFIG_VERSION) + 1),
+        );
+        let future_contents = toml::to_string_pretty(&future).unwrap();
+        fs::write(&path, &future_contents).unwrap();
+        assert!(sync_security_patch_to_path(&path, "2020-01-05").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), future_contents);
+
+        let damaged = "version = 2\n[trust\n";
+        fs::write(&path, damaged).unwrap();
+        assert!(sync_security_patch_to_path(&path, "2020-01-05").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
+    }
+
+    #[test]
     fn validate_boot_patchlevel_accepts_raw_wire_value() {
         validate_patchlevel("boot_patchlevel", "20000000")
             .expect("raw boot patch level should validate");
@@ -1097,6 +1620,111 @@ force_skip_system_biometric_hat_verification = true"#,
         .unwrap();
         assert!(parsed.force_skip_system_biometric_hat_verification);
         assert!(!MainConfig::default().force_skip_system_biometric_hat_verification);
+    }
+
+    #[test]
+    fn ta_delay_defaults_apply_to_existing_configs() {
+        let mut table: toml::Table =
+            toml::from_str(&toml::to_string_pretty(&ConfigFile::default()).unwrap()).unwrap();
+        let main = table
+            .get_mut("main")
+            .and_then(toml::Value::as_table_mut)
+            .unwrap();
+        for field in [
+            "ta_operation_delay_ms",
+            "ta_generation_delay_ms",
+            "ta_control_delay_ms",
+        ] {
+            main.remove(field);
+        }
+        let contents = toml::to_string_pretty(&table).unwrap();
+        let parsed = parse_config_file(&contents, false).unwrap().config_file;
+        assert_eq!(parsed.main.ta_operation_delay_ms, [9, 21]);
+        assert_eq!(parsed.main.ta_generation_delay_ms, [6, 16]);
+        assert_eq!(parsed.main.ta_control_delay_ms, [1, 4]);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, contents).unwrap();
+        let bootstrapped = bootstrap_config_file_to_path(&path).unwrap();
+        assert_eq!(bootstrapped.main, parsed.main);
+        let saved = parse_config_file(&fs::read_to_string(&path).unwrap(), false)
+            .unwrap()
+            .config_file;
+        assert_eq!(saved.main, parsed.main);
+    }
+
+    #[test]
+    fn ta_delay_ranges_accept_boundaries_and_roundtrip() {
+        let mut config_file = ConfigFile::default();
+        for range in [[0, 0], [0, 250], [250, 250], [17, 17]] {
+            config_file.main.ta_operation_delay_ms = range;
+            config_file.main.ta_generation_delay_ms = range;
+            config_file.main.ta_control_delay_ms = range;
+            let serialized = toml::to_string_pretty(&config_file).unwrap();
+            let parsed = parse_config_file(&serialized, false).unwrap().config_file;
+            assert_eq!(parsed.main, config_file.main);
+        }
+    }
+
+    #[test]
+    fn ta_delay_ranges_reject_invalid_values_in_file_parser() {
+        let mut table: toml::Table =
+            toml::from_str(&toml::to_string_pretty(&ConfigFile::default()).unwrap()).unwrap();
+        for field in [
+            "ta_operation_delay_ms",
+            "ta_generation_delay_ms",
+            "ta_control_delay_ms",
+        ] {
+            for value in [
+                "[22, 21]",
+                "[0, 251]",
+                "[-1, 21]",
+                "[65536, 65536]",
+                "9",
+                "[]",
+                "[9]",
+                "[9, 21, 25]",
+                "[9.5, 21]",
+                r#"["9", 21]"#,
+            ] {
+                let mut assignment: toml::Table =
+                    toml::from_str(&format!("{field} = {value}")).unwrap();
+                let main = table
+                    .get_mut("main")
+                    .and_then(toml::Value::as_table_mut)
+                    .unwrap();
+                main.insert(field.to_string(), assignment.remove(field).unwrap());
+                let contents = toml::to_string_pretty(&table).unwrap();
+                assert!(
+                    parse_config_file(&contents, false).is_err(),
+                    "accepted {field} = {value}"
+                );
+            }
+            table
+                .get_mut("main")
+                .and_then(toml::Value::as_table_mut)
+                .unwrap()
+                .remove(field);
+        }
+    }
+
+    #[test]
+    fn invalid_ta_delay_is_not_persisted_or_repaired_during_bootstrap() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        let mut config_file = ConfigFile::default();
+        let valid_contents = toml::to_string_pretty(&config_file).unwrap();
+        fs::write(&path, &valid_contents).unwrap();
+
+        config_file.main.ta_operation_delay_ms = [21, 9];
+        assert!(persist_config_file_to_path(&path, &config_file).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), valid_contents);
+
+        let invalid_contents = toml::to_string_pretty(&config_file).unwrap();
+        fs::write(&path, &invalid_contents).unwrap();
+        assert!(bootstrap_config_file_to_path(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), invalid_contents);
     }
 
     #[test]
@@ -1416,6 +2044,116 @@ imei2 = ""
     #[derive(Deserialize)]
     struct TrustValueToml {
         value: TrustValueSpec,
+    }
+
+    fn app_profile_config() -> Config {
+        Config::from_file(
+            &ConfigFile::default(),
+            ResolvedTrust {
+                os_version: 16,
+                security_patch: "2026-06-05".into(),
+                os_patchlevel: "2026-06-05".into(),
+                vendor_patchlevel: "2026-06-05".into(),
+                boot_patchlevel: "2026-06-05".into(),
+                vb_key: [0; 32],
+                vb_hash: [0; 32],
+                vb_key_source: TrustValueSource::Property,
+                vb_hash_source: TrustValueSource::Property,
+                verified_boot_state: true,
+                device_locked: true,
+            },
+        )
+    }
+
+    #[test]
+    fn app_patch_profiles_are_user_scoped_and_shared_uid_conflicts_are_authoritative() {
+        let mut config = app_profile_config();
+        config.app_patch_levels.insert(
+            "com.example.app".into(),
+            AppPatchLevels {
+                os_patchlevel: Some("2026-04-05".into()),
+                ..Default::default()
+            },
+        );
+        config
+            .app_patch_levels
+            .insert("com.example.app@10".into(), AppPatchLevels::default());
+        let packages = vec!["com.example.app".into()];
+        assert_eq!(
+            config
+                .app_patch_profile(10123, &packages)
+                .unwrap()
+                .unwrap()
+                .os_patchlevel,
+            202604
+        );
+        assert_eq!(
+            config
+                .app_patch_profile(1010123, &packages)
+                .unwrap()
+                .unwrap()
+                .os_patchlevel,
+            202606
+        );
+        assert!(config
+            .app_patch_profile(10123, &["com.unmatched.app".into()])
+            .unwrap()
+            .is_none());
+        config.app_patch_levels.insert(
+            "com.shared.app".into(),
+            AppPatchLevels {
+                os_patchlevel: Some("2026-05-05".into()),
+                ..Default::default()
+            },
+        );
+        let error = config
+            .app_patch_profile(10123, &["com.example.app".into(), "com.shared.app".into()])
+            .unwrap_err();
+        assert!(matches!(
+            error
+                .root_cause()
+                .downcast_ref::<crate::keymaster::error::Error>(),
+            Some(crate::keymaster::error::Error::Km(
+                crate::android::hardware::security::keymint::ErrorCode::ErrorCode::INVALID_ARGUMENT
+            ))
+        ));
+    }
+
+    #[test]
+    fn app_patch_profile_save_preserves_secrets_and_explicit_empty_user_profile() {
+        use base64::Engine;
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("config.toml");
+        let original = ConfigFile::default();
+        persist_config_file_to_path(&path, &original).unwrap();
+        let payload = base64::engine::general_purpose::STANDARD.encode(
+            r#"{"target":"com.example.app@10","os_patchlevel":null,"vendor_patchlevel":null,"boot_patchlevel":null}"#
+        );
+        save_app_patch_levels_base64_to_path(&path, &payload).unwrap();
+        let parsed = parse_config_file(&fs::read_to_string(&path).unwrap(), false)
+            .unwrap()
+            .config_file;
+        assert_eq!(parsed.crypto, original.crypto);
+        assert_eq!(parsed.trust, original.trust);
+        assert_eq!(
+            parsed.app_patch_levels["com.example.app@10"],
+            AppPatchLevels::default()
+        );
+        for json in [
+            r#"{"target":"com.example.app@00","os_patchlevel":"2026-04-05"}"#,
+            r#"{"target":"com.example.app","os_patchlevel":"latest"}"#,
+            r#"{"target":"com.example.app","vendor_patchlevel":"2026-02-30"}"#,
+            r#"{"target":"com.example.app","boot_patchlevel":"4294967296"}"#,
+            r#"{"target":"com.example.app","mode":"patch"}"#,
+        ] {
+            let prior = fs::read_to_string(&path).unwrap();
+            let payload = base64::engine::general_purpose::STANDARD.encode(json);
+            assert!(
+                save_app_patch_levels_base64_to_path(&path, &payload).is_err(),
+                "{json}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), prior);
+        }
     }
 
     #[derive(Serialize, Deserialize)]

@@ -1,11 +1,12 @@
 # Configuration Guide
 
-OhMyKeymint (OMK) uses two active configuration files:
+OhMyKeymint (OMK) uses two core configuration files:
 
 - `/data/misc/keystore/omk/config.toml` controls the KeyMint service, the
   identity it reports, and the secrets used for OMK-created keys.
-- `/data/misc/keystore/omk/injector.toml` selects which apps use OMK and which
-  KeyStore requests are routed to it.
+- `/data/misc/keystore/omk/injector.toml` controls the request filter and which
+  KeyStore operations are routed to OMK. Which apps are in scope is discovered
+  automatically and is not configured in this file.
 
 This guide describes the active configuration used by the current build. The
 examples are followed by a separate field-by-field reference so that the short
@@ -15,16 +16,18 @@ comments in the examples are not the only explanation.
 
 ## Before editing
 
-For ordinary use, the only setting that normally needs changing is `scoop` in
-`injector.toml`. Keep the safety filters, all `[intercept]` switches, and the
-generated `[crypto]` values unchanged.
+For ordinary use, no app list needs maintaining. Routing covers installed
+third-party apps per Android user plus the three Google packages described
+below. Keep the safety filters, all `[intercept]` switches, and the generated
+`[crypto]` values unchanged.
 
 Before making a change:
 
 1. Make a private backup of both active files.
 2. Edit the files under `/data/misc/keystore/omk/`, not copies in the module ZIP.
-3. Keep strings inside quotes, booleans as `true` or `false`, and package names
-   inside the `scoop = [...]` array.
+3. Keep ordinary strings inside quotes and booleans as `true` or `false`. Do not
+   add `scoop`, `scoop_details`, `[scoop.*]`, or `deny_packages`; this build
+   rejects those removed fields.
 4. Change one thing at a time, save the complete file, and check the matching
    log after the change.
 
@@ -37,10 +40,10 @@ Both components watch their active file for valid changes. Their behavior is
 not identical:
 
 - A valid `injector.toml` is applied to new requests without a reboot.
-- A valid `config.toml` is read automatically, but only the four patch-level
-  fields and the biometric compatibility switch can take full effect without
-  restarting keymint. The field reference below states when a restart is
-  required.
+- A valid `config.toml` is read automatically. The four patch-level fields,
+  biometric compatibility switch, and three TA delay ranges can take full
+  effect without restarting keymint. The field reference below states when a
+  restart is required.
 - A malformed file saved while its component is running is rejected and the
   last valid in-memory configuration remains active.
 - A malformed `config.toml` present when keymint starts prevents keymint from
@@ -53,10 +56,476 @@ not identical:
   regenerated secrets do not restore keys protected by the previous secrets.
 The restart commands are documented in
 [Restarting keymint and injector](../README.md#restarting-keymint-and-injector).
-After changing app routing, close and reopen the affected app to avoid mixing
-an already-open operation with the new route. If a process restart is needed
-for a clean boundary, restart the injector only. An injector-only setting
-change does not require a keymint restart.
+The routing scope itself is refreshed from Android's package manager and needs
+no manual edit. After changing `[filter]` or `[intercept]`, close and reopen the
+affected app to avoid mixing an already-open operation with the new route. If a
+process restart is needed for a clean boundary, restart the injector only. An
+injector-only setting change does not require a keymint restart.
+
+## Limited-use keys
+
+Keystore-enforced limited-use keys reserve one remaining use for each active
+operation. New operations cannot exceed the current durable count. Successful
+finish commits the count before returning output; abort, pruning, terminal
+backend errors, and dropped operations release their reservation without
+consuming a use. Reservations stay in memory and are independent of runtime
+configuration reloads. Rebinding an alias creates a separate key entry and
+does not transfer reservations from the old entry.
+
+Wrapped-key imports reserve a Keystore-enforced use of the wrapping key until
+the destination key is saved. The durable decrement and destination alias
+publication share one database transaction. A failed import or save leaves the
+remaining count and previous aliases intact. Successful final consumption
+removes the wrapping key; replacing that same alias publishes the imported key
+atomically. TA-enforced single-use wrapping keys consume their secure-deletion
+slot after a successful unwrap import. Failed unwraps retain that slot. The TA
+consumption precedes database publication, so a later database failure does not
+restore a TA-enforced use.
+
+Key generation and imports delete unpublished TA key blobs on a best-effort
+basis when storage or publication fails. Cleanup failure does not replace the
+original operation error.
+
+## App patch-level profiles
+
+Optional `config.toml` profiles set the patch levels reported and bound into
+keys generated or imported by in-scope applications:
+
+```toml
+[app_patch_levels."com.example.app@0"]
+os_patchlevel = "2026-04-05"
+vendor_patchlevel = "2026-04-05"
+boot_patchlevel = "2026-04-05"
+```
+
+A bare package target applies to every Android user; `package@user_id` applies
+to one user and takes precedence over the bare target for that package. Each
+field may be omitted or set to `"auto"` to inherit the current global value.
+OS and vendor fields accept exact calendar dates in `YYYY-MM-DD` form that
+are not in the future. The boot field also accepts a decimal `u32` wire value.
+An explicit empty profile inherits all global fields and takes precedence over
+a bare profile. Invalid targets, fields, or values reject the complete candidate.
+
+The current caller's packages select the profile without consulting a key,
+alias, or keyblob's origin. Native service UIDs use the global patch levels
+without an application package lookup. Packages sharing one UID also share the selected
+profile; conflicting effective profiles among matched packages return
+`INVALID_ARGUMENT`. The profile controls generated/imported key
+characteristics, the signed attestation extension, keyblob validation, and
+upgrade. It does not change which backend handles a request. The TA's global
+HAL and boot state remain unchanged. Each operation retains the profile
+selected at begin, including after a configuration reload; new requests use
+the new configuration. Changing a profile follows the normal OMK keyblob
+validation and upgrade rules for existing keys.
+
+## Embedded WebUI
+
+The module includes a WebUI for installing a local keybox, managing global
+Android security patch levels, applying a Pixel PIF fingerprint through OMK's
+own Zygisk payload, and independently enabling Tencent Soter compatibility
+(Beta). Open it from the Oh My Keymint module page in KernelSU. With Magisk,
+open an installed KSUWebUIStandalone or WebUI X host and select Oh My Keymint;
+the module does not install either host. App routing is automatic; the WebUI
+does not manage an app list.
+
+The home page loads its status and diagnostics without enumerating installed
+applications. Dialogs present their loading state before querying the device.
+Long device, language, and file lists mount in stages, and closing a panel
+discards pending read results.
+The PIF device catalog loads only when fingerprint spoofing is selected in its
+panel; inspecting a disabled profile does not download the catalog. Loading
+panels reserve their content space while the opening animation runs.
+Navigation drags are coalesced to display frames without repeated layout reads.
+Certificate presentation is cached until its source snapshot changes, and a
+diagnostic refresh retains the current rows while it loads. System-color refreshes
+reuse an unchanged palette and update only changed color overrides.
+Bottom-sheet handle drags update a compositor transform at most once per display
+frame, without rerendering their content or changing layout height. Cancelled
+drags rebound without dismissing the sheet; busy panels remain protected against
+dismissal. Mutating actions paint their disabled/loading feedback before
+invoking the native bridge.
+Pages scroll inside the app container rather than the Android WebView viewport.
+Scroll indicators are hidden throughout pages, lists, menus and dialogs; touch,
+wheel and keyboard scrolling remain available. Per-page scroll restoration uses
+that same app container.
+
+The Settings page keeps the selected language, theme mode, accent, and visual
+effects in the WebUI's local storage. Language selection opens a height-limited
+MIUIX bottom sheet with single-choice rows, including the system-language option.
+The list scrolls inside the sheet; dismissing it or navigating back leaves the
+current selection unchanged. When Monet is enabled, **Default** reads
+the current Android user's resolved dynamic primary colors from system resources,
+including wallpaper overlays, for both light and dark mode. Colors refresh on
+opening the WebUI, returning to the foreground, and system theme changes.
+Android 14 and newer use named primary roles; Android 12-13 use the equivalent
+accent palette tones. A fixed accent supplies a custom seed instead.
+The selected palette style and color standard generate the full MIUIX palette
+using Material Color Utilities and MIUIX's role mapping, including neutral
+unchecked controls and themed surfaces. Rainbow and FruitSalad use SPEC_2021,
+as SPEC_2025 does not define those styles. If system colors cannot be read,
+the current session retains its last resolved colors, or uses the static MIUIX
+palette when none are available. No wallpaper data or new persistent cache is created.
+Turning Monet off restores the static MIUIX light/dark palette while remembering
+the selected accent for the next time Monet is enabled. Bar blur, floating
+navigation, and liquid glass are optional and remain disabled until selected;
+each option is independent; liquid glass only affects the floating navigation
+surface and does not enable floating navigation by itself.
+Page top bars and menus follow the same bar-blur setting and use opaque
+surfaces when blur is disabled or unsupported. Interface-scale dragging
+previews the percentage locally; releasing applies and saves the page scale.
+Cancelling the gesture discards the preview. Keyboard arrow/Home/End changes
+are applied on key release or blur.
+The bottom navigation stays anchored above the host's bottom safe area while
+pages switch and restore their own scroll positions. Interface scaling changes
+the bar's size without scaling the host's safe-area spacing. Top and side
+safe areas also retain their physical size at every interface scale. Scroll
+clearance follows the actual navigation height and bottom offset, so the last
+item can be scrolled fully above the bar.
+With blurred non-floating navigation, its bottom gesture safe area also paints
+the navigation surface: blurred when supported, otherwise opaque.
+This safe-area surface is not scaled with the navigation controls.
+
+Native status and navigation bar icons are controlled by the WebUI host.
+The WebUI enables edge-to-edge layout and extends its surface behind the system
+bars when the host and content use matching light/dark modes. When the modes
+differ, the system safe areas use the host surface from
+`/internal/colors.css` to preserve icon contrast. Hosts without this endpoint
+use the WebView's system color preference for this fallback. System bars remain
+visible; this does not change the host or Android theme settings.
+Blurred non-floating navigation keeps its own surface through the bottom
+gesture area so there is no contrasting strip below the navigation controls.
+
+The Home page reads each identity item independently. The Keybox card parses
+the installed XML and checks the private key against its leaf certificate
+without rewriting the file. Source classification also verifies every
+leaf-to-issuer signature link in leaf-to-root order. A chain is recognized as a
+Google key only when that verification reaches a final certificate with one
+of Google's pinned attestation-root public keys. The supported RSA root and
+the newer EC attestation root are pinned separately. A verified chain ending
+in one of these roots is shown as a Google hardware key when its root-adjacent
+certificate Subject contains the factory `serialNumber` attribute. It is shown
+as a Google remote key when it carries the RKP ProvisioningInfo extension or
+its root-adjacent certificate identifies `CN=Droid CA2, O=Google LLC`. A chain
+without either verified provisioning marker is shown as unknown. The root's key
+algorithm and certificate name are not used to infer the provisioning source.
+When a Keybox contains multiple algorithm chains, every chain must resolve to
+the same known source; an unknown or conflicting chain makes the Keybox source
+unknown. The Home page shows only this source classification. The hardware
+level is read from the leaf certificate Subject organization (`O=TEE` or
+`O=StrongBox`) and shown separately as **Security Level**. Older factory
+keyboxes that use the X.520 title attribute (`T=TEE` or
+`T=StrongBox`) are supported as a compatibility fallback. Valid chains that
+do not match either source or level are shown as unknown. The
+security-patch card reads the current
+`ro.build.version.security_patch` runtime property. **TEE: Normal** is shown
+only after the injector reaches OMK and obtains the Trusted Environment
+security level. The spoofed-device value is the Pixel model in OMK's active PIF
+profile; it describes the configured target and is not a separate live check of
+a Google Play services process.
+
+The Keybox card checks every certificate serial number from both presented
+algorithm chains against Google's attestation status list at
+`https://android.googleapis.com/attestation/status`. A validated local cache
+is used for up to 12 hours after its last successful refresh; the next status
+check after that interval performs an online lookup. A successful online
+lookup is atomically cached at
+`/data/misc/keystore/omk/data/google_attestation_status.json`. If the endpoint
+cannot be reached, the WebUI uses that locally validated cache; a first install
+is seeded from the validated snapshot shipped in the module. A lookup is shown
+as **Not revoked** when no serial is present. If any serial has a Google status
+of `SUSPENDED` or `REVOKED`, the card shows **Revoked**. A network, HTTP,
+certificate-parsing, or response-parsing failure is never treated as
+**Not revoked** when neither local source is valid. The cache and bundled
+snapshot contain public Google data and can become stale, so **Not revoked**
+does not prove that Play Integrity will accept the Keybox. When a refresh is
+due, an unavailable endpoint falls back to the last validated cache and then
+the bundled snapshot.
+
+The Home page also keeps the 30 most recent successful WebUI changes in
+`/data/misc/keystore/omk/data/webui_activity.json`. The list covers saved app
+targets, Keybox changes, security-patch synchronization and restore, and PIF
+enable or disable actions. It
+stores only the action type, a short non-secret result such as an entry count,
+patch date, or Pixel model, and the completion time. It never stores
+package-name lists, Keybox contents or filenames, downloaded response bodies, or
+a PIF fingerprint. The Home page initially shows the newest four entries, can expand
+the complete retained list, and provides controls to copy an entry or clear the
+activity file. Activity recording is supplementary: failure to update this file
+does not change the result of a completed WebUI operation.
+
+The Home page exposes read-only runtime diagnostics for OMK KeyMint, keystore2,
+the injector, the registered TEE and StrongBox KeyMint services, and the matching
+`default` and `strongbox` RKP Binder services. A missing optional StrongBox service
+is shown as unregistered. These checks do not issue an attestation challenge,
+contact an RKP provisioning server, or certify hardware-backed operation. A vendor
+KeyMint process is not used as evidence that OMK itself is running. The Keybox inspector shows public
+certificate-chain metadata (algorithm and chain length) and each certificate's
+subject, validity dates, and serial number without exposing private
+keys or relay credentials. The expandable chain view presents the root first,
+uses the current interface language for date formatting, and keeps dates in
+UTC. A diagnostic read failure is reported in the UI and does not change runtime
+routing.
+
+The injector daemon waits for keystore2 to appear and retries injection after
+startup or a process restart. If keystore2 disappears before launcher discovery,
+the launcher returns a retryable failure to the existing daemon loop.
+
+The WebUI can install a local keybox selected through Android's system document
+picker. The picker can use
+any installed storage provider, including MT Manager, and requests all MIME
+types so providers that label XML as `text/plain` or `application/octet-stream`
+remain available; the WebUI still requires an `.xml` filename. If the system
+picker cannot be opened, the WebUI falls back to its shared-storage browser.
+Its **Sync security
+patch** action uses the root WebUI bridge to make an HTTPS request to the
+official `https://source.android.com/docs/security/bulletin/asb-overview` page,
+falling back to Google's official Chinese mirror when the primary host is
+unavailable. It extracts the newest published security-patch level and uses
+that level's year and month. When the saved default
+`ro.build.version.security_patch` has day `01`, the synchronized date also has
+day `01`; otherwise it keeps the published Google date. The saved system date
+is authoritative if it differs from the saved vendor date. The action updates
+the four `[trust]` patch-level fields and uses `resetprop -n` to set both
+`ro.build.version.security_patch` and `ro.vendor.build.security_patch` to that
+date without going through Android's property service or triggering its change
+actions. The same `-n` mode applies to restore, rollback, and startup writes;
+unrelated property writes keep their existing behavior. Before the first sync,
+the native helper saves the current values of both
+properties to
+`/data/misc/keystore/omk/data/security_patch_defaults.toml`. A later sync keeps
+the existing snapshot instead of replacing the saved defaults.
+
+The action uses the module's native HTTPS client with embedded WebPKI roots;
+the device does not need to provide `curl` or `wget`. HTTPS redirects are
+accepted only when the final URL remains the official bulletin page. A failed
+request, unrecognized page, invalid date, or snapshot write leaves the
+configuration and properties unchanged. The native helper verifies both
+property writes and rolls them back when the paired update or subsequent
+configuration write fails. **Restore default security patch** makes no network
+request. It first restores both properties from the snapshot, then sets
+`security_patch`, `os_patchlevel`, `vendor_patchlevel`, and `boot_patchlevel` to
+`"auto"`. It deletes the snapshot only after both property restores and the
+configuration update succeed; a failed restore retains it for another attempt.
+The two properties are global Android runtime state for the current boot, so
+every process that reads them can observe the synchronized or restored values.
+
+When Oh My Keymint is uninstalled from KernelSU, the bundled uninstaller removes
+exactly `/data/adb/omk` and `/data/misc/keystore/omk`. This includes the active
+configuration, keybox, logs, and OMK-created key data and cannot be undone. A
+module disable does not remove these directories; reboot after an uninstall.
+
+The **Spoof PIF fingerprint** action is a separate OMK Zygisk integration. It
+downloads a Pixel device list from
+`KOWX712/PlayIntegrityFix`'s `bot/device_list.json`, then downloads the selected
+`bot/device_prop/<product>.prop`. The upstream bot refreshes these records
+daily from Google's Android preview pages, Android Flash Tool Canary metadata,
+and Pixel security bulletin. The helper first tries the exact GitHub Raw path
+and then the exact jsDelivr path. It does not run the upstream Autopif shell
+script and does not require a device-provided `curl`, `wget`, or shell download
+tool.
+
+The native helper accepts only the fixed feed paths, validates every catalog
+entry, requires exactly `FINGERPRINT`, `MANUFACTURER`, `MODEL`,
+`SECURITY_PATCH`, and `DEVICE_INITIAL_SDK_INT` in a profile, and splits the
+fingerprint into its eight Build components. Unknown keys, duplicate keys, and
+missing required fields are rejected; the launch SDK must be a decimal integer
+between 16 and 100. Native property spoofing uses that value for
+`ro.product.first_api_level` and `32` for `ro.board.first_api_level`, without
+overriding other API-level properties. GMS Build spoofing writes the same
+launch-SDK value to the integer `Build.VERSION.DEVICE_INITIAL_SDK_INT` field.
+It does not change `Build.VERSION.SDK_INT`.
+When Java Build spoofing is enabled, `Build.IS_ENG`, `Build.IS_USERDEBUG`,
+and `Build.IS_USER` are synchronized with the selected `Build.TYPE`. All
+written strings, type flags, and the GMS launch SDK are read back before the
+payload reports a verified Java update. A failed JNI operation is logged and
+its pending exception is cleared; an exception already pending before the
+update is preserved and the update is skipped. Java writes are sequential;
+on failure, fields already written remain applied and the payload does not
+report a verified update.
+The helper stores the following values in canonical JSON only after they agree
+with one another and satisfy TrickyStore's value limits:
+
+```text
+MANUFACTURER=Google
+MODEL=Pixel ...
+FINGERPRINT=google/.../...:.../.../...:user/release-keys
+BRAND=google
+PRODUCT=...
+DEVICE=...
+RELEASE=...
+ID=...
+INCREMENTAL=...
+TYPE=user
+TAGS=release-keys
+SECURITY_PATCH=YYYY-MM-DD
+```
+
+The complete candidate is atomically stored at
+`/data/misc/keystore/omk/data/pif_fingerprint.json`; an invalid download or
+failed write leaves the previous profile unchanged. The WebUI controls Java
+Build spoofing and native property spoofing independently for Google Play
+services through **Spoof Build** and **Spoof Props**; both default to on.
+A separate **Spoof Build (Play Store)** switch defaults to off and applies all
+12 string fields listed above and the three derived type flags inside the Play
+Store, including model, product, device, fingerprint, release, build ID, and
+security patch. It does not change the store's launch SDK, running SDK, or
+native properties, and is independent
+of the two GMS switches. All three switches can be enabled together.
+Changes take effect only after Apply succeeds. Turning off the main switch
+removes the profile. The profile uses schema version 2; any other
+version is rejected.
+The optional `spoof_vending_build` boolean defaults to false and is omitted
+from canonical JSON when false. Profiles without this option leave Play Store
+spoofing disabled.
+Version-2 profiles require the matching Zygisk payload; reboot after installing
+an updated module before applying the new options.
+This state file is not part of either OMK TOML schema. OMK packages its own
+Zygisk library, which reads
+the validated profile through its root companion when a new
+`com.google.android.gms.unstable` or `com.android.vending` process (including a
+named `:...` child process) is specialized by the Zygisk Next loader. During
+pre-app specialization, when native spoofing is enabled for GMS, the payload warms up
+bionic's lazily opened property areas before inspecting their mappings. It
+attempts validated process-private property-area replacement; shared property
+files and other processes are not modified. Read-only values of 92 bytes or
+more use bionic's long-property layout within the existing profile limit of
+126 bytes. Storage is reused or allocated within the private mapping, retaining
+property addresses. Installation verifies full callback values, names, serial
+metadata, legacy API results, and mapping identity. Legacy APIs with a 92-byte
+buffer return bionic's standard long-property message; callers must use
+`__system_property_read_callback` to obtain the complete value. The hook
+fallback uses the same legacy representation and resolves the full property
+name even when the legacy caller omits its name buffer or receives a truncated
+name. The fallback preserves bionic's serial change token; only the private-area
+path changes the stored property metadata. If the private mapping lacks
+space, has an unsupported layout, or fails installation or readback, the payload
+restores any replaced mappings and uses the existing property hooks.
+On AArch64 the callback hook is attempted only after validating the wrapper
+semantics, memory mappings, and BTI/MTE permissions. A rejected
+callback hook leaves libc unchanged, records the reason, and continues with
+the available PLT and Java paths. After specialization the payload updates Java
+`Build` fields and the integer launch SDK only when GMS Build spoofing is enabled,
+and probes 14 core identity and launch-API properties through the callback API
+when GMS native spoofing is enabled, logging mismatches and missing properties.
+Store processes are separated before native hook installation and receive
+only the optional Java Build strings and derived type flags. A process with
+no enabled spoofing path unloads the PIF library. OMK retains its own Google-process scope and
+does not include upstream provider/signature spoofing or ADB/USB overrides.
+The WebUI shows the selected fingerprint, patch date, initial API level, and
+saved options. Its desktop development preview uses labelled in-memory sample
+data, not Android state or a Play Integrity result. Zygisk Next must already be
+installed and enabled by the user; OMK does
+not bundle, install, or implement that loader. The helper ends both target
+process families after a successful change so a later process receives the
+selected values. Disabling spoofing removes the profile and repeats the same
+process refresh. The spoof is process-local: it does not call `resetprop`,
+change global Android properties, or change values under OMK's `[device]`
+section.
+
+**Tencent Soter compatibility (Beta)** is an optional simulation based on
+D-soter. Its switch is disabled by default and is independent of all KeyMint
+routing and key storage. Applying the switch atomically stores
+one strict `0` or `1` byte in
+`/data/misc/keystore/omk/data/soter_beta.conf`. Opening or cancelling the dialog
+does not write this file. The native commands are `--webui-get-soter-beta` and
+`--webui-set-soter-beta 0|1`; both run as short-lived root helpers without
+starting the daemon. Read failures are reported to the WebUI, and the payload
+does not enable the experiment when configuration cannot be validated. The simulated reply exports
+independent RSA-2048 public keys for each caller's ASK and each exact UTF-16 AuthKey
+alias. Android's RSA provider generates the key pairs in memory. The reference ATTK
+signs ASK exports, and the caller's ASK signs its AuthKey exports with RSASSA-PSS
+(SHA-256, MGF1-SHA256, salt length 20). The exported JSON contains the subject public
+key, counter `1`, a `cpu_id` derived from the unit serial, and the actual Binder caller
+UID; the UID supplied as an AIDL argument does not select another caller's keys.
+A unit without a readable serial mints a per-process identifier.
+
+Keys and their signed export blobs live only in the SoterServer process. Queries
+and exports report missing keys until creation succeeds. Removing an AuthKey affects
+only that caller's exact alias. Recreating an ASK clears that caller's AuthKeys, and
+`removeAllAuthKey` removes both ASK and AuthKeys for the caller. Generation or signing
+failure reports failure and preserves existing keys. Exports remain stable until a
+key is replaced or removed; a process restart discards all simulated keys.
+
+The 13 upstream reply contracts are implemented: ASK and auth-key creation, export, existence
+and removal; signing sessions and signature results; device ID, version, and extra parameters.
+`finishSign` keeps the reference shape and answers with a fixed zero buffer, because no session
+state is kept between `initSigh` and `finishSign`.
+
+Android 12-17 retain the platform's standard AIDL interface-header check. The handler
+reads UID and AuthKey alias arguments at the cursor left by that check, without
+assuming a fixed header size. Required aliases must be nonempty, terminated UTF-16
+strings; embedded NULs and exact UTF-16 code units remain part of the alias. Malformed
+required arguments fail the transaction. Trailing OEM fields do not change key
+identity. Nonstandard headerless requests are unsupported.
+
+Diagnostics use the `OhMyKeymint-Soter` logcat tag. Loading, disabled state, companion failures
+and hook installation are logged separately. Each method logs its first intercepted request and
+first delivered simulated reply, or first reply failure, per process. Arguments, key data,
+challenges and the unit serial are never logged. To inspect an affected device after rebooting
+and invoking its Soter client, run `adb logcat -d -s OhMyKeymint-Soter:I`. An installation message
+alone does not establish that requests reached the handler.
+
+The replies are generated by software and are not authentic TEE keys, payment repairs, or Play
+Integrity verdicts. Saving a switch confirms only that the preference was saved, not that device
+compatibility was verified. The feature is experimental; no supported-OS-wide validation is
+implied. Disabling and rebooting restores the unmodified Soter process path.
+
+All other WebUI assets are bundled and no network request is made for normal
+local operations. None of the WebUI network paths requires a device-provided
+`curl` or `wget`.
+
+The WebUI does not parse or rewrite `injector.toml` itself. It sends caller
+targets to the native `inject` helper. The helper first parses the current complete
+file, normalizes duplicates, surrounding whitespace, and decimal identifiers,
+rejects invalid targets and TrickyStore-style `!` or `?` suffixes, then renders and atomically
+replaces the complete file while preserving its ownership and mode. A read,
+parse, validation, or write failure is returned to the WebUI and leaves the
+existing file unchanged. Saving remains disabled when the current list could
+not be loaded.
+
+A successful save triggers the same injector hot-reload path as a valid manual
+edit. It applies to new requests without restarting keymint. Close and reopen
+the affected app when a clean routing boundary is required.
+
+For a keybox installation, the native `keymint` helper enforces the input size
+limit, decodes the selected file as UTF-8, and runs the complete in-memory
+`KeyBox` validation, including private-key and certificate-chain matching. Only
+then does it atomically replace the canonical lowercase
+`/data/misc/keystore/omk/keybox.xml`. A read, size, UTF-8, validation, or write
+failure leaves the active keybox unchanged. The keybox watcher loads a
+successful replacement automatically, so a restart is normally unnecessary.
+RSA-only, EC-only, and combined keyboxes are supported. When only one algorithm
+is present, its key signs attestation leaves for both RSA and EC subject keys.
+RSA private keys accept unencrypted PKCS#1 or PKCS#8 PEM encoding and normalize
+to PKCS#1 for identity hashing and XML export.
+EC private keys accept unencrypted SEC1 or PKCS#8 PEM encoding and normalize
+to SEC1 for identity hashing and XML export. Adding or removing only the
+PKCS#8 wrapper preserves the keybox identity when the inner SEC1 fields and
+certificate chain are unchanged. A named curve carried only in the PKCS#8
+algorithm identifier is restored into the SEC1 parameters.
+The reload preserves ordinary application signing keys, including passkey
+credentials. Only dedicated `ATTEST_KEY` entries tied to the previous keybox
+are retired.
+
+### Maintenance tools
+
+Both tools run as short-lived root helpers and are never invoked at startup.
+
+**Clear GMS cache** walks `/data/user` and `/data/user_de` without following
+app-controlled symlinks, removes only the contents of each `cache` and
+`code_cache` directory for `com.google.android.gms` and
+`com.android.vending`, and keeps application data, accounts, and the cache
+directories themselves. It then stops `com.google.android.gms.unstable` and
+`com.android.vending` with `killall`; Android may restart them. Partial
+failures are reported instead of being treated as a completed cleanup.
+
+**Fix RKP** requires explicit confirmation and runs the device's
+`/vendor/bin/KmInstallKeybox` with its documented repair arguments. The tool
+must be a root-owned executable that is not writable by apps. A completion
+message is a vendor-tool report only: the tool can permanently modify
+persist/TEE state even when it fails or times out, and the result is not proof
+of Google RKP provisioning or working attestation. Do not run it on a healthy
+device or retry an uncertain result blindly.
 
 ## `config.toml`
 
@@ -80,6 +549,11 @@ backend = "injector"
 log_level = "debug"
 # Insecure biometric compatibility switch. Keep false for normal use.
 force_skip_system_biometric_hat_verification = false
+# Extra random wait per software TA call: inclusive [minimum, maximum] in ms.
+# These defaults also apply when fields are absent; [0, 0] disables a category.
+ta_operation_delay_ms = [9, 21]
+ta_generation_delay_ms = [6, 16]
+ta_control_delay_ms = [1, 4]
 
 [crypto]
 # Redacted placeholders only. Keep the generated 64-character values.
@@ -156,6 +630,16 @@ suppresses normal logging.
 Changing this field requires a keymint restart. An unrecognized value falls
 back to `debug`, but relying on that fallback can hide a spelling mistake.
 
+Keymint and injector apply the same per-process burst limits before writing
+to logcat, the console, and their rotating files. Each source location can
+write four warning records per 30 seconds and 32 debug or trace records per
+second. A structured `event=log_rate_limit` record reports the number suppressed
+when that source is used again after the window, or when logs are flushed.
+Error and ordinary info records are not rate limited. The in-memory limiter keeps only
+bounded source metadata and counters; it does not retain message payloads.
+AAID diagnostics contain the caller UID and package/signature counts, without
+package names, signing-certificate bytes, challenges, tokens, or key material.
+
 #### `force_skip_system_biometric_hat_verification`
 
 This is an insecure compatibility switch for a device whose System KeyMint
@@ -167,6 +651,54 @@ Keep it `false` unless a maintainer is diagnosing a confirmed device-specific
 problem. It does not hide root and is not a general fix for fingerprint or
 lock-screen failures. A valid save applies to new checks without restarting
 keymint.
+
+#### TA delay ranges
+
+These three `[main]` fields configure extra random waits before OMK dispatches
+calls to its software TA:
+
+| Field | Default range (ms) | Covered TA calls |
+| --- | --- | --- |
+| `ta_operation_delay_ms` | `[9, 21]` | `begin`, `updateAad`, `update`, `finish`, `abort`, `getKeyCharacteristics` |
+| `ta_generation_delay_ms` | `[6, 16]` | `generateKey`, `importKey`, `importWrappedKey`, `upgradeKey`, `convertStorageKeyToEphemeral` |
+| `ta_control_delay_ms` | `[1, 4]` | `getHardwareInfo`, `addRngEntropy`, `deleteKey`, `deleteAllKeys`, `destroyAttestationIds`, `earlyBootEnded`, `getRootOfTrustChallenge`, `getRootOfTrust`, `sendRootOfTrust`, `setAdditionalAttestationInfo` |
+
+Each value must be an array of exactly two integers, `[minimum, maximum]`,
+with `0 <= minimum <= maximum <= 250`. Both endpoints are milliseconds and
+are inclusive. `[0, 0]` disables that category; equal nonzero endpoints request
+a fixed wait. Omitting a field enables its default range from the table.
+
+For every covered TA invocation, OMK samples a new wait uniformly at
+microsecond granularity between the configured endpoints. Calls in a category
+share the same range, but do not reuse one sample for the category or thread.
+The wait is added to processing time; it is neither a target total duration
+nor a cap. Scheduling can extend the wait beyond the selected value, and one
+app request that makes several covered TA calls accumulates their waits.
+
+The wait occurs before TA dispatch and before acquiring the TA mutex, with the
+configuration read guard released. The caller's Binder worker, RPC connection,
+per-operation concurrency guard, or database guard can remain occupied during
+the wait. Concurrent requests can therefore delay one another. A dispatched
+call receives its wait even if the TA returns an error; validation failures
+that return before TA dispatch do not. Raw TA initialization, local cache and
+authentication helpers, and calls routed to System are excluded.
+
+Valid changes apply to new TA calls without restarting keymint. A malformed
+array, non-integer value, out-of-range endpoint, or reversed range rejects the
+configuration; live reload keeps the previous valid configuration. Edit these
+fields in the existing active file while preserving its other values. OMK
+generates `config.toml` on the device; the module does not ship a reusable main
+configuration template.
+
+These waits are independent of the fixed
+[`attestation_generation_delay_ms`](#attestation_generation_delay_ms) and
+[`operation_start_delay_ms`](#operation_start_delay_ms) settings in
+`injector.toml`. An applicable nonzero injector delay is added as well. For
+example, `operation_start_delay_ms = 12` plus the default TA operation range
+adds a 12 ms wait before the RPC and a separately sampled 9-21 ms wait before
+the TA `begin` call. Set both injector delays to `0` if only the TA ranges are
+wanted. Changing software timing does not provide hardware security, constrain
+total calls to a hardware timing interval, or guarantee a detector result.
 
 ### `[crypto]`
 
@@ -240,14 +772,70 @@ This controls `ro.build.version.security_patch`. It accepts:
   is resolved; or
 - an actual date written as `"YYYY-MM-DD"`, including leading zeroes.
 
+The WebUI **Sync security patch** action is separate from the `"latest"` mode.
+It reads the main table on Google's Android Security Bulletin overview,
+selects the greatest published security-patch date that is not in the future,
+and uses its year and month as the newest published patch month. The day is
+selected from the saved default `ro.build.version.security_patch`: day `01`
+uses day `01` in that newest month, while day `05` uses the Google bulletin
+date unchanged. Any other saved day also keeps the Google bulletin date. If
+the saved `ro.build.version.security_patch` and
+`ro.vendor.build.security_patch` dates differ, the system value determines
+the day behavior. For example, when the newest Google date is `2026-08-05`, a
+saved system default of `2025-06-01` synchronizes `2026-08-01`, while
+`2025-06-05` synchronizes `2026-08-05`. This does not change the separate
+`"latest"` mode described above. The action never guesses an unpublished
+current-month patch month. It requires network access to Google's official
+bulletin host or mirror; if access or parsing fails, no file or property is
+changed. The native helper validates the selected date again and preserves all
+unrelated configuration values. After a successful sync or restore, the WebUI
+shows a completion message asking you to reboot the device; it does not reboot
+automatically.
+
+Before changing runtime properties for the first sync, the helper atomically
+saves both default properties to
+`/data/misc/keystore/omk/data/security_patch_defaults.toml`. When all four
+`[trust]` patch-level fields are `auto`, those defaults are read from the
+current runtime properties; for an explicit date or a mixed configuration, they
+are read from the trusted `build.prop` sources. An existing valid snapshot for
+the same build fingerprint is retained across repeated syncs. The helper then
+sets both properties to the selected date with `resetprop -n` and verifies the
+results. After that, it writes the date to `security_patch`, `os_patchlevel`,
+`vendor_patchlevel`, and `boot_patchlevel`. These are global Android properties
+for the current boot, not values visible only to OMK.
+
+While a valid defaults snapshot exists and all four configuration fields still
+contain the same exact date, the module's early boot hook reapplies that date to
+both properties before Android framework values are cached. Keymint also
+reapplies the pair at startup. The snapshot is the persistent marker for a
+WebUI synchronization: a manually authored exact-date configuration without a
+snapshot follows the normal patch-level path and does not cause an extra
+vendor-property write. If the optional snapshot cannot be read or validated,
+both paths skip this paired reapply and keymint continues its normal
+initialization.
+
+The WebUI **Restore default security patch** action uses the saved snapshot and
+does not access the network. If the snapshot is absent, the helper records the
+current runtime properties as the restore values. It restores both properties
+first, writes `"auto"` to `security_patch`, `os_patchlevel`,
+`vendor_patchlevel`, and `boot_patchlevel`, and deletes the snapshot only when
+every step succeeds. It preserves every other configuration value. A malformed
+or unverifiable snapshot stops the operation before either property or the
+configuration changes. A failed paired property update is rolled back. If the
+configuration write fails, the helper attempts to roll back both properties;
+any incomplete restore retains the snapshot so the action can be retried. The
+helper serializes these actions with startup and live configuration reloads so
+an older pending reload cannot overwrite a completed restore.
+
 `"auto"` first uses a nonempty runtime property, then the exact key from the
 standard `build.prop` locations, and finally `2025-06-05` if neither source is
 available. A present runtime value is used as-is rather than replaced by a
 `build.prop` value. `"latest"` and an exact date intentionally overwrite an
 existing runtime property, but OMK never creates or deletes it. `"auto"` never
-writes the property. After an explicit or `"latest"` override, switching back
-to `"auto"` in the same boot keeps the current runtime value; reboot to restore
-the system-provided value.
+writes the property. After an explicit or `"latest"` override, manually
+switching back to `"auto"` in the same boot keeps the current runtime value;
+reboot to restore the system-provided value. The WebUI restore action instead
+restores the saved system and vendor runtime properties before writing `"auto"`.
 
 #### `os_patchlevel`
 
@@ -264,7 +852,9 @@ runtime `ro.vendor.build.security_patch`, then the exact key from the standard
 `os_patchlevel`. `"latest"` and an exact `"YYYY-MM-DD"` date are also accepted.
 The final value is parsed with the AOSP `YYYY-MM-DD` parser and encoded as
 `YYYYMMDD`. A present nonempty source is not replaced by a lower-priority source
-merely because parsing later fails. OMK does not write the vendor property.
+merely because parsing later fails. Normal patch-level resolution does not write
+the vendor property; the WebUI sync and restore actions explicitly update it as
+described above.
 
 #### `boot_patchlevel`
 
@@ -300,16 +890,32 @@ reports that the live update failed, restart keymint.
 
 This controls the 32-byte verified-boot public-key digest:
 
-- `"auto"` first reads `ro.boot.vbmeta.public_key_digest`, then tries to
-  calculate the top-level vbmeta key digest, and uses a random fallback only if
-  neither source is available;
+- `"auto"` reuses the public digest saved in
+  `/data/misc/keystore/omk/data/vbmeta_state.toml`. When no snapshot exists, it
+  first reads `ro.boot.vbmeta.public_key_digest`, then tries to calculate the
+  top-level vbmeta key digest, and uses a random fallback only if neither source
+  is available. That first result is atomically saved before KeyMint serves keys;
 - `"random"` generates a new value whenever keymint starts; or
 - a 64-character hexadecimal string pins an exact value.
 
-Keep `"auto"` unless you understand the attestation profile being configured.
-Changing this field requires a keymint restart. If `"random"` was active and
-you change it back to `"auto"`, reboot the whole device so Android restores the
-original boot property before `"auto"` reads it.
+The snapshot contains a format version and the public 32-byte digest as 64 hex
+characters, not a private key. It is shared by TEE and StrongBox and is retained
+across keymint restarts, reboots, slot changes, and OTA updates. Reusing it does
+not overwrite the Android boot property. An unreadable or invalid snapshot, or
+a failure to save the first value, stops startup instead of selecting a new key.
+Back it up together with `config.toml` and the rest of OMK's data; do not delete
+it to troubleshoot an existing KeyBlob.
+
+Explicit hex and `"random"` modes do not create, read, or replace the auto
+snapshot. Returning to `"auto"` reuses that snapshot if present. If none exists
+and `"random"` was active, reboot the whole device before using `"auto"` so the
+original boot property is restored before its first snapshot is captured.
+
+Changing this field requires a keymint restart. The verified-boot key, locked
+state, and verified-boot state are bound into KeyBlob encryption; deliberately
+changing any of them can make existing keys unreadable. `"random"` changes the
+key on every startup and is unsuitable for retaining such keys. Pinning a
+current value does not recover blobs created with a different, unknown value.
 
 #### `vb_hash`
 
@@ -321,9 +927,10 @@ This controls the 32-byte verified-boot hash:
 - `"random"` generates a new value whenever keymint starts; or
 - a 64-character hexadecimal string pins an exact value.
 
-The same restart rule applies as for `vb_key`: restart keymint after a normal
-change, and reboot the whole device when returning from `"random"` to
-`"auto"`.
+Restart keymint after a normal change, and reboot the whole device when
+returning from `"random"` to `"auto"`. This field is not stored in the public-key
+snapshot: auto mode resolves the current hash on each startup. It is included
+in attestation but not in the Root of Trust input used for KeyBlob encryption.
 
 #### `verified_boot_state`
 
@@ -407,12 +1014,14 @@ empty value is valid. Its absence does not invalidate an available IMEI.
 | --- | --- |
 | `[main].log_level` | Restart keymint. |
 | `[main].force_skip_system_biometric_hat_verification` | Applies to new checks after a valid save. |
+| `[main].ta_operation_delay_ms`, `ta_generation_delay_ms`, `ta_control_delay_ms` | Apply to new TA calls after a valid save; invalid ranges retain the previous configuration. |
 | All `[crypto]` fields | Restart keymint; changing values can make keys unusable. |
 | `[trust].security_patch`, `os_patchlevel`, `vendor_patchlevel`, `boot_patchlevel` | Hot-apply as a group when no other `[trust]` field changes; otherwise restart keymint. |
 | `[trust].os_version` | Restart keymint. |
 | Other `[trust]` fields | Restart keymint. |
 | All `[device]` fields | Restart keymint to rebuild the cached ID snapshot. |
-| `vb_key` or `vb_hash` from `"random"` to `"auto"` | Reboot the whole device. |
+| `vb_key` from `"random"` to `"auto"` | Restart keymint to reuse its saved auto snapshot; reboot the device if none exists. |
+| `vb_hash` from `"random"` to `"auto"` | Reboot the whole device. |
 
 ## `injector.toml`
 
@@ -422,26 +1031,19 @@ empty value is valid. Its absence does not invalidate an available IMEI.
 # Configuration format. Keep this at 1.
 version = 1
 
-# Exact package names allowed to use OMK; no wildcards are supported.
-scoop = [
-  "io.github.vvb2060.keyattestation",
-  "com.google.android.gsf",
-  "com.google.android.gms",
-  "com.android.vending",
-  "com.eltavine.duckdetector",
-]
-
 [main]
 # Master switch for request routing. Keep true for normal use.
 enabled = true
 # Injector log detail: off, error, warn, info, debug, or trace.
 log_level = "debug"
+# Optional delay before challenged OMK generation, 0..250 ms.
+attestation_generation_delay_ms = 0
+# Optional delay before two-way OMK createOperation calls, 0..250 ms.
+operation_start_delay_ms = 0
 
 [filter]
-# Enforce scoop and the safety rules below.
+# Enforce the discovered routing scope and the safety rules below.
 enabled = true
-# Packages that must never use OMK, even if another shared package is in scoop.
-deny_packages = []
 # Block core Android and system identities. Keep true.
 block_android_package = true
 # Reject callers whose package name cannot be found. Keep false.
@@ -478,24 +1080,42 @@ If a documented injector field is omitted, its default value is used. Unknown
 fields in the documented top-level and named sections are rejected, so do not
 add names that are not described in this guide.
 
-#### `scoop`
+### Automatic routing scope
 
-This array contains exact Android package names that may use OMK. It does not
-accept app labels, partial names, or wildcards. Empty entries are removed,
-surrounding spaces are trimmed, and duplicate entries are reduced to one when
-the file is loaded.
+OMK does not read an app list from configuration. Keymint's privileged helper
+queries Android's package manager and publishes the current routing scope:
 
-Android can assign several packages the same identity. In that case, listing
-any one of those packages allows the shared identity, unless a filter rule
-rejects one of the packages in the group. Adding or removing a package does not
-move or convert keys between System and OMK; an app may lose access to keys it
-created through the other route.
+- every installed third-party application, per Android user, and
+- `com.google.android.gms`, `com.google.android.gsf`, and `com.android.vending`
+  for every user.
 
-There is one narrow granted-key exception. An app outside `scoop`, or one whose
-package name cannot be resolved, can still use a key-access grant that OMK
-confirms belongs to an OMK key. This keeps a key deliberately shared by another
-app usable without giving the receiving app general OMK access. Android-blocked
-and deny-listed callers do not receive this exception.
+The helper writes the scope to
+`/data/misc/keystore/omk/data/app_scope.json` (mode `0600`, owner
+`1017:1017`). The injector payload reads that snapshot and watches it for
+changes. The helper records the baseline at startup and refreshes it when the
+installed-package list changes. New requests use the latest valid snapshot without a
+restart; close and reopen an already-open app for a clean boundary.
+
+If the filter is enabled and no valid snapshot is available, resolved app
+callers stay on System until discovery succeeds. An unreadable Android profile
+keeps its previous package set. A failed package-manager query never replaces a
+good snapshot.
+
+Android can assign several packages the same identity. In that case, any one
+in-scope package allows the shared identity. There is no per-app exclusion
+list. Adding or removing an app does not move or convert keys between System
+and OMK; an app may lose access to keys it created through the other route.
+
+There is one narrow granted-key exception. An app outside the discovered scope,
+or one whose package name cannot be resolved, can still use a key-access grant
+that OMK confirms belongs to an OMK key. This keeps a key deliberately shared by
+another app usable without giving the receiving app general OMK access.
+Android-blocked callers do not receive this exception.
+
+The `scoop`, `scoop_details`, `[scoop.*]`, and `deny_packages` settings from
+older builds are not supported. An `injector.toml` that still contains them is
+rejected, which leaves request routing disabled until those settings are
+removed or the file is deleted and the injector is restarted.
 
 ### `[main]`
 
@@ -520,6 +1140,55 @@ A valid file change updates the level without restarting the injector. An
 unrecognized string does not make the TOML file invalid; the injector uses
 `debug` instead.
 
+The shared logging burst policy above also applies to injector logcat and
+file output. Changing the log level does not reset the current burst counters.
+
+#### `attestation_generation_delay_ms`
+
+Optional timing workaround, an integer from `0` to `250` milliseconds. The
+default `0` disables it. A nonzero value delays OMK `generateKey` requests
+containing `ATTESTATION_CHALLENGE` before the generation RPC starts. Both
+two-way and one-way requests receive this delay, including calls that return
+OMK business errors. Plain generation, imports, operations, System requests,
+and failures before generation dispatch do not receive this delay.
+
+This can mitigate clients that classify software KeyMint by generation
+timing. It does not provide hardware security or guarantee a detector result.
+For example, `25` adds at least 25 ms before each affected generation;
+scheduling can add more. The wait occurs before creating or storing the new
+key, without holding the RPC connection or KeyMint/database locks. The Binder
+worker stays occupied, so concurrent requests can delay unrelated callers.
+Key storage and reply delivery remain separate steps; this setting does not
+promise that a concurrent reader cannot observe a key before the generation
+reply arrives. Leave it at `0` unless needed.
+This fixed wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
+
+Valid changes apply without a restart. Out-of-range or non-integer values
+reject the configuration; on reload, the previous valid settings remain active.
+
+#### `operation_start_delay_ms`
+
+Optional timing workaround, an integer from `0` to `250` milliseconds. The
+default `0` disables it. A nonzero value delays two-way OMK `createOperation`
+requests before the operation RPC starts. Both successful calls and calls that
+return OMK business errors receive this delay. One-way calls, System requests,
+and other methods do not receive this delay.
+
+For example, `12` adds at least 12 ms to each affected operation start;
+scheduling can add more. The waiting Binder worker stays occupied, so many
+concurrent calls can delay unrelated callers. Waiting occurs before creating
+the operation, without holding the RPC connection or KeyMint/database locks,
+and does not allocate an operation slot during the wait. Existing operations
+remain subject to their normal lifecycle and pruning rules.
+
+This option can mitigate clients that classify software KeyMint by operation
+timing. It does not alter permission checks, key metadata, routing, or reported
+security levels, provide hardware security, or guarantee a detector result.
+Leave it at `0` unless needed. Valid changes apply without a restart.
+Out-of-range or non-integer values reject the configuration; on reload, the
+previous valid settings remain active.
+This fixed wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
+
 ### `[filter]`
 
 With the filter enabled, OMK evaluates a caller in this order:
@@ -527,42 +1196,30 @@ With the filter enabled, OMK evaluates a caller in this order:
 1. Reject a core Android or system identity when
    `block_android_package = true`.
 2. If its package names cannot be resolved, follow `allow_unknown_package`.
-3. Reject the whole identity if any resolved package is in `deny_packages`.
-4. Reject it if none of its resolved packages is in `scoop`.
-5. Otherwise allow it to use the enabled `[intercept]` routes.
-
-This order matters for packages that share an Android identity: a deny rule
-wins over a matching entry in `scoop`.
+3. Reject it if no resolved package is in the automatic routing scope for its
+   current Android user.
+4. Otherwise allow it to use the enabled `[intercept]` routes.
 
 After this normal filter decision, the narrow OMK-owned grant exception
-described under `scoop` can preserve access for an unknown or out-of-scope app.
-It does not override the Android-package block or `deny_packages`.
+described under [Automatic routing scope](#automatic-routing-scope) can preserve
+access for an unknown or out-of-scope app. It does not override the
+Android-package block.
 
 #### `enabled`
 
-`true` enforces `scoop`, the deny list, the Android-package block, and the
-unknown-package policy. `false` bypasses all four checks and allows every
+`true` enforces the routing scope, the Android-package block, and the
+unknown-package policy. `false` bypasses all three checks and allows every
 caller to reach any operation enabled under `[intercept]`.
 
 Disabling the filter can route Android services and unrelated apps to OMK and
 can break unlocking, app storage, or the user interface. Keep it `true`.
 
-#### `deny_packages`
-
-This is an array of exact package names that must not use OMK. It is useful
-when a selected package shares its Android identity with another package that
-must stay on System. If any package resolved for the identity is denied, the
-entire identity is rejected even when another package is listed in `scoop`.
-
-An empty array, `[]`, is the default. The list uses the same quoted,
-comma-separated TOML format as `scoop`.
-
 #### `block_android_package`
 
-`true` rejects core Android and system identities before `scoop` is considered.
-It also rejects resolved package names equal to `android` or beginning with
-`android.`. It does not mean that every ordinary app whose name begins with
-`com.android.` is automatically blocked.
+`true` rejects core Android and system identities before the routing scope is
+considered. It also rejects resolved package names equal to `android` or
+beginning with `android.`. It does not mean that every ordinary app whose name
+begins with `com.android.` is automatically blocked.
 
 Keep this setting `true`. Setting it to `false` only removes this safety check;
 the remaining filter rules still apply.
@@ -571,8 +1228,8 @@ the remaining filter rules still apply.
 
 This controls a caller whose Android package name cannot be resolved. `false`
 rejects that caller, which is the safe default. `true` allows an unresolved app
-identity without requiring a match in `scoop`; core Android identities are
-still rejected when `block_android_package = true`.
+identity without requiring a match in the routing scope; core Android identities
+are still rejected when `block_android_package = true`.
 
 This setting is not an "all apps" switch. Keep it `false` unless a maintainer
 has confirmed that a supported app cannot be resolved normally.
@@ -584,13 +1241,52 @@ allowed by the filter, `true` routes that operation to OMK and `false` leaves
 that operation on System. These switches do not migrate existing keys or make
 System-created key references usable by OMK.
 
+Service, maintenance, and authorization requests must match the actual Binder
+object registered for their interface before OMK dispatch or state mirroring.
+An interface token naming a different Binder service is left to the system
+interface check and does not trigger OMK work. Registered Binder identities
+are resolved independently on a dedicated thread. If an identity is not yet
+available, calls requiring OMK execution or mandatory state mirroring return
+`SYSTEM_ERROR` without executing a backend; calls configured for System stay
+on System. Best-effort authentication-token updates also stay on System while
+their service identity is unavailable. Missing service identities are retried
+automatically.
+
+Isolated Android service callers use the system ActivityManager process record
+for package attribution when ordinary UID package lookup has no result. The
+privileged helper matches the Binder caller PID and checks its kernel UID and
+process start time before and after the lookup. Only the process package list
+affects the existing package filter; dependency packages are excluded. Null
+package-list entries are ignored; present package names must pass validation. The
+original isolated UID, PID, and SELinux identity remain authoritative for key
+permissions. Failed or unsupported lookups retain unknown-package behavior.
+The ActivityManager transaction number is read from the installed system
+framework's AIDL Stub constant, allowing vendor method-number changes without
+probing unknown transactions. The constant is cached only in memory; process
+ownership is queried and checked for each unresolved isolated caller request.
+This attribution has no key-descriptor or backend-origin dependency and does
+not override the routing scope or per-method interception settings.
+
 The OMK-owned grant exception is separate from ordinary package routing. A
 request carrying a confirmed OMK grant may return to OMK even when the
-receiving app is outside `scoop`, so the granted key remains usable.
+receiving app is outside the discovered routing scope, so the granted key
+remains usable.
 
 Keep all switches `true` for normal use. Mixing System and OMK operations for
 the same app can cause missing-key errors, inconsistent lists, or failed
 follow-up operations.
+
+Calls on an OMK operation handle follow the Keystore2 concurrency contract.
+Overlapping `updateAad`, `update`, `finish`, or `abort` calls on the same handle
+return `OPERATION_BUSY` (19) while another call is in progress. A busy response
+leaves that operation usable. Each operation has its own concurrency guard,
+so calls on different handles do not contend on this guard.
+
+The software TA allocates 32 concurrent operation slots for an AIDL KeyMint
+TEE profile and 16 for a legacy Keymaster TEE profile. StrongBox profiles
+retain four slots. A full TA table returns `TOO_MANY_OPERATIONS` to the
+existing Keystore2 pruning path; `finish` and `abort` release their slots.
+These limits do not change request routing or provide hardware isolation.
 
 #### `get_security_level`
 
@@ -638,19 +1334,92 @@ Controls paged or batched listing of key entries.
 Controls retrieval of supplementary information used by supported attestation
 requests.
 
-### Per-package subtables
-
-Per-package tables such as `[scoop.com.example.app]` and values such as
-`mode = "strict"` are not supported routing options. They may be preserved when
-the file is parsed, but they do not change which backend handles a request. Do
-not add them; use `scoop`, `[filter]`, and `[intercept]` instead.
-
 ### `injector.toml` apply summary
 
 Every valid documented field change is loaded for new requests without a
-device reboot. For `scoop`, `[main].enabled`, `[filter]`, or `[intercept]`
-changes, restart the injector and reopen the affected app when you need a clean
-boundary after a route change. A syntax error, an unknown field, or an
-unsupported future `version` leaves the last valid runtime configuration
-active; if present at injector startup, it leaves OMK request routing disabled
-until the file is corrected.
+device reboot. For `[main].enabled`, `[filter]`, or `[intercept]` changes,
+restart the injector and reopen the affected app when you need a clean boundary
+after a route change. A syntax error, an unknown field, or an unsupported
+future `version` leaves the last valid runtime configuration active; if present
+at injector startup, it leaves OMK request routing disabled until the file is
+corrected. The removed `scoop`, `scoop_details`, `[scoop.*]`, and
+`deny_packages` fields are unknown fields in this build.
+
+The embedded WebUI can install a locally selected keybox,
+synchronize the four `[trust]` patch-level fields from the official Android
+Security Bulletin, restore those fields to `"auto"`, manage the validated PIF
+profile, and enable the optional Tencent Soter compatibility (Beta) simulation.
+Security-patch sync and restore also manage
+the two global runtime properties and the defaults snapshot described above.
+Persistent native save paths validate the complete candidate before writing and
+use atomic replacement. Successful saves enter the applicable watcher hot-reload
+path.
+
+## Local RKP Keybox issuance
+
+**Issue local RKP Keybox** is separate from **Fix RKP**. It generates a
+software P-256 private key locally and requests a certificate for its public
+key using this device's RKP evidence. The key is
+not TEE-backed. This does not repair TEE, enable fingerprint payment, restore
+factory provisioning, or guarantee a Play Integrity verdict.
+
+The WebUI offers Auto, V2 native, V1 AIDL and V1 native protocols. Auto attempts
+V2 native, V1 AIDL, then V1 native when the required local resources exist.
+Only local CSR construction failures permit trying another protocol. The V1
+AIDL route uses the device's system RKP proxy in an isolated Java `app_process`
+bridge. The native routes use the device's Qualcomm KeymasterUtils library in
+an isolated child process. Resource presence is not proof of vendor ABI or
+firmware support. V1 depends on the HAL accepting the upstream PureSoft or
+native MAC construction; it is not a universal Android provisioning API.
+V2 verifies the CSR/DICE signatures, structure, challenge and generated public
+key binding. V1 encrypted evidence can only be validated fully by the server.
+
+Every issuance requires a separate confirmation. The helper sends the real
+`ro.build.fingerprint`, generated public key and device RKP evidence only to
+`https://remoteprovisioning.googleapis.com/v1:fetchEekChain` and
+`https://remoteprovisioning.googleapis.com/v1:signCertificates` over verified
+HTTPS. It never uploads the software private key. Redirects and automatic
+signing retries are disabled. A timeout, malformed response or failed save
+after submission must not be treated as permission to retry blindly.
+Each network operation is bounded to 30 seconds and 256 KiB of response;
+each local bridge/worker is bounded to 30 seconds.
+
+Issued chains must match the generated key and pass certificate validity,
+issuer signature, CA/path-length/key-usage and pinned Google root checks.
+Successful issuance stores `data/rkp-artifacts/<id>/keybox.xml` under the OMK
+root (`/data/misc/keystore/omk/`), with root-owned 0700 directories and a 0600
+file. The XML contains the software private key; no duplicate private-key
+file is written. At most 16 results are retained; issuance refuses when full,
+and does not delete older results automatically. Temporary bridge files are
+removed after the request. Opening the list creates no state and returns only
+an opaque ID, Unix creation timestamp and certificate subjects, never XML,
+private keys, CSR contents or device identifiers.
+
+Issuance does not change the active Keybox. **Import** requires another
+confirmation, revalidates the stored chain, and uses the existing local
+Keybox installation path. Its replacement/hot-reload and existing-key
+semantics are the same as ordinary local import. Expired results can still be
+listed, but cannot be imported. Importing a local result does not change SOTER
+or ordinary OMK package-routing settings.
+
+Root-only helper commands:
+
+```sh
+keymint --webui-rkp-issue --confirm-issuance auto
+keymint --webui-rkp-list
+keymint --webui-rkp-import <32-lowercase-hex-id> --confirm-replace
+```
+
+The optional protocol argument accepts `auto`, `v1`, `v2`, or `v1-native`.
+Browser previews never execute these commands. Android arm64 is required;
+device and Google server acceptance must be tested on the actual firmware.
+The inherited V2 DICE validator recognizes Android 14, 15 and 16 profiles;
+an unknown future profile is rejected, not assumed compatible.
+
+The arm64 build embeds a DEX JAR compiled from `runtime/rkp/RkpV1Bridge.java`.
+Building requires the repository's nightly Rust toolchain, a JDK with
+`javac --release 8`, and Android SDK Build Tools containing `lib/d8.jar`.
+Set `JAVA_HOME` and `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) when not discoverable.
+`ANDROID_BUILD_TOOLS_VERSION` can select an installed Build Tools version.
+The bridge uses reflection against the device's system RKP APK, not bundled
+vendor Binder definitions or a downloaded APK.

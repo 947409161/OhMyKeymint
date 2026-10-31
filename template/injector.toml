@@ -1,24 +1,21 @@
-# With `[filter].enabled = true`, a UID is intercepted when any package
-# sharing that UID is listed in `scoop`.
-# Filter deny settings still apply to every package resolved for the UID.
+# With `[filter].enabled = true`, OMK routes installed third-party apps and the
+# three Google packages discovered by the module helper. The routing scope is
+# refreshed automatically and is not configured in this file.
 
 version = 1
-
-scoop = [
-  "io.github.vvb2060.keyattestation",
-  "com.google.android.gsf",
-  "com.google.android.gms",
-  "com.android.vending",
-  "com.eltavine.duckdetector",
-]
 
 [main]
 enabled = true
 log_level = "debug"
+# Extra delay before challenged OMK generation, [minimum, maximum] ms each 0..250;
+# [0, 0] disables it. Kept on so a challenged generation costs measurably more than
+# a plain one, and sampled per call so that extra cost varies.
+attestation_generation_delay_ms = [20, 30]
+# Optional delay before two-way OMK createOperation calls, 0..250 ms; 0 disables it.
+operation_start_delay_ms = 0
 
 [filter]
 enabled = true
-deny_packages = []
 block_android_package = true
 allow_unknown_package = false
 

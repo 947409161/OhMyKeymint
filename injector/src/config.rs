@@ -6,9 +6,9 @@ use kmr_common::runtime::{
 };
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
@@ -22,8 +22,6 @@ const REPLACE_SAVE_RETRY_LIMIT: usize = 10;
 #[serde(default, deny_unknown_fields)]
 pub struct InjectorConfig {
     pub version: u32,
-    pub scoop: Vec<String>,
-    pub scoop_details: BTreeMap<String, toml::Table>,
     pub main: MainConfig,
     pub filter: FilterConfig,
     pub intercept: InterceptConfig,
@@ -35,6 +33,29 @@ pub struct InjectorConfig {
 pub struct MainConfig {
     pub enabled: bool,
     pub log_level: String,
+    /// Inclusive extra delay range in milliseconds for challenged key generation.
+    ///
+    /// A challenged generation has to cost measurably more than a plain one: a real security level
+    /// pays an extra round trip for the challenge, and that extra cost varies rather than staying
+    /// constant. Each affected generation samples the range afresh, so the delay itself is not a
+    /// fixed signature. `[0, 0]` disables it.
+    #[serde(deserialize_with = "deserialize_delay_range")]
+    pub attestation_generation_delay_ms: [u16; 2],
+    /// Optional delay before a two-way OMK createOperation call, in milliseconds.
+    pub operation_start_delay_ms: u16,
+}
+
+fn deserialize_delay_range<'de, D>(deserializer: D) -> Result<[u16; 2], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<u16>::deserialize(deserializer)?
+        .try_into()
+        .map_err(|_| {
+            serde::de::Error::custom(
+                "main.attestation_generation_delay_ms must contain exactly two integers",
+            )
+        })
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,7 +63,6 @@ pub struct MainConfig {
 #[serde(deny_unknown_fields)]
 pub struct FilterConfig {
     pub enabled: bool,
-    pub deny_packages: Vec<String>,
     pub block_android_package: bool,
     pub allow_unknown_package: bool,
 }
@@ -67,8 +87,6 @@ impl Default for InjectorConfig {
     fn default() -> Self {
         Self {
             version: CURRENT_CONFIG_VERSION,
-            scoop: default_scoop(),
-            scoop_details: BTreeMap::new(),
             main: MainConfig::default(),
             filter: FilterConfig::default(),
             intercept: InterceptConfig::default(),
@@ -76,24 +94,13 @@ impl Default for InjectorConfig {
     }
 }
 
-fn default_scoop() -> Vec<String> {
-    [
-        "io.github.vvb2060.keyattestation",
-        "com.google.android.gsf",
-        "com.google.android.gms",
-        "com.android.vending",
-        "com.eltavine.duckdetector",
-    ]
-    .into_iter()
-    .map(str::to_string)
-    .collect()
-}
-
 impl Default for MainConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             log_level: "debug".to_string(),
+            attestation_generation_delay_ms: [20, 30],
+            operation_start_delay_ms: 0,
         }
     }
 }
@@ -102,7 +109,6 @@ impl Default for FilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            deny_packages: Vec::new(),
             block_android_package: true,
             allow_unknown_package: false,
         }
@@ -149,19 +155,12 @@ enum LoadContext {
 }
 
 #[derive(Deserialize)]
-struct ScoopHeaderValue {
-    package: String,
-}
-
-#[derive(Deserialize)]
 struct ConfigVersion {
     version: Option<toml::Spanned<i64>>,
 }
 
 #[derive(Serialize)]
 struct WritableConfig<'a> {
-    version: u32,
-    scoop: &'a [String],
     main: &'a MainConfig,
     filter: &'a FilterConfig,
     intercept: &'a InterceptConfig,
@@ -170,6 +169,34 @@ struct WritableConfig<'a> {
 static CONFIG: OnceLock<RwLock<Arc<InjectorConfig>>> = OnceLock::new();
 static WATCHER_STARTED: OnceLock<()> = OnceLock::new();
 static CONFIG_FILE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// A stable directory inode serializes atomic config replacements without a
+/// lock file.
+pub(crate) struct DirectoryLock(fs::File);
+
+impl DirectoryLock {
+    pub(crate) fn acquire(directory: &Path) -> io::Result<Self> {
+        let file = fs::File::open(directory)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self(file))
+    }
+}
+
+impl Drop for DirectoryLock {
+    fn drop(&mut self) {
+        let _ = unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+fn lock_config_directory(path: &Path) -> io::Result<DirectoryLock> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("config has no parent"))?;
+    fs::create_dir_all(parent)?;
+    DirectoryLock::acquire(parent)
+}
 
 impl LoadContext {
     fn label(self) -> &'static str {
@@ -214,6 +241,7 @@ fn load_from_path(path: &Path, allow_migration: bool) -> Result<InjectorConfig, 
     let _write_guard = CONFIG_FILE_WRITE_LOCK
         .lock()
         .map_err(|_| LoadError::Io(io::Error::other("config file write lock poisoned")))?;
+    let _directory_guard = lock_config_directory(path).map_err(LoadError::Io)?;
     let contents = fs::read_to_string(path).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
             LoadError::Missing(error)
@@ -304,6 +332,7 @@ fn load_or_seed(path: &Path, context: LoadContext) -> Option<InjectorConfig> {
                 error
             );
             if matches!(context, LoadContext::Startup) {
+                log_removed_field_hint(path);
                 let mut config = current_config_snapshot();
                 config.main.enabled = false;
                 Some(config)
@@ -311,6 +340,21 @@ fn load_or_seed(path: &Path, context: LoadContext) -> Option<InjectorConfig> {
                 None
             }
         }
+    }
+}
+
+/// Routing lists were removed from the schema. Point at the concrete
+/// remediation instead of leaving startup disabled with only a parse error.
+fn log_removed_field_hint(path: &Path) {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return;
+    };
+    if ["scoop", "deny_packages"].iter().any(|marker| contents.contains(marker)) {
+        log::error!(
+            "{} contains routing-list settings that this build no longer supports; \
+             remove scoop, scoop_details, [scoop.*], and deny_packages, or delete the file and restart OMK",
+            path.display()
+        );
     }
 }
 
@@ -331,7 +375,12 @@ fn write_config(path: &Path, config: &InjectorConfig) -> io::Result<()> {
     let _write_guard = CONFIG_FILE_WRITE_LOCK
         .lock()
         .map_err(|_| io::Error::other("config file write lock poisoned"))?;
+    let _directory_guard = lock_config_directory(path)?;
     let contents = render_config(config)?;
+    write_config_contents(path, &contents)
+}
+
+fn write_config_contents(path: &Path, contents: &str) -> io::Result<()> {
     let (default_uid, default_gid) = default_owner(path);
     atomic_replace_preserving_metadata(path, contents.as_bytes(), 0o600, default_uid, default_gid)?;
     log::info!("wrote config to {}", path.display());
@@ -348,31 +397,19 @@ fn default_owner(path: &Path) -> (u32, u32) {
 
 fn render_config(config: &InjectorConfig) -> io::Result<String> {
     let mut contents = String::from(
-        "# With `[filter].enabled = true`, a UID is intercepted when any package\n\
-         # sharing that UID is listed in `scoop`.\n\
-         # Filter deny settings still apply to every package resolved for the UID.\n\n",
+        "# With `[filter].enabled = true`, OMK routes installed third-party apps\n\
+         # and the three Google packages discovered by the module helper.\n\
+         # The routing scope is refreshed automatically; it is not configured here.\n\n",
     );
+    contents.push_str(&format!("version = {}\n\n", config.version));
+
     let base = toml::to_string_pretty(&WritableConfig {
-        version: config.version,
-        scoop: &config.scoop,
         main: &config.main,
         filter: &config.filter,
         intercept: &config.intercept,
     })
     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     contents.push_str(&base);
-
-    for (package, table) in &config.scoop_details {
-        contents.push('\n');
-        contents.push_str("[scoop.");
-        contents.push_str(package);
-        contents.push_str("]\n");
-        if !table.is_empty() {
-            let table_body = toml::to_string_pretty(table)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-            contents.push_str(&table_body);
-        }
-    }
 
     Ok(contents)
 }
@@ -388,9 +425,8 @@ fn parse_versioned_config(
 ) -> Result<(InjectorConfig, Option<String>), String> {
     let without_bom = contents.strip_prefix('\u{feff}').unwrap_or(contents);
     let bom_len = contents.len() - without_bom.len();
-    let preprocessed = preprocess_config(without_bom)?;
     let version: ConfigVersion =
-        toml::from_str(&preprocessed).map_err(|error| error.to_string())?;
+        toml::from_str(without_bom).map_err(|error| error.to_string())?;
     let migrated = match version.version {
         None => {
             if !allow_migration {
@@ -401,12 +437,7 @@ fn parse_versioned_config(
             Some(insert_config_version(contents, bom_len))
         }
         Some(version) => match *version.get_ref() {
-            0 if allow_migration => {
-                let span = version.span();
-                let mut migrated = contents.to_string();
-                migrated.replace_range(span.start + bom_len..span.end + bom_len, "1");
-                Some(migrated)
-            }
+            0 if allow_migration => Some(replace_config_version(contents, bom_len)?),
             0 => {
                 return Err(
                     "injector config version 0 requires an injector restart to migrate".into(),
@@ -425,10 +456,20 @@ fn parse_versioned_config(
     };
     let candidate = migrated.as_deref().unwrap_or(contents);
     let candidate = candidate.strip_prefix('\u{feff}').unwrap_or(candidate);
-    let preprocessed = preprocess_config(candidate)?;
-    let parsed: InjectorConfig =
-        toml::from_str(&preprocessed).map_err(|error| error.to_string())?;
-    Ok((parsed.normalized(), migrated))
+    let parsed: InjectorConfig = toml::from_str(candidate).map_err(|error| error.to_string())?;
+    let attestation_delay = parsed.main.attestation_generation_delay_ms;
+    if attestation_delay[0] > attestation_delay[1] {
+        return Err(
+            "main.attestation_generation_delay_ms must be an ordered [minimum, maximum]".into(),
+        );
+    }
+    if attestation_delay[1] > 250 {
+        return Err("main.attestation_generation_delay_ms must be in 0..=250".into());
+    }
+    if parsed.main.operation_start_delay_ms > 250 {
+        return Err("main.operation_start_delay_ms must be in 0..=250".into());
+    }
+    Ok((parsed, migrated))
 }
 
 fn insert_config_version(contents: &str, bom_len: usize) -> String {
@@ -445,86 +486,80 @@ fn insert_config_version(contents: &str, bom_len: usize) -> String {
     migrated
 }
 
-fn preprocess_config(contents: &str) -> Result<String, String> {
-    let mut rewritten = String::with_capacity(contents.len());
-    for (line_no, line) in contents.split_inclusive('\n').enumerate() {
-        let (body, ending) = match line.strip_suffix('\n') {
-            Some(body) => (body, "\n"),
-            None => (line, ""),
+fn replace_config_version(contents: &str, bom_len: usize) -> Result<String, String> {
+    let without_bom = &contents[bom_len..];
+    let mut line_offset = 0;
+
+    for line in without_bom.split_inclusive('\n') {
+        let line_body = line.strip_suffix('\n').unwrap_or(line);
+        let line_body = line_body.strip_suffix('\r').unwrap_or(line_body);
+        let trimmed = line_body.trim_start();
+        let Some(after_name) = version_key_suffix(trimmed) else {
+            line_offset += line.len();
+            continue;
         };
-        rewritten.push_str(&rewrite_scoop_header(body, line_no + 1)?);
-        rewritten.push_str(ending);
+        let Some(after_equals) = after_name.trim_start().strip_prefix('=') else {
+            line_offset += line.len();
+            continue;
+        };
+        let value = after_equals.trim_start();
+        let token_end = value
+            .find(|character: char| character.is_whitespace() || character == '#')
+            .unwrap_or(value.len());
+        if token_end == 0 {
+            line_offset += line.len();
+            continue;
+        }
+
+        let value_offset = line_body.len() - value.len();
+        let start = bom_len + line_offset + value_offset;
+        let end = start + token_end;
+        let mut migrated = contents.to_string();
+        migrated.replace_range(start..end, "1");
+        return Ok(migrated);
     }
-    Ok(rewritten)
+
+    Err("config version 0 was parsed but its source value could not be located".to_string())
 }
 
-fn rewrite_scoop_header(line: &str, line_no: usize) -> Result<String, String> {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("[[") || !trimmed.starts_with("[scoop.") {
-        return Ok(line.to_string());
+fn version_key_suffix(line: &str) -> Option<&str> {
+    if let Some(after_name) = line.strip_prefix("version") {
+        if after_name.chars().next().is_some_and(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+        }) {
+            return None;
+        }
+        return Some(after_name);
     }
 
-    let leading = &line[..line.len() - trimmed.len()];
-    let Some(close_idx) = trimmed.find(']') else {
-        return Err(format!(
-            "line {line_no}: unterminated [scoop.<package>] header"
-        ));
+    let quote = line
+        .chars()
+        .next()
+        .filter(|character| *character == '"' || *character == '\'')?;
+    let close = if quote == '"' {
+        let mut escaped = false;
+        line.char_indices().skip(1).find_map(|(index, character)| {
+            if escaped {
+                escaped = false;
+                None
+            } else if character == '\\' {
+                escaped = true;
+                None
+            } else if character == quote {
+                Some(index)
+            } else {
+                None
+            }
+        })?
+    } else {
+        line.char_indices()
+            .skip(1)
+            .find_map(|(index, character)| (character == quote).then_some(index))?
     };
-    let header = &trimmed[..=close_idx];
-    let trailer = &trimmed[close_idx + 1..];
-    let header_body = &header[1..header.len() - 1];
-    let package_fragment = header_body
-        .strip_prefix("scoop.")
-        .ok_or_else(|| format!("line {line_no}: invalid scoop header"))?;
-    let package = decode_scoop_package_header(package_fragment.trim(), line_no)?;
-
-    Ok(format!("{leading}[scoop_details.{package:?}]{trailer}"))
-}
-
-fn decode_scoop_package_header(fragment: &str, line_no: usize) -> Result<String, String> {
-    if fragment.is_empty() {
-        return Err(format!("line {line_no}: empty scoop package name"));
-    }
-
-    if (fragment.starts_with('"') && fragment.ends_with('"'))
-        || (fragment.starts_with('\'') && fragment.ends_with('\''))
-    {
-        let wrapped = format!("package = {fragment}");
-        let decoded: ScoopHeaderValue =
-            toml::from_str(&wrapped).map_err(|error| format!("line {line_no}: {error}"))?;
-        let package = decoded.package.trim();
-        if package.is_empty() {
-            return Err(format!("line {line_no}: empty scoop package name"));
-        }
-        return Ok(package.to_string());
-    }
-
-    Ok(fragment.to_string())
-}
-
-fn normalize_packages(packages: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut normalized = Vec::new();
-    for package in packages {
-        let package = package.trim();
-        if !package.is_empty() && seen.insert(package.to_string()) {
-            normalized.push(package.to_string());
-        }
-    }
-    normalized
-}
-
-fn normalize_scoop_details(
-    details: BTreeMap<String, toml::Table>,
-) -> BTreeMap<String, toml::Table> {
-    let mut normalized = BTreeMap::new();
-    for (package, table) in details {
-        let package = package.trim();
-        if !package.is_empty() {
-            normalized.insert(package.to_string(), table);
-        }
-    }
-    normalized
+    let key_fragment = &line[..=close];
+    let parsed = toml::from_str::<toml::Value>(&format!("key = {key_fragment}")).ok()?;
+    let key = parsed.get("key").and_then(toml::Value::as_str)?;
+    (key == "version").then(|| &line[close + quote.len_utf8()..])
 }
 
 fn start_watcher(path: PathBuf) {
@@ -613,14 +648,6 @@ pub fn parse_level_filter(value: &str) -> Option<LevelFilter> {
 impl MainConfig {
     pub fn log_level_filter(&self) -> LevelFilter {
         parse_level_filter(&self.log_level).unwrap_or(LevelFilter::Debug)
-    }
-}
-
-impl InjectorConfig {
-    fn normalized(mut self) -> Self {
-        self.scoop = normalize_packages(self.scoop);
-        self.scoop_details = normalize_scoop_details(self.scoop_details);
-        self
     }
 }
 

@@ -1,11 +1,26 @@
 use super::*;
+use kmr_common::app_scope::{AppScope, global_packages};
+use std::collections::{BTreeMap, BTreeSet};
 
 fn base_config() -> FilterConfig {
     FilterConfig::default()
 }
 
-fn base_scope() -> Vec<String> {
-    vec!["com.allowed".to_string()]
+fn scope_with(users: &[(u32, &[&str])]) -> AppScope {
+    let global = global_packages();
+    let users: BTreeMap<u32, BTreeSet<String>> = users
+        .iter()
+        .map(|(user, packages)| {
+            let packages: BTreeSet<String> =
+                packages.iter().map(|name| name.to_string()).collect();
+            (*user, packages)
+        })
+        .collect();
+    AppScope::from_parts(global, users)
+}
+
+fn base_scope() -> AppScope {
+    scope_with(&[(0, &["com.allowed"]), (10, &["com.allowed"])])
 }
 
 #[test]
@@ -21,33 +36,15 @@ fn disabled_filter_reports_disabled_and_allows() {
 #[test]
 fn android_package_is_rejected_when_blocking_is_enabled() {
     let config = base_config();
-    let scope = vec!["android".to_string()];
 
     let decision = evaluate(
-        &scope,
+        &base_scope(),
         &config,
         10_000,
         PackageResolution::Known(vec!["android".to_string()]),
     );
     assert!(!decision.allowed);
     assert_eq!(decision.reason, FilterReason::RejectedAndroidPackage);
-}
-
-#[test]
-fn denylist_rejection_takes_precedence_over_scope() {
-    let mut config = base_config();
-    config.block_android_package = false;
-    config.deny_packages = vec!["com.example.app".to_string()];
-    let scope = vec!["com.example.app".to_string()];
-
-    let decision = evaluate(
-        &scope,
-        &config,
-        10_000,
-        PackageResolution::Known(vec!["com.example.app".to_string()]),
-    );
-    assert!(!decision.allowed);
-    assert_eq!(decision.reason, FilterReason::RejectedByDenylist);
 }
 
 #[test]
@@ -98,25 +95,26 @@ fn root_follows_android_package_policy() {
 }
 
 #[test]
-fn android_prefixed_package_in_scope_is_allowed() {
+fn global_google_packages_are_allowed_in_every_user() {
     let config = base_config();
-    let scope = vec!["com.android.vending".to_string()];
-    let decision = evaluate(
-        &scope,
-        &config,
-        10_000,
-        PackageResolution::Known(scope.clone()),
-    );
-    assert!(decision.allowed);
-    assert_eq!(decision.reason, FilterReason::Allowed);
+    for uid in [10_000, 1_010_000, 2_010_000] {
+        let decision = evaluate(
+            &scope_with(&[]),
+            &config,
+            uid,
+            PackageResolution::Known(vec!["com.google.android.gms".to_string()]),
+        );
+        assert!(decision.allowed, "caller uid={uid}");
+        assert_eq!(decision.reason, FilterReason::Allowed);
+    }
 }
 
 #[test]
-fn empty_scope_keeps_android_and_denylist_precedence() {
+fn empty_scope_rejects_resolved_packages() {
     let mut config = base_config();
     config.block_android_package = false;
     let decision = evaluate(
-        &[],
+        &scope_with(&[]),
         &config,
         10_000,
         PackageResolution::Known(vec!["com.anything".to_string()]),
@@ -126,21 +124,50 @@ fn empty_scope_keeps_android_and_denylist_precedence() {
 
     let config = base_config();
     let decision = evaluate(
-        &[],
+        &scope_with(&[]),
         &config,
         10_000,
         PackageResolution::Known(vec!["android".to_string()]),
     );
     assert_eq!(decision.reason, FilterReason::RejectedAndroidPackage);
+}
 
-    let mut config = base_config();
-    config.block_android_package = false;
-    config.deny_packages = vec!["com.blocked".to_string()];
+#[test]
+fn scope_is_evaluated_per_android_user() {
+    let config = base_config();
+    let scope = scope_with(&[(10, &["com.allowed"])]);
+    for (uid, allowed) in [(10_123, false), (1_010_123, true), (1_110_123, false)] {
+        let decision = evaluate(
+            &scope,
+            &config,
+            uid,
+            PackageResolution::Known(vec!["com.allowed".to_string()]),
+        );
+        assert_eq!(decision.allowed, allowed, "caller uid={uid}");
+    }
+}
+
+#[test]
+fn any_in_scope_package_of_a_shared_uid_allows_the_caller() {
+    let config = base_config();
     let decision = evaluate(
-        &[],
+        &scope_with(&[(10, &["com.allowed"])]),
         &config,
-        10_000,
-        PackageResolution::Known(vec!["com.blocked".to_string()]),
+        1_010_123,
+        PackageResolution::Known(vec![
+            "com.other".to_string(),
+            "com.allowed".to_string(),
+        ]),
     );
-    assert_eq!(decision.reason, FilterReason::RejectedByDenylist);
+    assert!(decision.allowed);
+    assert_eq!(decision.reason, FilterReason::Allowed);
+
+    let decision = evaluate(
+        &scope_with(&[(0, &["com.allowed"])]),
+        &config,
+        1_010_123,
+        PackageResolution::Known(vec!["com.allowed".to_string()]),
+    );
+    assert!(!decision.allowed);
+    assert_eq!(decision.reason, FilterReason::RejectedNotInScope);
 }

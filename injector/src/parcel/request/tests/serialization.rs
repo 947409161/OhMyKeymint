@@ -34,7 +34,7 @@ fn generated_key_descriptor_round_trip_preserves_non_null_empty_blob() {
 }
 
 #[test]
-fn generated_deserializers_reject_invalid_lengths_and_presence_flags() {
+fn generated_deserializers_reject_invalid_lengths() {
     assert_status_code(
         parse_authorization_request_as_method(AuthorizationMethod::OnDeviceUnlocked, |parcel| {
             parcel.write(&0i32).unwrap();
@@ -46,23 +46,6 @@ fn generated_deserializers_reject_invalid_lengths_and_presence_flags() {
         parse_operation_request_with_payload(
             crate::android::system::keystore2::IKeystoreOperation::transactions::r#update,
             |parcel| parcel.write(&-2i32).unwrap(),
-        ),
-        StatusCode::UnexpectedNull,
-    );
-    assert_status_code(
-        parse_security_level_request_with_payload(
-            crate::android::system::keystore2::IKeystoreSecurityLevel::transactions::r#deleteKey,
-            |parcel| parcel.write(&2i32).unwrap(),
-        ),
-        StatusCode::UnexpectedNull,
-    );
-    assert_status_code(
-        parse_security_level_request_with_payload(
-            crate::android::system::keystore2::IKeystoreSecurityLevel::transactions::r#generateKey,
-            |parcel| {
-                parcel.write(&blob_key_descriptor(None)).unwrap();
-                parcel.write(&2i32).unwrap();
-            },
         ),
         StatusCode::UnexpectedNull,
     );

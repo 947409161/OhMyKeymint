@@ -15,8 +15,33 @@ use crate::identify::{
     KEYSTORE_SECURITY_LEVEL_INTERFACE, KEYSTORE_SERVICE_INTERFACE,
 };
 use anyhow::{bail, Result};
+use rsbinder::{Parcel, Parcelable, StatusCode};
 
 use super::{parse_typed_request, RequestEnvelope};
+
+/// Reads the non-null `KeyDescriptor` argument of a keystore AIDL method.
+///
+/// Java's `Parcel.readTypedObject` treats every nonzero presence flag as a
+/// present parcelable, while AOSP's native reader and rsbinder require exactly
+/// `1`. Keystore clients can therefore put a different nonzero flag on the
+/// wire; that must not decide which backend handles the request. Accept any
+/// nonzero flag and let the selected backend resolve the descriptor.
+fn read_key_descriptor(parcel: &mut Parcel) -> Result<KeyDescriptor> {
+    match read_optional_key_descriptor(parcel)? {
+        Some(key) => Ok(key),
+        None => Err(StatusCode::UnexpectedNull.into()),
+    }
+}
+
+fn read_optional_key_descriptor(parcel: &mut Parcel) -> Result<Option<KeyDescriptor>> {
+    let presence: i32 = parcel.read()?;
+    if presence == 0 {
+        return Ok(None);
+    }
+    let mut key = KeyDescriptor::default();
+    key.read_from_parcel(parcel)?;
+    Ok(Some(key))
+}
 
 #[derive(Debug, Clone)]
 pub enum ParsedAuthorizationRequest {
@@ -443,8 +468,8 @@ unsafe fn parse_maintenance_request_with_resolver(
         MaintenanceMethod::EarlyBootEnded => ParsedMaintenanceRequest::EarlyBootEnded,
         MaintenanceMethod::OnDeviceOffBody => ParsedMaintenanceRequest::OnDeviceOffBody,
         MaintenanceMethod::MigrateKeyNamespace => ParsedMaintenanceRequest::MigrateKeyNamespace {
-            source: parcel.read()?,
-            destination: parcel.read()?,
+            source: read_key_descriptor(&mut parcel)?,
+            destination: read_key_descriptor(&mut parcel)?,
         },
         MaintenanceMethod::DeleteAllKeys => ParsedMaintenanceRequest::DeleteAllKeys,
         MaintenanceMethod::GetAppUidsAffectedBySid => {
@@ -485,10 +510,10 @@ pub unsafe fn parse_service_request(
             security_level: parcel.read()?,
         },
         ServiceMethod::GetKeyEntry => ParsedServiceRequest::GetKeyEntry {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
         },
         ServiceMethod::UpdateSubcomponent => ParsedServiceRequest::UpdateSubcomponent {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
             public_cert: parcel.read()?,
             certificate_chain: parcel.read()?,
         },
@@ -497,15 +522,15 @@ pub unsafe fn parse_service_request(
             nspace: parcel.read()?,
         },
         ServiceMethod::DeleteKey => ParsedServiceRequest::DeleteKey {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
         },
         ServiceMethod::Grant => ParsedServiceRequest::Grant {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
             grantee_uid: parcel.read()?,
             access_vector: parcel.read()?,
         },
         ServiceMethod::Ungrant => ParsedServiceRequest::Ungrant {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
             grantee_uid: parcel.read()?,
         },
         ServiceMethod::GetNumberOfEntries => ParsedServiceRequest::GetNumberOfEntries {
@@ -551,38 +576,38 @@ pub unsafe fn parse_security_level_request(
 
     Ok(match method {
         SecurityLevelMethod::CreateOperation => ParsedSecurityLevelRequest::CreateOperation {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
             operation_parameters: parcel.read()?,
             forced: parcel.read()?,
         },
         SecurityLevelMethod::GenerateKey => ParsedSecurityLevelRequest::GenerateKey {
-            key: parcel.read()?,
-            attestation_key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
+            attestation_key: read_optional_key_descriptor(&mut parcel)?,
             params: parcel.read()?,
             flags: parcel.read()?,
             entropy: parcel.read()?,
         },
         SecurityLevelMethod::ImportKey => ParsedSecurityLevelRequest::ImportKey {
-            key: parcel.read()?,
-            attestation_key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
+            attestation_key: read_optional_key_descriptor(&mut parcel)?,
             params: parcel.read()?,
             flags: parcel.read()?,
             key_data: parcel.read()?,
         },
         SecurityLevelMethod::ImportWrappedKey => ParsedSecurityLevelRequest::ImportWrappedKey {
-            key: parcel.read()?,
-            wrapping_key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
+            wrapping_key: read_key_descriptor(&mut parcel)?,
             masking_key: parcel.read()?,
             params: parcel.read()?,
             authenticators: parcel.read()?,
         },
         SecurityLevelMethod::ConvertStorageKeyToEphemeral => {
             ParsedSecurityLevelRequest::ConvertStorageKeyToEphemeral {
-                storage_key: parcel.read()?,
+                storage_key: read_key_descriptor(&mut parcel)?,
             }
         }
         SecurityLevelMethod::DeleteKey => ParsedSecurityLevelRequest::DeleteKey {
-            key: parcel.read()?,
+            key: read_key_descriptor(&mut parcel)?,
         },
     })
 }

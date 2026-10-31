@@ -21,6 +21,7 @@ fn synthetic_operation_missing_args_keep_not_enough_data_status() {
             aad_allowed: true,
             backend: Some(backend),
             finalized: false,
+            call_gate: Arc::new(Mutex::new(())),
         },
     );
 
@@ -84,6 +85,7 @@ fn synthetic_operation_trailing_abort_finalizes_operation() {
             aad_allowed: true,
             backend: Some(backend),
             finalized: false,
+            call_gate: Arc::new(Mutex::new(())),
         },
     );
 
@@ -136,6 +138,7 @@ fn synthetic_operation_bad_interface_marker_rejects_abort() {
             aad_allowed: true,
             backend: Some(backend),
             finalized: false,
+            call_gate: Arc::new(Mutex::new(())),
         },
     );
 
@@ -209,6 +212,7 @@ fn synthetic_operation_dispatch_uses_registered_caller_identity() {
                 aad_allowed: true,
                 backend: Some(backend),
                 finalized: false,
+                call_gate: Arc::new(Mutex::new(())),
             },
         );
 
@@ -266,6 +270,7 @@ fn tracked_operation_pending_call_uses_transaction_caller_identity() {
             aad_allowed: true,
             backend: None,
             finalized: false,
+            call_gate: Arc::new(Mutex::new(())),
         },
     );
 
@@ -336,7 +341,7 @@ fn synthetic_unexpected_null_parse_errors_are_status_replies() {
         cookie: 0x6682,
     };
     let mut invalid_key_request = request_parcel(identify::KEYSTORE_SECURITY_LEVEL_INTERFACE);
-    invalid_key_request.write(&2i32).unwrap();
+    invalid_key_request.write(&0i32).unwrap();
     let invalid_key_tr = transaction_for_parcel(
         security_level_target,
         crate::android::system::keystore2::IKeystoreSecurityLevel::transactions::r#deleteKey,

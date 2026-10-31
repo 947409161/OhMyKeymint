@@ -8,6 +8,8 @@ use crate::{
 use rsbinder::{Status, StatusCode};
 use std::mem::size_of;
 
+mod interface_boundary;
+
 #[test]
 fn omk_grant_blocker_preserves_inbound_binder_buffer() {
     let mut tr: binder_transaction_data = unsafe { std::mem::zeroed() };
@@ -130,12 +132,12 @@ fn service_route_respects_intercept_configuration() {
 
     let mut intercept = disabled_intercept_config();
     intercept.get_key_entry = true;
-    assert!(security_level_scoop_enabled(&intercept));
+    assert!(security_level_intercept_enabled(&intercept));
     intercept.get_key_entry = false;
     intercept.get_security_level = true;
-    assert!(security_level_scoop_enabled(&intercept));
+    assert!(security_level_intercept_enabled(&intercept));
     intercept.get_security_level = false;
-    assert!(!security_level_scoop_enabled(&intercept));
+    assert!(!security_level_intercept_enabled(&intercept));
 }
 
 #[test]
@@ -287,7 +289,7 @@ fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
 }
 
 #[test]
-fn denylisted_grant_readback_does_not_probe_omk() {
+fn android_rejected_grant_readback_does_not_probe_omk() {
     let _guard = route_state_test_guard();
     let grant = KeyDescriptor {
         domain: Domain::GRANT,
@@ -297,8 +299,8 @@ fn denylisted_grant_readback_does_not_probe_omk() {
     };
     let decision = crate::filter::FilterDecision {
         allowed: false,
-        reason: crate::filter::FilterReason::RejectedByDenylist,
-        packages: vec!["com.blocked".to_string()],
+        reason: crate::filter::FilterReason::RejectedAndroidPackage,
+        packages: vec!["android".to_string()],
     };
     let caller = CallerInfo {
         uid: 10002,
@@ -310,7 +312,9 @@ fn denylisted_grant_readback_does_not_probe_omk() {
         &ParsedServiceRequest::GetKeyEntry { key: grant },
         &decision,
         &caller,
-        |_, _| -> anyhow::Result<bool> { panic!("denylisted callers must not probe OMK grants") },
+        |_, _| -> anyhow::Result<bool> {
+            panic!("android-rejected callers must not probe OMK grants")
+        },
     )
-    .expect("denylisted grant lookup should succeed"));
+    .expect("android-rejected grant lookup should succeed"));
 }

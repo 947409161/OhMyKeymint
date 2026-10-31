@@ -1,6 +1,7 @@
 target.apk
 target
 .vscode
+.idea
 /.claude
 
 

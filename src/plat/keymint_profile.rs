@@ -180,6 +180,21 @@ fn probe_system_keymint_hardware_info(
     Ok(info)
 }
 
+/// Read the actual AIDL HAL without synthesizing a property-based profile.
+/// A missing optional service is distinct from a registered but faulty HAL.
+pub(crate) fn diagnose_system_keymint(
+    security_level: SecurityLevel,
+) -> Result<Option<KeyMintHardwareInfo>> {
+    let service = system_keymint_service_name(security_level)
+        .ok_or_else(|| anyhow!("unsupported security level for system KeyMint probe"))?;
+    if hub::try_get_service(service)?.is_none() {
+        return Ok(None);
+    }
+    let info = probe_system_keymint_hardware_info(security_level)?;
+    ensure_system_hardware_security_level(&info, security_level)?;
+    Ok(Some(info))
+}
+
 fn profile_from_system_hardware_info(
     info: &KeyMintHardwareInfo,
     security_level: SecurityLevel,
@@ -231,59 +246,41 @@ fn system_keymint_service_name(security_level: SecurityLevel) -> Option<&'static
 
 fn probe_keymint_version_from_vintf(security_level: SecurityLevel) -> Option<i32> {
     let instance = security_level_instance(security_level)?;
-
-    for path in kmr_common::vintf::manifest_paths() {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        match kmr_common::vintf::parse_aidl_hal_version_xml(
-            &contents,
-            KEYMINT_HAL_NAME,
-            KEYMINT_DEVICE_INTERFACE,
-            instance,
-            normalize_keymint_version,
-        ) {
-            Ok(Some(version)) => return Some(version),
-            Ok(None) => {}
-            Err(error) => {
-                log::warn!(
-                    "Ignoring invalid VINTF manifest {}: {error:#}",
-                    path.display()
-                );
-            }
+    match kmr_common::vintf::resolve_aidl_hal_version(
+        kmr_common::vintf::ManifestKind::Device,
+        KEYMINT_HAL_NAME,
+        KEYMINT_DEVICE_INTERFACE,
+        instance,
+    ) {
+        Ok(Some(version)) => normalize_keymint_version(version).or_else(|| {
+            log::warn!("unsupported KeyMint AIDL version {version} resolved from VINTF");
+            None
+        }),
+        Ok(None) => None,
+        Err(error) => {
+            log::warn!("failed to resolve KeyMint AIDL version from VINTF: {error:#}");
+            None
         }
     }
-
-    None
 }
 
 fn keymint_instance_declared_in_vintf(security_level: SecurityLevel) -> bool {
     let Some(instance) = security_level_instance(security_level) else {
         return false;
     };
-
-    for path in kmr_common::vintf::manifest_paths() {
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        match kmr_common::vintf::parse_aidl_hal_instance_xml(
-            &contents,
-            KEYMINT_HAL_NAME,
-            KEYMINT_DEVICE_INTERFACE,
-            instance,
-        ) {
-            Ok(true) => return true,
-            Ok(false) => {}
-            Err(error) => {
-                log::warn!(
-                    "Ignoring invalid VINTF manifest {}: {error:#}",
-                    path.display()
-                );
-            }
+    match kmr_common::vintf::resolve_aidl_hal_version(
+        kmr_common::vintf::ManifestKind::Device,
+        KEYMINT_HAL_NAME,
+        KEYMINT_DEVICE_INTERFACE,
+        instance,
+    ) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(error) => {
+            log::warn!("failed to resolve KeyMint instance from VINTF: {error:#}");
+            false
         }
     }
-
-    false
 }
 
 fn fallback_keymint_version_from_android() -> i32 {

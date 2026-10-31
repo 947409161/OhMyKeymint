@@ -1,3 +1,4 @@
+use kmr_common::app_scope::AppScope;
 use kmr_common::consts::{AID_APP_START, AID_USER_OFFSET};
 
 use crate::config::FilterConfig;
@@ -13,7 +14,6 @@ pub enum FilterReason {
     Disabled,
     Allowed,
     RejectedAndroidPackage,
-    RejectedByDenylist,
     RejectedNotInScope,
     RejectedUnknownPackage,
 }
@@ -26,7 +26,7 @@ pub struct FilterDecision {
 }
 
 pub fn evaluate(
-    scoop: &[String],
+    scope: &AppScope,
     config: &FilterConfig,
     uid: u32,
     resolution: PackageResolution,
@@ -75,12 +75,7 @@ pub fn evaluate(
             .any(|pkg| pkg == "android" || pkg.starts_with("android."))
     {
         FilterReason::RejectedAndroidPackage
-    } else if packages
-        .iter()
-        .any(|pkg| config.deny_packages.contains(pkg))
-    {
-        FilterReason::RejectedByDenylist
-    } else if !packages.iter().any(|pkg| scoop.contains(pkg)) {
+    } else if !packages.iter().any(|pkg| scope.contains(uid / AID_USER_OFFSET, pkg)) {
         FilterReason::RejectedNotInScope
     } else {
         FilterReason::Allowed

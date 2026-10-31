@@ -1,4 +1,99 @@
 use super::*;
+use kmr_common::app_scope::AppScope;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[test]
+fn isolated_package_lookup_preserves_original_authorization_identity() {
+    let caller = CallerInfo {
+        uid: 99001,
+        pid: 42,
+        sid: "u:r:isolated_app:s0:c123,c456".into(),
+    };
+    let packages = resolve_packages_for_caller_with(
+        &caller,
+        |uid| {
+            assert_eq!(uid, 99001);
+            PackageResolution::Unknown
+        },
+        |forwarded| {
+            assert_eq!(forwarded.uid, 99001);
+            assert_eq!(forwarded.pid, 42);
+            assert_eq!(forwarded.sid, caller.sid);
+            Ok(vec!["com.example.owner".into()])
+        },
+    );
+    assert!(
+        matches!(packages, PackageResolution::Known(ref names) if names == &["com.example.owner"])
+    );
+    let scope = AppScope::from_parts(
+        BTreeSet::new(),
+        BTreeMap::from([(0, BTreeSet::from(["com.example.owner".to_string()]))]),
+    );
+    assert!(
+        crate::filter::evaluate(
+            &scope,
+            &crate::config::FilterConfig::default(),
+            99001,
+            packages.clone(),
+        )
+        .allowed
+    );
+    assert!(!crate::filter::evaluate(
+        &AppScope::default(),
+        &crate::config::FilterConfig::default(),
+        99001,
+        packages,
+    )
+    .allowed);
+    assert_eq!(caller.uid, 99001);
+}
+
+#[test]
+fn isolated_package_lookup_is_only_an_unknown_uid_fallback() {
+    for uid in [10371, 99001] {
+        let caller = CallerInfo {
+            uid,
+            pid: 42,
+            sid: "u:r:app:s0".into(),
+        };
+        assert!(matches!(
+            resolve_packages_for_caller_with(
+                &caller,
+                |_| PackageResolution::Known(vec!["com.already.known".into()]),
+                |_| panic!("known caller must not query AMS")
+            ),
+            PackageResolution::Known(_)
+        ));
+    }
+    let mut caller = CallerInfo {
+        uid: 10371,
+        pid: 42,
+        sid: "u:r:app:s0".into(),
+    };
+    assert!(matches!(
+        resolve_packages_for_caller_with(
+            &caller,
+            |_| PackageResolution::Unknown,
+            |_| panic!("ordinary UID must not query AMS")
+        ),
+        PackageResolution::Unknown
+    ));
+    caller.uid = 99001;
+    for fail in [false, true] {
+        assert!(matches!(
+            resolve_packages_for_caller_with(
+                &caller,
+                |_| PackageResolution::Unknown,
+                |_| if fail {
+                    Err(anyhow::anyhow!("query unavailable"))
+                } else {
+                    Ok(Vec::new())
+                }
+            ),
+            PackageResolution::Unknown
+        ));
+    }
+}
 
 #[test]
 fn binder_status_classification() {

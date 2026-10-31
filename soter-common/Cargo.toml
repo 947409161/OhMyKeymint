@@ -1,0 +1,11 @@
+[package]
+name = "soter-common"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+libc = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.27.0"

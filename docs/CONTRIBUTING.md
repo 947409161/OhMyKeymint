@@ -6,6 +6,14 @@ Thank you for improving OhMyKeymint. Before submitting a change, read the
 invariants in [AGENTS.md](../AGENTS.md). Discuss substantial features or behavior
 changes in an issue first.
 
+## AI-assisted contributions
+
+Before submitting any contribution, read and follow the
+[AI-Assisted Contributions Policy](AI-Policy.md). You must disclose every AI
+tool and model used (or state that none was used), understand every submitted
+change, personally review the complete final diff, and retain full human
+responsibility for the contribution.
+
 ## Scope and compatibility
 
 - Keep each pull request focused on one problem. Do not include unrelated
@@ -37,16 +45,16 @@ State in the pull request what behavior remains unchanged.
 
 ### OMK routing
 
-- For every request routed by `scoop` with
+- For every request allowed by the automatic routing scope with
   `FilterDecision::allowed == true`, OMK is the only backend during normal
-  reachable operation. Per-method intercept settings still determine whether a
-  request is routed by `scoop`.
+  reachable operation. Per-method intercept settings still determine whether an
+  allowed request is routed to OMK.
 - Choose the backend only from the current caller, filter decision, method, and
   configuration. Do not inspect or infer which backend created a key,
   `KeyDescriptor`, `KEY_ID`, `GRANT`, alias, wrapping key, or attestation key.
 - Per-method intercept settings are authoritative. When interception for a
-  method is disabled, pass the request to System unchanged even when `scoop`
-  allows the caller.
+  method is disabled, pass the request to System unchanged even when the
+  routing scope allows the caller.
 - Do not provide key or descriptor continuity between System and OMK. Pass old,
   externally supplied, and System-created descriptors to the selected backend
   unchanged. An OMK business error for such a descriptor is authoritative.
@@ -59,6 +67,10 @@ State in the pull request what behavior remains unchanged.
   stale or dead RPC transport failures such as `DeadObject`, `RpcError`, and
   `NotEnoughData`. Reuse the existing classifiers instead of maintaining a
   separate status list.
+- Client-visible diagnostics name source files by the AOSP tree layout, such as
+  `system/security/keystore2/src/security_level.rs`. Re-rooting happens once, at
+  the binder boundary in `anyhow_error_to_cstring`. Error codes and log output
+  are unchanged.
 
 ### Persistent and temporary files
 
@@ -108,6 +120,14 @@ Generate the local Cargo configuration and build the package:
 python scripts/setup_cargo_config.py --ndk-root <ANDROID_NDK_ROOT> --force
 python build.py --debug
 ```
+
+Release packages use the identity order `OhMyKeymint-<version>-<commit count>-<short commit hash>-release.zip` for the default arm64 build; the packaged `module.prop` shows the same identity in parentheses. A `-dirty` suffix is included when the source worktree has uncommitted changes.
+
+Module archives use standard ZIP Deflate at compression level 9 and retain
+per-file SHA-256 verification. Native release binaries keep speed-oriented
+optimization, LTO and symbol stripping. The log4rs dependency enables only
+console and pattern encoding; OMK's shared rotating-file logger handles file
+output without log4rs configuration-file parsers or built-in rolling appenders.
 
 Rust changes must pass:
 

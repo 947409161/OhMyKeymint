@@ -30,7 +30,7 @@ use crate::android::hardware::security::keymint::{
 use crate::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor, ResponseCode::ResponseCode,
 };
-use crate::config::{config, Config, CryptoConfig};
+use crate::config::{config, Config, CryptoConfig, MainConfig};
 use crate::global::DB;
 use crate::keymaster::db::Uuid;
 use crate::keymaster::error::{map_km_error, map_ks_error};
@@ -65,6 +65,7 @@ use kmr_wire::keymint::{AttestationKey, KeyParam};
 use kmr_wire::rpc::MINIMUM_SUPPORTED_KEYS_IN_CSR;
 use kmr_wire::*;
 use log::{error, info, warn};
+use rand::RngExt;
 use regex::Regex;
 use rsbinder::{ExceptionCode, Interface, Status, Strong};
 
@@ -92,7 +93,9 @@ fn extract_u32(value: Option<regex::Match>) -> std::result::Result<u32, HalInfoE
 }
 
 /// Extract a patchlevel in form YYYYMM from a "YYYY-MM-DD" property value.
-fn extract_truncated_patchlevel(prop_value: &str) -> std::result::Result<u32, HalInfoError> {
+pub(crate) fn extract_truncated_patchlevel(
+    prop_value: &str,
+) -> std::result::Result<u32, HalInfoError> {
     let patchlevel_regex = Regex::new(PATCHLEVEL_REGEX)
         .map_err(|e| format!("failed to compile patchlevel regexp: {e:?}"))?;
 
@@ -257,27 +260,36 @@ impl KeyMintDevice {
     {
         let creation_result =
             map_km_error(creator(&self.km_dev)).context(err!("creator failed"))?;
-        let key_parameters = key_characteristics_to_internal(creation_result.keyCharacteristics);
-
-        let creation_date = DateTime::now().context(err!("DateTime::now() failed"))?;
-
-        let mut key_metadata = KeyMetaData::new();
-        key_metadata.add(KeyMetaEntry::CreationDate(creation_date));
-        let mut blob_metadata = BlobMetaData::new();
-        let km_uuid = *self.km_uuid.read().unwrap();
-        blob_metadata.add(BlobMetaEntry::KmUuid(km_uuid));
-
-        db.store_new_key(
-            key_desc,
-            key_type,
-            &key_parameters,
-            &BlobInfo::new(&creation_result.keyBlob, &blob_metadata),
-            &CertificateInfo::new(None, None),
-            &key_metadata,
-            &km_uuid,
-        )
-        .context(err!("store_new_key failed"))?;
-        Ok(())
+        let result = (|| {
+            let key_parameters =
+                key_characteristics_to_internal(creation_result.keyCharacteristics);
+            let creation_date = DateTime::now().context(err!("DateTime::now() failed"))?;
+            let mut key_metadata = KeyMetaData::new();
+            key_metadata.add(KeyMetaEntry::CreationDate(creation_date));
+            let mut blob_metadata = BlobMetaData::new();
+            let km_uuid = *self.km_uuid.read().unwrap();
+            blob_metadata.add(BlobMetaEntry::KmUuid(km_uuid));
+            db.store_new_key(
+                key_desc,
+                key_type,
+                &key_parameters,
+                &BlobInfo::new(&creation_result.keyBlob, &blob_metadata),
+                &CertificateInfo::new(None, None),
+                &key_metadata,
+                &km_uuid,
+                None,
+            )
+            .context(err!("store_new_key failed"))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            // The new blob has not become a durable entry. Delete only this
+            // fresh blob and preserve the original publication error.
+            if let Err(error) = map_km_error(self.km_dev.deleteKey(&creation_result.keyBlob)) {
+                warn!("event=unpublished_internal_key_cleanup_failed error={error:?}");
+            }
+        }
+        result
     }
 
     /// Generate a KeyDescriptor for internal-use keys.
@@ -327,6 +339,7 @@ impl KeyMintDevice {
         key_desc: &KeyDescriptor,
         key_type: KeyType,
         params: &[KeyParameter],
+        allow_invalid_key_blob_upgrade: bool,
         validate_characteristics: F,
     ) -> Result<(KeyIdGuard, KeyBlob<'_>)>
     where
@@ -355,30 +368,88 @@ impl KeyMintDevice {
                 });
 
             if let Some(key_blob_vec) = key_blob {
-                let (key_characteristics, key_blob) = self
-                    .upgrade_keyblob_if_required_with(
-                        db,
-                        &key_id_guard,
-                        KeyBlob::NonSensitive(key_blob_vec),
-                        |key_blob| {
-                            map_km_error({
-                                let _wp = wd::watch(concat!(
-                                    "KeyMintDevice::lookup_or_generate_key: ",
-                                    "calling IKeyMintDevice::getKeyCharacteristics."
-                                ));
-                                self.km_dev.getKeyCharacteristics(key_blob, &[], &[])
-                            })
-                        },
-                    )
-                    .context(err!("calling getKeyCharacteristics"))?;
+                // Keep a copy because the normal upgrade helper takes ownership of its
+                // `KeyBlob`; the boot-level recovery path may need to retry the original bytes.
+                let original_key_blob = key_blob_vec.clone();
+                let get_characteristics = |key_blob: &[u8]| {
+                    map_km_error({
+                        let _wp = wd::watch(concat!(
+                            "KeyMintDevice::lookup_or_generate_key: ",
+                            "calling IKeyMintDevice::getKeyCharacteristics."
+                        ));
+                        self.km_dev.getKeyCharacteristics(key_blob, &[], &[])
+                    })
+                };
+                let existing_key = self.upgrade_keyblob_if_required_with(
+                    db,
+                    &key_id_guard,
+                    KeyBlob::NonSensitive(key_blob_vec),
+                    get_characteristics,
+                );
+
+                let (key_characteristics, key_blob, recovered_invalid_blob) = match existing_key {
+                    Ok((key_characteristics, key_blob)) => (key_characteristics, key_blob, false),
+                    Err(error)
+                        if allow_invalid_key_blob_upgrade
+                            && matches!(
+                                error.root_cause().downcast_ref::<Error>(),
+                                Some(Error::Km(ErrorCode::INVALID_KEY_BLOB))
+                            ) =>
+                    {
+                        // The boot-level key is module-owned and may have been created while a
+                        // synchronized security patch was active.  Ask the same KeyMint TA to
+                        // rewrite its patch-level authorizations so the key material and derived
+                        // boot-level encryption keys remain unchanged after restoring defaults.
+                        let upgraded_blob = {
+                            let _wp = wd::watch(
+                                "KeyMintDevice::lookup_or_generate_key: calling IKeyMintDevice::upgradeKey for boot-level key",
+                            );
+                            map_km_error(self.km_dev.upgradeKey(&original_key_blob, &[]))
+                        }
+                        .context(err!("upgrading invalid boot-level keyblob"))?;
+                        if upgraded_blob.is_empty() {
+                            return Err(Error::Km(ErrorCode::INVALID_KEY_BLOB)).context(err!(
+                                "upgradeKey returned an empty blob for invalid boot-level key"
+                            ));
+                        }
+
+                        let mut new_blob_metadata = BlobMetaData::new();
+                        new_blob_metadata.add(BlobMetaEntry::KmUuid(*self.km_uuid.read().unwrap()));
+                        db.set_blob(
+                            &key_id_guard,
+                            SubComponentType::KEY_BLOB,
+                            Some(&upgraded_blob),
+                            Some(&new_blob_metadata),
+                        )
+                        .context(err!("failed to persist upgraded boot-level keyblob"))?;
+
+                        let key_characteristics = get_characteristics(&upgraded_blob).context(
+                            err!("calling getKeyCharacteristics after boot-level keyblob upgrade"),
+                        )?;
+                        (
+                            key_characteristics,
+                            KeyBlob::NonSensitive(upgraded_blob),
+                            true,
+                        )
+                    }
+                    Err(error) => {
+                        return Err(error).context(err!("calling getKeyCharacteristics"));
+                    }
+                };
 
                 if validate_characteristics(&key_characteristics) {
                     return Ok((key_id_guard, key_blob));
                 }
 
+                if recovered_invalid_blob {
+                    return Err(Error::Km(ErrorCode::INVALID_KEY_BLOB)).context(err!(
+                        "upgraded boot-level keyblob failed characteristic validation"
+                    ));
+                }
+
                 // If this point is reached the existing key is considered outdated or corrupted
-                // in some way. It will be replaced with a new key below.
-            };
+                // in some way. It will be replaced with a new one below.
+            }
         }
 
         self.create_and_store_key(db, key_desc, key_type, |km_dev| {
@@ -492,6 +563,7 @@ static EARLY_BOOT_ENDED: AtomicBool = AtomicBool::new(false);
 pub struct KeyMintWrapper {
     security_level: SecurityLevel,
     inner: Arc<KeyMintWrapperInner>,
+    request_patchlevels: Option<kmr_ta::RequestPatchLevels>,
 }
 
 struct KeyMintWrapperInner {
@@ -534,6 +606,71 @@ fn begin_key_parameters_to_km(
     key_parameters_to_km(&filtered, version_number)
 }
 
+fn ta_delay_range(code: KeyMintOperation, main: &MainConfig) -> [u16; 2] {
+    use KeyMintOperation::*;
+    match code {
+        DeviceBegin
+        | OperationUpdateAad
+        | OperationUpdate
+        | OperationFinish
+        | OperationAbort
+        | DeviceGetKeyCharacteristics => main.ta_operation_delay_ms,
+        DeviceGenerateKey
+        | DeviceImportKey
+        | DeviceImportWrappedKey
+        | DeviceUpgradeKey
+        | DeviceConvertStorageKeyToEphemeral
+        | RpcGenerateEcdsaP256KeyPair
+        | RpcGenerateCertificateRequest
+        | RpcGenerateCertificateV2Request => main.ta_generation_delay_ms,
+        DeviceGetHardwareInfo
+        | DeviceAddRngEntropy
+        | DeviceDeleteKey
+        | DeviceDeleteAllKeys
+        | DeviceDestroyAttestationIds
+        | DeviceEarlyBootEnded
+        | GetRootOfTrustChallenge
+        | GetRootOfTrust
+        | SendRootOfTrust
+        | SetAdditionalAttestationInfo
+        | RpcGetHardwareInfo
+        | SecureClockGenerateTimeStamp => main.ta_control_delay_ms,
+        SetHalInfo
+        | SetBootInfo
+        | SetAttestationIds
+        | SetHalVersion
+        | SharedSecretGetSharedSecretParameters
+        | SharedSecretComputeSharedSecret => [0, 0],
+    }
+}
+
+fn sample_ta_delay(range: [u16; 2], rng: &mut impl rand::Rng) -> std::time::Duration {
+    // Config validation guarantees ordered endpoints in 0..=250 ms.
+    let min_us = u64::from(range[0]) * 1000;
+    let max_us = u64::from(range[1]) * 1000;
+    let micros = if min_us == max_us {
+        min_us
+    } else {
+        rng.random_range(min_us..=max_us)
+    };
+    std::time::Duration::from_micros(micros)
+}
+
+fn delay_ta_call(code: KeyMintOperation) {
+    let range = {
+        let current = config().read().unwrap();
+        ta_delay_range(code, &current.main)
+    };
+    if range == [0, 0] {
+        return;
+    }
+    let delay = sample_ta_delay(range, &mut rand::rng());
+    log::trace!("TA request {code:?}: extra delay {} us", delay.as_micros());
+    // No config or TA mutex is held here. Higher-level operation/RPC guards
+    // still serialize their callers, and existing operations remain live.
+    std::thread::sleep(delay);
+}
+
 #[allow(non_snake_case)]
 impl IKeyMintDevice for KeyMintWrapper {
     fn begin(
@@ -557,7 +694,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             })?,
         });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result: InternalBeginResult = match result.rsp {
             Some(PerformOpRsp::DeviceBegin(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -593,6 +730,7 @@ impl IKeyMintDevice for KeyMintWrapper {
         crate::android::hardware::security::keymint::KeyMintHardwareInfo::KeyMintHardwareInfo,
         Status,
     > {
+        delay_ta_call(KeyMintOperation::DeviceGetHardwareInfo);
         let hardware_info: keymint::KeyMintHardwareInfo = self
             .inner
             .keymint
@@ -647,7 +785,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             key_params: key_parameters,
             attestation_key,
         });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceGenerateKey(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -692,7 +830,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             key_data: key_data.to_vec(),
             attestation_key,
         });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceImportKey(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -726,7 +864,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             biometric_sid,
         });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceImportWrappedKey(rsp)) => rsp.ret,
             Some(_) => {
@@ -755,7 +893,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             upgrade_params,
         });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceUpgradeKey(rsp)) => rsp.ret,
             Some(_) => {
@@ -809,7 +947,7 @@ impl IKeyMintDevice for KeyMintWrapper {
                 storage_key_blob: storage_key_blob.to_vec(),
             });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceConvertStorageKeyToEphemeral(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -833,7 +971,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             app_data: app_data.to_vec(),
         });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::DeviceGetKeyCharacteristics(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -856,7 +994,7 @@ impl IKeyMintDevice for KeyMintWrapper {
     fn getRootOfTrustChallenge(&self) -> rsbinder::status::Result<[u8; 16]> {
         let req = PerformOpReq::GetRootOfTrustChallenge(GetRootOfTrustChallengeRequest {});
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::GetRootOfTrustChallenge(rsp)) => rsp.ret,
             Some(_) => {
@@ -876,7 +1014,7 @@ impl IKeyMintDevice for KeyMintWrapper {
             challenge: *challenge,
         });
 
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let result = match result.rsp {
             Some(PerformOpRsp::GetRootOfTrust(rsp)) => rsp.ret,
             Some(_) => unreachable!("Unexpected response type"),
@@ -920,7 +1058,16 @@ impl KeyMintWrapper {
         Ok(KeyMintWrapper {
             security_level,
             inner: shared_keymint_wrapper_inner(security_level)?,
+            request_patchlevels: None,
         })
+    }
+
+    pub fn with_patchlevels(&self, patchlevels: Option<kmr_ta::RequestPatchLevels>) -> Self {
+        Self {
+            security_level: self.security_level,
+            inner: self.inner.clone(),
+            request_patchlevels: patchlevels,
+        }
     }
 
     pub fn clear_attestation_cache(&self) {
@@ -952,6 +1099,7 @@ impl KeyMintWrapper {
     }
 
     pub fn get_hardware_info(&self) -> Result<keymint::KeyMintHardwareInfo, Error> {
+        delay_ta_call(KeyMintOperation::DeviceGetHardwareInfo);
         self.inner
             .keymint
             .lock()
@@ -960,14 +1108,14 @@ impl KeyMintWrapper {
             .map_err(|_| Error::Km(ErrorCode::UNKNOWN_ERROR))
     }
 
+    fn process_ta_request(&self, req: PerformOpReq) -> PerformOpResponse {
+        delay_ta_call(req.code());
+        let mut ta = self.inner.keymint.lock().unwrap();
+        ta.process_req_with_patchlevels(req, self.request_patchlevels)
+    }
+
     fn process_status_only(&self, req: PerformOpReq) -> Result<(), Error> {
-        let error_code = self
-            .inner
-            .keymint
-            .lock()
-            .unwrap()
-            .process_req(req)
-            .error_code;
+        let error_code = self.process_ta_request(req).error_code;
         match error_code {
             0 => Ok(()),
             _ => Err(Error::Binder(ExceptionCode::ServiceSpecific, error_code)),
@@ -994,7 +1142,7 @@ impl KeyMintWrapper {
             auth_token: hardware_auth_token,
             timestamp_token,
         });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let error_code = result.error_code;
         let _result: UpdateAadResponse = match result.rsp {
             Some(PerformOpRsp::OperationUpdateAad(rsp)) => rsp,
@@ -1025,7 +1173,7 @@ impl KeyMintWrapper {
             auth_token: hardware_auth_token,
             timestamp_token,
         });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let error_code = result.error_code;
         let result: UpdateResponse = match result.rsp {
             Some(PerformOpRsp::OperationUpdate(rsp)) => rsp,
@@ -1063,7 +1211,7 @@ impl KeyMintWrapper {
             timestamp_token,
             confirmation_token,
         });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let error_code = result.error_code;
         let result: FinishResponse = match result.rsp {
             Some(PerformOpRsp::OperationFinish(rsp)) => rsp,
@@ -1076,7 +1224,7 @@ impl KeyMintWrapper {
 
     pub fn op_abort(&self, op_handle: i64) -> Result<(), Error> {
         let req = PerformOpReq::OperationAbort(AbortRequest { op_handle });
-        let result = self.inner.keymint.lock().unwrap().process_req(req);
+        let result = self.process_ta_request(req);
         let error_code = result.error_code;
         let _result: AbortResponse = match result.rsp {
             Some(PerformOpRsp::OperationAbort(rsp)) => rsp,
@@ -1445,6 +1593,7 @@ pub fn clear_initialized_attestation_caches() {
         let keymint = KeyMintWrapper {
             security_level: SecurityLevel::TRUSTED_ENVIRONMENT,
             inner: wrapper.clone(),
+            request_patchlevels: None,
         };
         keymint.clear_attestation_cache();
     }
@@ -1453,6 +1602,7 @@ pub fn clear_initialized_attestation_caches() {
         let keymint = KeyMintWrapper {
             security_level: SecurityLevel::STRONGBOX,
             inner: wrapper.clone(),
+            request_patchlevels: None,
         };
         keymint.clear_attestation_cache();
     }
@@ -1491,8 +1641,89 @@ fn shared_keymint_wrapper_inner(security_level: SecurityLevel) -> Result<Arc<Key
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn ta_delay_categories_cover_operations_and_key_lifecycle() {
+        use KeyMintOperation::*;
+        let main = MainConfig {
+            ta_operation_delay_ms: [17, 23],
+            ta_generation_delay_ms: [5, 7],
+            ta_control_delay_ms: [1, 2],
+            ..MainConfig::default()
+        };
+        for code in [
+            DeviceBegin,
+            OperationUpdateAad,
+            OperationUpdate,
+            OperationFinish,
+            OperationAbort,
+            DeviceGetKeyCharacteristics,
+        ] {
+            assert_eq!(ta_delay_range(code, &main), [17, 23], "{code:?}");
+        }
+        for code in [
+            DeviceGenerateKey,
+            DeviceImportKey,
+            DeviceImportWrappedKey,
+            DeviceUpgradeKey,
+            DeviceConvertStorageKeyToEphemeral,
+            RpcGenerateEcdsaP256KeyPair,
+            RpcGenerateCertificateRequest,
+            RpcGenerateCertificateV2Request,
+        ] {
+            assert_eq!(ta_delay_range(code, &main), [5, 7], "{code:?}");
+        }
+        for code in [
+            DeviceGetHardwareInfo,
+            DeviceAddRngEntropy,
+            DeviceDeleteKey,
+            DeviceDeleteAllKeys,
+            DeviceDestroyAttestationIds,
+            DeviceEarlyBootEnded,
+            GetRootOfTrustChallenge,
+            GetRootOfTrust,
+            SendRootOfTrust,
+            SetAdditionalAttestationInfo,
+            RpcGetHardwareInfo,
+            SecureClockGenerateTimeStamp,
+        ] {
+            assert_eq!(ta_delay_range(code, &main), [1, 2], "{code:?}");
+        }
+        for code in [
+            SetHalInfo,
+            SetBootInfo,
+            SetAttestationIds,
+            SetHalVersion,
+            SharedSecretGetSharedSecretParameters,
+            SharedSecretComputeSharedSecret,
+        ] {
+            assert_eq!(ta_delay_range(code, &main), [0, 0], "{code:?}");
+        }
+    }
+
+    #[test]
+    fn ta_delay_sampling_is_per_call_and_bounded_in_microseconds() {
+        use rand::SeedableRng;
+        use std::time::Duration;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        for range in [[0, 0], [1, 1], [250, 250]] {
+            assert_eq!(
+                sample_ta_delay(range, &mut rng),
+                Duration::from_millis(range[0].into())
+            );
+        }
+        for range in [[9, 21], [6, 16], [1, 4], [0, 250]] {
+            let samples: Vec<_> = (0..64).map(|_| sample_ta_delay(range, &mut rng)).collect();
+            assert!(samples
+                .iter()
+                .all(|value| *value >= Duration::from_millis(range[0].into())
+                    && *value <= Duration::from_millis(range[1].into())));
+            assert!(samples.windows(2).any(|pair| pair[0] != pair[1]));
+            assert!(samples.iter().any(|value| value.as_micros() % 1000 != 0));
+        }
+    }
 
     fn param(tag: Tag, value: KeyParameterValue) -> KeyParameter {
         KeyParameter { tag, value }
@@ -1667,10 +1898,34 @@ mod tests {
         }
     }
 
-    fn test_ta() -> KeyMintTa {
+    pub(crate) fn test_wrapper() -> KeyMintWrapper {
+        // Test fixtures must not initialize the production shared TA or its
+        // on-device secure-deletion storage.
+        KeyMintWrapper {
+            security_level: SecurityLevel::TRUSTED_ENVIRONMENT,
+            inner: Arc::new(KeyMintWrapperInner {
+                keymint: Mutex::new(test_ta()),
+            }),
+            request_patchlevels: None,
+        }
+    }
+
+    pub(crate) fn test_ta() -> KeyMintTa {
+        test_ta_with_profile(
+            KeyMintDevice::KEY_MINT_V5,
+            kmr_wire::keymint::SecurityLevel::TrustedEnvironment,
+            None,
+        )
+    }
+
+    fn test_ta_with_profile(
+        version_number: i32,
+        security_level: kmr_wire::keymint::SecurityLevel,
+        sdd_mgr: Option<Box<dyn kmr_common::keyblob::SecureDeletionSecretManager>>,
+    ) -> KeyMintTa {
         let hw_info = HardwareInfo {
-            version_number: KeyMintDevice::KEY_MINT_V5,
-            security_level: kmr_wire::keymint::SecurityLevel::TrustedEnvironment,
+            version_number,
+            security_level,
             impl_name: "test",
             author_name: "test",
             unique_id: "test",
@@ -1685,7 +1940,7 @@ mod tests {
             keys: Box::new(soft::Keys::new([0; 32], [1; 32])),
             sign_info: None,
             attest_ids: None,
-            sdd_mgr: None,
+            sdd_mgr,
             bootloader: Box::new(kmr_ta::device::BootloaderDone),
             sk_wrapper: None,
             tup: Box::new(kmr_ta::device::TrustedPresenceUnsupported),
@@ -1702,7 +1957,7 @@ mod tests {
         )
     }
 
-    fn set_boot_info(ta: &mut KeyMintTa) -> i32 {
+    pub(crate) fn set_boot_info(ta: &mut KeyMintTa) -> i32 {
         ta.process_req(PerformOpReq::SetBootInfo(kmr_wire::SetBootInfoRequest {
             verified_boot_state: 0,
             verified_boot_hash: vec![0; 32],
@@ -1714,6 +1969,330 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_import_consumes_single_use_wrapping_key_only_after_success() {
+        use der::{asn1::AnyRef, Decode, Encode, Sequence};
+        use kmr_common::{
+            crypto::Rng,
+            keyblob::{
+                sdd_mem::InMemorySlotManager, EncryptedKeyBlob, SecureDeletionData,
+                SecureDeletionSecretManager, SecureDeletionSlot, SlotPurpose,
+            },
+            Error as KmError,
+        };
+        use kmr_wire::keymint::{
+            Algorithm, BlockMode, DateTime, Digest, KeyFormat, KeyOrigin, KeyPurpose, PaddingMode,
+            SecurityLevel,
+        };
+        use openssl::{
+            encrypt::Encrypter,
+            hash::MessageDigest,
+            pkey::PKey,
+            rsa::{Padding, Rsa},
+            symm::{encrypt, encrypt_aead, Cipher},
+        };
+
+        #[derive(Default)]
+        struct TestSddState {
+            manager: InMemorySlotManager<4>,
+            faulting_source: Option<SecureDeletionSlot>,
+            delete_attempts: Vec<SecureDeletionSlot>,
+        }
+
+        struct SharedSdd(Arc<Mutex<TestSddState>>);
+
+        impl SecureDeletionSecretManager for SharedSdd {
+            fn get_or_create_factory_reset_secret(
+                &mut self,
+                rng: &mut dyn Rng,
+            ) -> Result<SecureDeletionData, KmError> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .manager
+                    .get_or_create_factory_reset_secret(rng)
+            }
+
+            fn get_factory_reset_secret(&self) -> Result<SecureDeletionData, KmError> {
+                self.0.lock().unwrap().manager.get_factory_reset_secret()
+            }
+
+            fn new_secret(
+                &mut self,
+                rng: &mut dyn Rng,
+                purpose: SlotPurpose,
+            ) -> Result<(SecureDeletionSlot, SecureDeletionData), KmError> {
+                self.0.lock().unwrap().manager.new_secret(rng, purpose)
+            }
+
+            fn get_secret(&self, slot: SecureDeletionSlot) -> Result<SecureDeletionData, KmError> {
+                self.0.lock().unwrap().manager.get_secret(slot)
+            }
+
+            fn delete_secret(&mut self, slot: SecureDeletionSlot) -> Result<(), KmError> {
+                let mut state = self.0.lock().unwrap();
+                state.delete_attempts.push(slot);
+                if let Some(source) = state.faulting_source {
+                    return Err(if slot == source {
+                        kmr_common::km_err!(
+                            SecureHwCommunicationFailed,
+                            "injected source consumption failure"
+                        )
+                    } else {
+                        kmr_common::km_err!(UnknownError, "injected destination cleanup failure")
+                    });
+                }
+                state.manager.delete_secret(slot)
+            }
+
+            fn delete_all(&mut self) {
+                self.0.lock().unwrap().manager.delete_all();
+            }
+        }
+
+        #[derive(Sequence)]
+        struct TestSecureKeyWrapper<'a> {
+            version: i32,
+            #[asn1(type = "OCTET STRING")]
+            encrypted_transport_key: &'a [u8],
+            #[asn1(type = "OCTET STRING")]
+            initialization_vector: &'a [u8],
+            key_description: AnyRef<'a>,
+            #[asn1(type = "OCTET STRING")]
+            encrypted_key: &'a [u8],
+            #[asn1(type = "OCTET STRING")]
+            tag: &'a [u8],
+        }
+
+        let slots = Arc::new(Mutex::new(TestSddState::default()));
+        let mut ta = test_ta_with_profile(
+            KeyMintDevice::KEY_MINT_V5,
+            SecurityLevel::TrustedEnvironment,
+            Some(Box::new(SharedSdd(slots.clone()))),
+        );
+        assert_eq!(set_boot_info(&mut ta), 0);
+        assert_eq!(
+            ta.process_req(PerformOpReq::SetHalInfo(SetHalInfoRequest {
+                os_version: 150000,
+                os_patchlevel: 202506,
+                vendor_patchlevel: 20250605,
+            }))
+            .error_code,
+            0
+        );
+        let wrapping_key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let wrapping = ta.process_req(PerformOpReq::DeviceImportKey(ImportKeyRequest {
+            key_params: vec![
+                KeyParam::Algorithm(Algorithm::Rsa),
+                KeyParam::Purpose(KeyPurpose::WrapKey),
+                KeyParam::KeySize(KeySizeInBits(2048)),
+                KeyParam::RsaPublicExponent(RsaExponent(65537)),
+                KeyParam::Padding(PaddingMode::RsaOaep),
+                KeyParam::Digest(Digest::Sha256),
+                KeyParam::RsaOaepMgfDigest(Digest::Sha1),
+                KeyParam::UsageCountLimit(1),
+                KeyParam::NoAuthRequired,
+                KeyParam::CertificateNotBefore(DateTime { ms_since_epoch: 0 }),
+                KeyParam::CertificateNotAfter(DateTime {
+                    ms_since_epoch: 2_000_000_000_000,
+                }),
+            ],
+            key_format: KeyFormat::Pkcs8,
+            key_data: wrapping_key.private_key_to_pkcs8().unwrap(),
+            attestation_key: None,
+        }));
+        assert_eq!(wrapping.error_code, 0, "{wrapping:?}");
+        let wrapping = match wrapping.rsp {
+            Some(PerformOpRsp::DeviceImportKey(response)) => response.ret,
+            response => panic!("unexpected wrapping key import response: {response:?}"),
+        };
+        assert!(wrapping.key_characteristics.iter().any(|chars| {
+            chars.security_level == SecurityLevel::TrustedEnvironment
+                && chars.authorizations.contains(&KeyParam::UsageCountLimit(1))
+        }));
+        let wrapping_slot = EncryptedKeyBlob::new(&wrapping.key_blob)
+            .unwrap()
+            .secure_deletion_slot()
+            .expect("single-use hardware wrapping key requires a secure deletion slot");
+        assert!(slots
+            .lock()
+            .unwrap()
+            .manager
+            .get_secret(wrapping_slot)
+            .is_ok());
+
+        let transport_key = [0x42; 32];
+        let masking_key = [0x73; 32];
+        let masked_transport_key: [u8; 32] =
+            std::array::from_fn(|index| transport_key[index] ^ masking_key[index]);
+        let mut encrypter = Encrypter::new(&wrapping_key).unwrap();
+        encrypter.set_rsa_padding(Padding::PKCS1_OAEP).unwrap();
+        encrypter.set_rsa_oaep_md(MessageDigest::sha256()).unwrap();
+        encrypter.set_rsa_mgf1_md(MessageDigest::sha1()).unwrap();
+        let mut encrypted_transport_key =
+            vec![0; encrypter.encrypt_len(&masked_transport_key).unwrap()];
+        let encrypted_len = encrypter
+            .encrypt(&masked_transport_key, &mut encrypted_transport_key)
+            .unwrap();
+        encrypted_transport_key.truncate(encrypted_len);
+
+        // Existing TA vector extended with UsageCountLimit(1) so the destination
+        // also owns a secure deletion slot: RAW AES-256, ECB, PKCS7, no auth.
+        let key_description = hex::decode(concat!(
+            "30350201033030a1083106020100020101a203020120a30402020100",
+            "a4053103020101a6053103020140bf831503020101bf8377020500"
+        ))
+        .unwrap();
+        let iv = [0x19; 12];
+        let mut tag = [0; 16];
+        let encrypted_key = encrypt_aead(
+            Cipher::aes_256_gcm(),
+            &transport_key,
+            Some(&iv),
+            &key_description,
+            &[0x64; 32],
+            &mut tag,
+        )
+        .unwrap();
+        let encode_wrapper = |tag: &[u8]| {
+            TestSecureKeyWrapper {
+                version: 0,
+                encrypted_transport_key: &encrypted_transport_key,
+                initialization_vector: &iv,
+                key_description: AnyRef::from_der(&key_description).unwrap(),
+                encrypted_key: &encrypted_key,
+                tag,
+            }
+            .to_der()
+            .unwrap()
+        };
+        let import_request = |wrapped_key_data| {
+            PerformOpReq::DeviceImportWrappedKey(ImportWrappedKeyRequest {
+                wrapped_key_data,
+                wrapping_key_blob: wrapping.key_blob.clone(),
+                masking_key: masking_key.to_vec(),
+                unwrapping_params: vec![
+                    KeyParam::Padding(PaddingMode::RsaOaep),
+                    KeyParam::Digest(Digest::Sha256),
+                    KeyParam::RsaOaepMgfDigest(Digest::Sha1),
+                ],
+                password_sid: 0,
+                biometric_sid: 0,
+            })
+        };
+        let mut bad_tag = tag;
+        bad_tag[0] ^= 1;
+        let failed = ta.process_req(import_request(encode_wrapper(&bad_tag)));
+        assert_eq!(failed.error_code, ErrorCode::VERIFICATION_FAILED.0);
+        {
+            let state = slots.lock().unwrap();
+            assert!(state.manager.get_secret(wrapping_slot).is_ok());
+            assert!(state.delete_attempts.is_empty());
+        }
+
+        let valid_wrapper = encode_wrapper(&tag);
+        slots.lock().unwrap().faulting_source = Some(wrapping_slot);
+        let failed_consumption = ta.process_req(import_request(valid_wrapper.clone()));
+        assert_eq!(
+            failed_consumption.error_code,
+            ErrorCode::SECURE_HW_COMMUNICATION_FAILED.0
+        );
+        assert!(failed_consumption.rsp.is_none());
+        {
+            let mut state = slots.lock().unwrap();
+            // Source consumption and destination cleanup both reached the manager.
+            // The cleanup failure must not replace the source error or publish a key.
+            assert_eq!(state.delete_attempts.len(), 2);
+            assert_eq!(state.delete_attempts[0], wrapping_slot);
+            assert_ne!(state.delete_attempts[1], wrapping_slot);
+            assert!(state.manager.get_secret(wrapping_slot).is_ok());
+            assert!(state.manager.get_secret(state.delete_attempts[1]).is_ok());
+            state.faulting_source = None;
+        }
+        let imported = ta.process_req(import_request(valid_wrapper.clone()));
+        assert_eq!(imported.error_code, 0, "{imported:?}");
+        let imported = match imported.rsp {
+            Some(PerformOpRsp::DeviceImportWrappedKey(response)) => response.ret,
+            response => panic!("unexpected wrapped import response: {response:?}"),
+        };
+        let destination_slot = EncryptedKeyBlob::new(&imported.key_blob)
+            .unwrap()
+            .secure_deletion_slot()
+            .expect("single-use destination requires a secure deletion slot");
+        {
+            let state = slots.lock().unwrap();
+            assert!(state.manager.get_secret(wrapping_slot).is_err());
+            assert!(state.manager.get_secret(destination_slot).is_ok());
+            assert_eq!(state.delete_attempts[2], wrapping_slot);
+        }
+        assert_eq!(
+            ta.process_req(import_request(valid_wrapper)).error_code,
+            ErrorCode::INVALID_KEY_BLOB.0
+        );
+
+        let characteristics = ta.process_req(PerformOpReq::DeviceGetKeyCharacteristics(
+            GetKeyCharacteristicsRequest {
+                key_blob: imported.key_blob.clone(),
+                app_id: vec![],
+                app_data: vec![],
+            },
+        ));
+        assert_eq!(characteristics.error_code, 0, "{characteristics:?}");
+        let characteristics = match characteristics.rsp {
+            Some(PerformOpRsp::DeviceGetKeyCharacteristics(response)) => response.ret,
+            response => panic!("unexpected imported key characteristics: {response:?}"),
+        };
+        assert_eq!(characteristics, imported.key_characteristics);
+        assert!(characteristics.iter().any(|chars| {
+            chars.security_level == SecurityLevel::TrustedEnvironment
+                && chars
+                    .authorizations
+                    .contains(&KeyParam::Algorithm(Algorithm::Aes))
+                && chars
+                    .authorizations
+                    .contains(&KeyParam::Origin(KeyOrigin::SecurelyImported))
+        }));
+
+        let begin = ta.process_req(PerformOpReq::DeviceBegin(BeginRequest {
+            purpose: KeyPurpose::Encrypt,
+            key_blob: imported.key_blob,
+            params: vec![
+                KeyParam::BlockMode(BlockMode::Ecb),
+                KeyParam::Padding(PaddingMode::Pkcs7),
+            ],
+            auth_token: None,
+        }));
+        assert_eq!(begin.error_code, 0, "{begin:?}");
+        let op_handle = match begin.rsp {
+            Some(PerformOpRsp::DeviceBegin(response)) => response.ret.op_handle,
+            response => panic!("unexpected imported key begin response: {response:?}"),
+        };
+        let plaintext = b"wrapped key regression";
+        let finish = ta.process_req(PerformOpReq::OperationFinish(FinishRequest {
+            op_handle,
+            input: Some(plaintext.to_vec()),
+            signature: None,
+            auth_token: None,
+            timestamp_token: None,
+            confirmation_token: None,
+        }));
+        assert_eq!(finish.error_code, 0, "{finish:?}");
+        let ciphertext = match finish.rsp {
+            Some(PerformOpRsp::OperationFinish(response)) => response.ret,
+            response => panic!("unexpected imported key finish response: {response:?}"),
+        };
+        assert_eq!(
+            ciphertext,
+            encrypt(Cipher::aes_256_ecb(), &[0x64; 32], None, plaintext).unwrap()
+        );
+        assert!(slots
+            .lock()
+            .unwrap()
+            .manager
+            .get_secret(destination_slot)
+            .is_err());
+    }
+
+    #[test]
     fn keymint_ta_early_boot_ended_rejects_late_boot_info() {
         let mut ta = test_ta();
         assert_eq!(set_boot_info(&mut ta), 0);
@@ -1722,6 +2301,206 @@ mod tests {
         assert_eq!(resp.error_code, 0);
 
         assert_eq!(set_boot_info(&mut ta), ErrorCode::EARLY_BOOT_ENDED.0);
+    }
+
+    #[test]
+    fn operation_capacity_matches_hal_profile_and_reuses_released_slots() {
+        use kmr_wire::keymint::{Algorithm, Digest, KeyPurpose, SecurityLevel};
+
+        for (version, tee_capacity) in [
+            (30, 16),
+            (40, 16),
+            (41, 16),
+            (KeyMintDevice::KEY_MINT_V1, 32),
+            (KeyMintDevice::KEY_MINT_V2, 32),
+            (KeyMintDevice::KEY_MINT_V3, 32),
+            (KeyMintDevice::KEY_MINT_V4, 32),
+            (KeyMintDevice::KEY_MINT_V5, 32),
+        ] {
+            for (level, capacity) in [
+                (SecurityLevel::TrustedEnvironment, tee_capacity),
+                (SecurityLevel::Strongbox, 4),
+            ] {
+                let mut ta = test_ta_with_profile(version, level, None);
+                assert_eq!(set_boot_info(&mut ta), 0);
+                assert_eq!(
+                    ta.process_req(PerformOpReq::SetHalInfo(SetHalInfoRequest {
+                        os_version: 150000,
+                        os_patchlevel: 202506,
+                        vendor_patchlevel: 20250605,
+                    }))
+                    .error_code,
+                    0
+                );
+                let generated =
+                    ta.process_req(PerformOpReq::DeviceGenerateKey(GenerateKeyRequest {
+                        key_params: vec![
+                            KeyParam::Purpose(KeyPurpose::Sign),
+                            KeyParam::Algorithm(Algorithm::Hmac),
+                            KeyParam::KeySize(KeySizeInBits(256)),
+                            KeyParam::Digest(Digest::Sha256),
+                            KeyParam::MinMacLength(128),
+                            KeyParam::NoAuthRequired,
+                        ],
+                        attestation_key: None,
+                    }));
+                assert_eq!(generated.error_code, 0, "{level:?} v{version}");
+                let key_blob = match generated.rsp {
+                    Some(PerformOpRsp::DeviceGenerateKey(response)) => response.ret.key_blob,
+                    response => panic!("unexpected generate response: {response:?}"),
+                };
+                let begin = |ta: &mut KeyMintTa| {
+                    ta.process_req(PerformOpReq::DeviceBegin(BeginRequest {
+                        purpose: KeyPurpose::Sign,
+                        key_blob: key_blob.clone(),
+                        params: vec![KeyParam::Digest(Digest::Sha256), KeyParam::MacLength(128)],
+                        auth_token: None,
+                    }))
+                };
+                let mut handles = Vec::new();
+                for slot in 0..capacity {
+                    let response = begin(&mut ta);
+                    assert_eq!(response.error_code, 0, "{level:?} v{version} slot {slot}");
+                    match response.rsp {
+                        Some(PerformOpRsp::DeviceBegin(response)) => {
+                            handles.push(response.ret.op_handle);
+                        }
+                        response => panic!("unexpected begin response: {response:?}"),
+                    }
+                }
+                assert_eq!(
+                    begin(&mut ta).error_code,
+                    ErrorCode::TOO_MANY_OPERATIONS.0,
+                    "{level:?} v{version} must reject operations beyond {capacity}"
+                );
+                // Abort and finish both release slots without disturbing other operations.
+                let aborted = handles.remove(0);
+                assert_eq!(
+                    ta.process_req(PerformOpReq::OperationAbort(AbortRequest {
+                        op_handle: aborted,
+                    }))
+                    .error_code,
+                    0
+                );
+                let replacement = begin(&mut ta);
+                assert_eq!(replacement.error_code, 0);
+                match replacement.rsp {
+                    Some(PerformOpRsp::DeviceBegin(response)) => {
+                        handles.push(response.ret.op_handle);
+                    }
+                    response => panic!("unexpected begin response: {response:?}"),
+                }
+                assert_eq!(begin(&mut ta).error_code, ErrorCode::TOO_MANY_OPERATIONS.0);
+                for op_handle in handles {
+                    assert_eq!(
+                        ta.process_req(PerformOpReq::OperationFinish(FinishRequest {
+                            op_handle,
+                            input: Some(b"capacity regression".to_vec()),
+                            signature: None,
+                            auth_token: None,
+                            timestamp_token: None,
+                            confirmation_token: None,
+                        }))
+                        .error_code,
+                        0,
+                        "{level:?} v{version} existing operations must remain usable"
+                    );
+                }
+                let mut reused_handles = Vec::new();
+                for slot in 0..capacity {
+                    let after_finish = begin(&mut ta);
+                    assert_eq!(
+                        after_finish.error_code, 0,
+                        "{level:?} v{version} finished slot {slot} must be reusable"
+                    );
+                    match after_finish.rsp {
+                        Some(PerformOpRsp::DeviceBegin(response)) => {
+                            reused_handles.push(response.ret.op_handle);
+                        }
+                        response => panic!("unexpected begin response: {response:?}"),
+                    }
+                }
+                assert_eq!(begin(&mut ta).error_code, ErrorCode::TOO_MANY_OPERATIONS.0);
+                for op_handle in reused_handles {
+                    assert_eq!(
+                        ta.process_req(PerformOpReq::OperationAbort(AbortRequest { op_handle }))
+                            .error_code,
+                        0
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn restarted_ta_binds_keyblobs_to_boot_key_and_state_but_not_boot_hash() {
+        use kmr_wire::keymint::{Algorithm, Digest, KeyPurpose, SecurityLevel};
+
+        let start = |level, key, hash, locked, state| {
+            let mut ta = test_ta_with_profile(KeyMintDevice::KEY_MINT_V5, level, None);
+            assert_eq!(
+                ta.process_req(PerformOpReq::SetBootInfo(kmr_wire::SetBootInfoRequest {
+                    verified_boot_state: state,
+                    verified_boot_hash: vec![hash; 32],
+                    verified_boot_key: vec![key; 32],
+                    device_boot_locked: locked,
+                    boot_patchlevel: 20250605,
+                }))
+                .error_code,
+                0
+            );
+            assert_eq!(
+                ta.process_req(PerformOpReq::SetHalInfo(SetHalInfoRequest {
+                    os_version: 160000,
+                    os_patchlevel: 202506,
+                    vendor_patchlevel: 20250605,
+                }))
+                .error_code,
+                0
+            );
+            ta
+        };
+
+        for level in [SecurityLevel::TrustedEnvironment, SecurityLevel::Strongbox] {
+            let mut original = start(level, 0x12, 0x34, true, 0);
+            let generated =
+                original.process_req(PerformOpReq::DeviceGenerateKey(GenerateKeyRequest {
+                    key_params: vec![
+                        KeyParam::Purpose(KeyPurpose::Sign),
+                        KeyParam::Algorithm(Algorithm::Hmac),
+                        KeyParam::KeySize(KeySizeInBits(256)),
+                        KeyParam::Digest(Digest::Sha256),
+                        KeyParam::MinMacLength(128),
+                        KeyParam::NoAuthRequired,
+                    ],
+                    attestation_key: None,
+                }));
+            assert_eq!(generated.error_code, 0, "{generated:?}");
+            let blob = match generated.rsp {
+                Some(PerformOpRsp::DeviceGenerateKey(response)) => response.ret.key_blob,
+                response => panic!("unexpected generate response: {response:?}"),
+            };
+            drop(original);
+
+            for (key, hash, locked, state, expected) in [
+                (0x12, 0x34, true, 0, 0),
+                (0x12, 0x56, true, 0, 0),
+                (0x99, 0x34, true, 0, ErrorCode::INVALID_KEY_BLOB.0),
+                (0x12, 0x34, false, 0, ErrorCode::INVALID_KEY_BLOB.0),
+                (0x12, 0x34, true, 2, ErrorCode::INVALID_KEY_BLOB.0),
+                (0x12, 0x34, true, 0, 0),
+            ] {
+                let mut restarted = start(level, key, hash, locked, state);
+                let recovered = restarted.process_req(PerformOpReq::DeviceGetKeyCharacteristics(
+                    GetKeyCharacteristicsRequest {
+                        key_blob: blob.clone(),
+                        app_id: vec![],
+                        app_data: vec![],
+                    },
+                ));
+                assert_eq!(recovered.error_code, expected, "{level:?}: {recovered:?}");
+            }
+        }
     }
 
     #[test]
@@ -1796,5 +2575,250 @@ mod tests {
             auth_token: None,
         }));
         assert_eq!(second_begin.error_code, ErrorCode::KEY_MAX_OPS_EXCEEDED.0);
+    }
+
+    #[test]
+    fn upgrade_key_rewraps_a_future_patchlevel_blob_after_restore() {
+        let mut ta = test_ta();
+        let boot_info = ta.process_req(PerformOpReq::SetBootInfo(kmr_wire::SetBootInfoRequest {
+            verified_boot_state: 0,
+            verified_boot_hash: vec![0; 32],
+            verified_boot_key: vec![0; 32],
+            device_boot_locked: true,
+            boot_patchlevel: 20260805,
+        }));
+        assert_eq!(boot_info.error_code, 0);
+        let hal_info = ta.process_req(PerformOpReq::SetHalInfo(SetHalInfoRequest {
+            os_version: 160000,
+            os_patchlevel: 202608,
+            vendor_patchlevel: 20260805,
+        }));
+        assert_eq!(hal_info.error_code, 0);
+
+        let generated = ta.process_req(PerformOpReq::DeviceGenerateKey(GenerateKeyRequest {
+            key_params: vec![
+                KeyParam::Purpose(kmr_wire::keymint::KeyPurpose::Sign),
+                KeyParam::Algorithm(kmr_wire::keymint::Algorithm::Hmac),
+                KeyParam::KeySize(KeySizeInBits(256)),
+                KeyParam::Digest(kmr_wire::keymint::Digest::Sha256),
+                KeyParam::MinMacLength(256),
+                KeyParam::NoAuthRequired,
+                KeyParam::EarlyBootOnly,
+            ],
+            attestation_key: None,
+        }));
+        assert_eq!(generated.error_code, 0);
+        let key_blob = match generated.rsp {
+            Some(PerformOpRsp::DeviceGenerateKey(response)) => response.ret.key_blob,
+            response => panic!("unexpected generate response: {response:?}"),
+        };
+
+        ta.update_patchlevels(202606, 20260605, 20260605)
+            .expect("patchlevel restore should succeed");
+        let invalid = ta.process_req(PerformOpReq::DeviceGetKeyCharacteristics(
+            GetKeyCharacteristicsRequest {
+                key_blob: key_blob.clone(),
+                app_id: vec![],
+                app_data: vec![],
+            },
+        ));
+        assert_eq!(invalid.error_code, ErrorCode::INVALID_KEY_BLOB.0);
+
+        let upgraded = ta.process_req(PerformOpReq::DeviceUpgradeKey(UpgradeKeyRequest {
+            key_blob_to_upgrade: key_blob,
+            upgrade_params: vec![],
+        }));
+        assert_eq!(upgraded.error_code, 0);
+        let upgraded_blob = match upgraded.rsp {
+            Some(PerformOpRsp::DeviceUpgradeKey(response)) => response.ret,
+            response => panic!("unexpected upgrade response: {response:?}"),
+        };
+        assert!(!upgraded_blob.is_empty());
+
+        let characteristics = ta.process_req(PerformOpReq::DeviceGetKeyCharacteristics(
+            GetKeyCharacteristicsRequest {
+                key_blob: upgraded_blob,
+                app_id: vec![],
+                app_data: vec![],
+            },
+        ));
+        assert_eq!(characteristics.error_code, 0);
+    }
+
+    #[test]
+    fn request_patch_profiles_bind_keys_without_mutating_global_or_live_operations() {
+        use kmr_wire::keymint::{Algorithm, Digest, KeyFormat, KeyPurpose};
+        let mut ta = test_ta();
+        assert_eq!(set_boot_info(&mut ta), 0);
+        assert_eq!(
+            ta.process_req(PerformOpReq::SetHalInfo(SetHalInfoRequest {
+                os_version: 160000,
+                os_patchlevel: 202506,
+                vendor_patchlevel: 20250605,
+            }))
+            .error_code,
+            0
+        );
+        let a = kmr_ta::RequestPatchLevels {
+            os_patchlevel: 202604,
+            vendor_patchlevel: 20260405,
+            boot_patchlevel: 20260405,
+        };
+        let b = kmr_ta::RequestPatchLevels {
+            os_patchlevel: 202605,
+            vendor_patchlevel: 20260505,
+            boot_patchlevel: 20260505,
+        };
+        let params = || {
+            vec![
+                KeyParam::Purpose(KeyPurpose::Sign),
+                KeyParam::Algorithm(Algorithm::Hmac),
+                KeyParam::KeySize(KeySizeInBits(256)),
+                KeyParam::Digest(Digest::Sha256),
+                KeyParam::MinMacLength(128),
+                KeyParam::NoAuthRequired,
+            ]
+        };
+        let generated = ta.process_req_with_patchlevels(
+            PerformOpReq::DeviceGenerateKey(GenerateKeyRequest {
+                key_params: params(),
+                attestation_key: None,
+            }),
+            Some(a),
+        );
+        assert_eq!(generated.error_code, 0);
+        let key = match generated.rsp {
+            Some(PerformOpRsp::DeviceGenerateKey(rsp)) => rsp.ret,
+            response => panic!("{response:?}"),
+        };
+        let auths = &key.key_characteristics[0].authorizations;
+        assert!(auths.contains(&KeyParam::OsPatchlevel(a.os_patchlevel)));
+        assert!(auths.contains(&KeyParam::VendorPatchlevel(a.vendor_patchlevel)));
+        assert!(auths.contains(&KeyParam::BootPatchlevel(a.boot_patchlevel)));
+        let characteristics = |blob: Vec<u8>| {
+            PerformOpReq::DeviceGetKeyCharacteristics(GetKeyCharacteristicsRequest {
+                key_blob: blob,
+                app_id: vec![],
+                app_data: vec![],
+            })
+        };
+        assert_eq!(
+            ta.process_req_with_patchlevels(characteristics(key.key_blob.clone()), Some(a))
+                .error_code,
+            0
+        );
+        assert_eq!(
+            ta.process_req(characteristics(key.key_blob.clone()))
+                .error_code,
+            // The global value is June 2025, while profile A is April 2026.
+            ErrorCode::INVALID_KEY_BLOB.0
+        );
+        assert_eq!(
+            ta.process_req_with_patchlevels(characteristics(key.key_blob.clone()), Some(b))
+                .error_code,
+            ErrorCode::KEY_REQUIRES_UPGRADE.0
+        );
+        let begin = ta.process_req_with_patchlevels(
+            PerformOpReq::DeviceBegin(BeginRequest {
+                purpose: KeyPurpose::Sign,
+                key_blob: key.key_blob.clone(),
+                params: vec![KeyParam::Digest(Digest::Sha256), KeyParam::MacLength(128)],
+                auth_token: None,
+            }),
+            Some(a),
+        );
+        assert_eq!(begin.error_code, 0);
+        let handle = match begin.rsp {
+            Some(PerformOpRsp::DeviceBegin(rsp)) => rsp.ret.op_handle,
+            response => panic!("{response:?}"),
+        };
+        let imported = ta.process_req_with_patchlevels(
+            PerformOpReq::DeviceImportKey(ImportKeyRequest {
+                key_params: params(),
+                key_format: KeyFormat::Raw,
+                key_data: vec![7; 32],
+                attestation_key: None,
+            }),
+            Some(b),
+        );
+        assert_eq!(imported.error_code, 0);
+        let imported = match imported.rsp {
+            Some(PerformOpRsp::DeviceImportKey(rsp)) => rsp.ret,
+            response => panic!("{response:?}"),
+        };
+        assert!(imported.key_characteristics[0]
+            .authorizations
+            .contains(&KeyParam::OsPatchlevel(b.os_patchlevel)));
+        assert_eq!(
+            ta.process_req(PerformOpReq::OperationFinish(FinishRequest {
+                op_handle: handle,
+                input: Some(b"message".to_vec()),
+                signature: None,
+                auth_token: None,
+                timestamp_token: None,
+                confirmation_token: None,
+            }))
+            .error_code,
+            0
+        );
+        let upgraded = ta.process_req_with_patchlevels(
+            PerformOpReq::DeviceUpgradeKey(UpgradeKeyRequest {
+                key_blob_to_upgrade: key.key_blob,
+                upgrade_params: vec![],
+            }),
+            Some(b),
+        );
+        assert_eq!(upgraded.error_code, 0);
+        let upgraded = match upgraded.rsp {
+            Some(PerformOpRsp::DeviceUpgradeKey(rsp)) => rsp.ret,
+            response => panic!("{response:?}"),
+        };
+        assert_eq!(
+            ta.process_req_with_patchlevels(characteristics(upgraded.clone()), Some(b))
+                .error_code,
+            0
+        );
+        assert_eq!(
+            ta.process_req_with_patchlevels(characteristics(upgraded.clone()), Some(a))
+                .error_code,
+            ErrorCode::INVALID_KEY_BLOB.0
+        );
+        // OMK's explicit upgrade path also permits restoring a lower patch
+        // profile. Ordinary begin/characteristics still reject future blobs.
+        let restored = ta.process_req_with_patchlevels(
+            PerformOpReq::DeviceUpgradeKey(UpgradeKeyRequest {
+                key_blob_to_upgrade: upgraded,
+                upgrade_params: vec![],
+            }),
+            Some(a),
+        );
+        assert_eq!(restored.error_code, 0);
+        let restored = match restored.rsp {
+            Some(PerformOpRsp::DeviceUpgradeKey(rsp)) => rsp.ret,
+            response => panic!("{response:?}"),
+        };
+        assert_eq!(
+            ta.process_req_with_patchlevels(characteristics(restored), Some(a))
+                .error_code,
+            0
+        );
+        let global = ta.process_req(PerformOpReq::DeviceGenerateKey(GenerateKeyRequest {
+            key_params: params(),
+            attestation_key: None,
+        }));
+        assert_eq!(global.error_code, 0);
+        let global = match global.rsp {
+            Some(PerformOpRsp::DeviceGenerateKey(rsp)) => rsp.ret,
+            response => panic!("{response:?}"),
+        };
+        assert!(global.key_characteristics[0]
+            .authorizations
+            .contains(&KeyParam::OsPatchlevel(202506)));
+        assert!(global.key_characteristics[0]
+            .authorizations
+            .contains(&KeyParam::VendorPatchlevel(20250605)));
+        assert!(global.key_characteristics[0]
+            .authorizations
+            .contains(&KeyParam::BootPatchlevel(20250605)));
     }
 }

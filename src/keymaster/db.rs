@@ -54,7 +54,7 @@ use crate::impl_metadata;
 use crate::keymaster::crypto::ZVec;
 use crate::keymaster::database::{perboot, utils, versioning};
 use crate::keymaster::gc::Gc;
-use crate::keymaster::key_parameter::{KeyParameter, KeyParameterValue, Tag};
+use crate::keymaster::key_parameter::{KeyParameter, KeyParameterValue, KeyPurpose, Tag};
 use crate::keymaster::permission::KeyPermSet;
 use crate::keymaster::utils::{
     get_current_time_in_milliseconds, watchdog as wd, AndroidUserId, AppUid, Challenge,
@@ -1133,7 +1133,7 @@ impl KeystoreDB {
         Ok(2)
     }
 
-    // Record keybox identity prefixes for legacy client keys with a device attestation chain.
+    // Record keybox identity prefixes for legacy dedicated attestation keys.
     fn from_2_to_3(tx: &Transaction) -> Result<u32> {
         Self::init_tables(tx)?;
 
@@ -1156,7 +1156,13 @@ impl KeystoreDB {
                    AND k.state != ?
                    AND (
                        SELECT b.state FROM persistent.blobentry AS b WHERE b.keyentryid = k.id AND b.subcomponent_type = ? ORDER BY b.id DESC LIMIT 1
-                   ) = ?;",
+                   ) = ?
+                   AND EXISTS (
+                       SELECT 1 FROM persistent.keyparameter AS p
+                       WHERE p.keyentryid = k.id
+                         AND p.tag = ?
+                         AND p.data = ?
+                   );",
             )
             .context("Trying to prepare keybox attestation metadata backfill query")?;
 
@@ -1168,6 +1174,8 @@ impl KeystoreDB {
                 KeyLifeCycle::Unreferenced,
                 SubComponentType::KEY_BLOB,
                 BlobState::Current,
+                Tag::PURPOSE.0,
+                KeyPurpose::ATTEST_KEY.0,
             ])
             .context("Trying to query keybox attestation metadata backfill candidates")?;
 
@@ -1716,7 +1724,13 @@ impl KeystoreDB {
                        ON m.keyentryid = k.id
                       AND m.tag = ?
                      WHERE k.key_type = ?
-                       AND k.state != ?;",
+                       AND k.state != ?
+                       AND EXISTS (
+                           SELECT 1 FROM persistent.keyparameter AS p
+                           WHERE p.keyentryid = k.id
+                             AND p.tag = ?
+                             AND p.data = ?
+                       );",
                 )
                 .context("Failed to prepare keybox-bound stale key query.")?;
 
@@ -1724,7 +1738,9 @@ impl KeystoreDB {
                 .query(params![
                     KeyMetaData::KeyboxAttestationUuidPrefix,
                     KeyType::Client,
-                    KeyLifeCycle::Unreferenced
+                    KeyLifeCycle::Unreferenced,
+                    Tag::PURPOSE.0,
+                    KeyPurpose::ATTEST_KEY.0,
                 ])
                 .context("Failed to query keybox-bound stale keys.")?;
 
@@ -2309,6 +2325,7 @@ impl KeystoreDB {
         cert_info: &CertificateInfo,
         metadata: &KeyMetaData,
         km_uuid: &Uuid,
+        usage_key_id: Option<i64>,
     ) -> Result<KeyIdGuard> {
         let _wp = wd::watch("KeystoreDB::store_new_key");
 
@@ -2331,6 +2348,12 @@ impl KeystoreDB {
             }
         };
         self.with_transaction(Immediate("TX_store_new_key"), |tx| {
+            // Consume the wrapping key before rebinding its alias, with the
+            // destination publication in the same transaction.
+            let usage_need_gc = usage_key_id
+                .map(|key_id| Self::check_and_update_key_usage_count_internal(tx, key_id))
+                .transpose()?
+                .unwrap_or(false);
             let key_id = Self::create_key_entry_internal(tx, &domain, namespace, key_type, km_uuid)
                 .context("Trying to create new key entry.")?;
             let BlobInfo {
@@ -2387,7 +2410,8 @@ impl KeystoreDB {
                 .context("Trying to insert key metadata.")?;
             let need_gc = Self::rebind_alias(tx, &key_id, alias, &domain, namespace, key_type)
                 .context("Trying to rebind alias.")?
-                || need_gc;
+                || need_gc
+                || usage_need_gc;
             Ok(key_id).do_gc(need_gc)
         })
         .context(ks_err!())
@@ -2714,6 +2738,34 @@ impl KeystoreDB {
         Ok(parameters)
     }
 
+    /// Read the current count of a live limited-use key, independent of a previously loaded
+    /// parameter snapshot. Key entry IDs stay distinct when an alias is rebound.
+    pub fn key_usage_count(&mut self, key_id: i64) -> Result<i32> {
+        self.with_transaction(TransactionBehavior::Deferred, |tx| {
+            Self::key_usage_count_internal(tx, key_id).no_gc()
+        })
+    }
+
+    fn key_usage_count_internal(tx: &Transaction, key_id: i64) -> Result<i32> {
+        tx.query_row(
+            "SELECT p.data FROM persistent.keyparameter p
+             JOIN persistent.keyentry k ON k.id = p.keyentryid
+             WHERE p.keyentryid = ? AND p.tag = ? AND p.security_level = ? AND k.state = ?;",
+            params![
+                key_id,
+                Tag::USAGE_COUNT_LIMIT.0,
+                SecurityLevel::KEYSTORE.0,
+                KeyLifeCycle::Live
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("Trying to read current key usage count.")?
+        .filter(|limit: &i32| *limit > 0)
+        .ok_or(KsError::Km(ErrorCode::INVALID_KEY_BLOB))
+        .context("Limited-use key is exhausted, absent, or not live.")
+    }
+
     /// Decrements the usage count of a limited use key. This function first checks whether the
     /// usage has been exhausted, if not, decreases the usage count. If the usage count reaches
     /// zero, the key also gets marked unreferenced and scheduled for deletion.
@@ -2722,36 +2774,31 @@ impl KeystoreDB {
         let _wp = wd::watch("KeystoreDB::check_and_update_key_usage_count");
 
         self.with_transaction(Immediate("TX_check_and_update_key_usage_count"), |tx| {
-            let limit: Option<i32> = tx
-                .query_row(
-                    "SELECT data FROM persistent.keyparameter WHERE keyentryid = ? AND tag = ?;",
-                    params![key_id, Tag::USAGE_COUNT_LIMIT.0],
-                    |row| row.get(0),
-                )
-                .optional()
-                .context("Trying to load usage count")?;
-
-            let limit = limit
-                .ok_or(KsError::Km(ErrorCode::INVALID_KEY_BLOB))
-                .context("The Key no longer exists. Key is exhausted.")?;
-
-            tx.execute(
-                "UPDATE persistent.keyparameter
-                 SET data = data - 1
-                 WHERE keyentryid = ? AND tag = ? AND data > 0;",
-                params![key_id, Tag::USAGE_COUNT_LIMIT.0],
-            )
-            .context("Failed to update key usage count.")?;
-
-            match limit {
-                1 => Self::remove_key_rows(tx, key_id)
-                    .map(|need_gc| (need_gc, ()))
-                    .context("Trying to mark limited use key for deletion."),
-                0 => Err(KsError::Km(ErrorCode::INVALID_KEY_BLOB)).context("Key is exhausted."),
-                _ => Ok(()).no_gc(),
-            }
+            Self::check_and_update_key_usage_count_internal(tx, key_id).map(|need_gc| (need_gc, ()))
         })
         .context(ks_err!())
+    }
+
+    fn check_and_update_key_usage_count_internal(tx: &Transaction, key_id: i64) -> Result<bool> {
+        let limit = Self::key_usage_count_internal(tx, key_id)?;
+        let updated = tx
+            .execute(
+                "UPDATE persistent.keyparameter
+             SET data = data - 1
+             WHERE keyentryid = ? AND tag = ? AND security_level = ? AND data > 0;",
+                params![key_id, Tag::USAGE_COUNT_LIMIT.0, SecurityLevel::KEYSTORE.0],
+            )
+            .context("Failed to update key usage count.")?;
+        if updated != 1 {
+            return Err(KsError::Km(ErrorCode::INVALID_KEY_BLOB))
+                .context("Limited-use count was not updated exactly once.");
+        }
+        if limit == 1 {
+            Self::remove_key_rows(tx, key_id)
+                .context("Trying to mark limited-use key for deletion.")
+        } else {
+            Ok(false)
+        }
     }
 
     /// Load a key entry by the given key descriptor.
@@ -3537,14 +3584,24 @@ impl KeystoreDB {
         })
     }
 
-    // Generates a random id and passes it to the given function, which will
-    // try to insert it into a database.  If that insertion fails, retry;
-    // otherwise return the id.
+    // Generates a random, positive id and passes it to the given function,
+    // which will try to insert it into a database. If that insertion fails,
+    // retry; otherwise return the id.
+    //
+    // Key IDs are represented as i64 in the keystore2 API. Although the
+    // wire contract can represent negative values, Android clients commonly
+    // treat a non-positive namespace as an unspecified key id. In particular,
+    // clients probing the raw descriptor contract skip KEY_ID operations for
+    // negative ids. Keep newly allocated IDs in the positive range so the
+    // returned metadata can always be used as a KEY_ID descriptor.
     fn insert_with_retry(inserter: impl Fn(i64) -> rusqlite::Result<usize>) -> Result<i64> {
         loop {
-            let newid: i64 = match random() {
-                Self::UNASSIGNED_KEY_ID => continue, // UNASSIGNED_KEY_ID cannot be assigned.
-                i => i,
+            let newid = loop {
+                let candidate: u64 = random();
+                if candidate == 0 || candidate > i64::MAX as u64 {
+                    continue;
+                }
+                break candidate as i64;
             };
             match inserter(newid) {
                 // If the id already existed, try again.
@@ -3690,6 +3747,14 @@ mod tests {
 
     const TEST_NAMESPACE: i64 = 10001;
 
+    #[test]
+    fn generated_key_ids_are_positive() {
+        for _ in 0..64 {
+            let id = KeystoreDB::insert_with_retry(|_| Ok(1)).unwrap();
+            assert!(id > 0);
+        }
+    }
+
     fn make_test_db() -> KeystoreDB {
         let mut conn = Connection::open_in_memory().unwrap();
         conn.execute("ATTACH DATABASE 'file::memory:' AS persistent;", [])
@@ -3739,6 +3804,120 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn key_usage_count_reads_current_live_entry_and_deletion_is_authoritative() {
+        let mut db = make_test_db();
+        {
+            let tx = db.conn.transaction().unwrap();
+            insert_live_client_key(
+                &tx,
+                7,
+                Uuid::from(SecurityLevel::TRUSTED_ENVIRONMENT),
+                "limited",
+            );
+            tx.execute(
+                "INSERT INTO persistent.keyparameter (keyentryid, tag, data, security_level)
+                 VALUES (?, ?, ?, ?);",
+                params![7, Tag::USAGE_COUNT_LIMIT.0, 2, SecurityLevel::KEYSTORE.0],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(db.key_usage_count(7).unwrap(), 2);
+        db.check_and_update_key_usage_count(7).unwrap();
+        assert_eq!(db.key_usage_count(7).unwrap(), 1);
+        db.check_and_update_key_usage_count(7).unwrap();
+        let error = db.key_usage_count(7).unwrap_err();
+        assert!(matches!(
+            error.root_cause().downcast_ref::<KsError>(),
+            Some(KsError::Km(ErrorCode::INVALID_KEY_BLOB))
+        ));
+    }
+
+    #[test]
+    fn wrapped_import_publication_and_usage_are_atomic_including_same_alias() {
+        for (uses, alias) in [(1, "wrap"), (2, "wrap"), (1, "imported"), (2, "imported")] {
+            let mut db = make_test_db();
+            let km_uuid = Uuid::from(SecurityLevel::TRUSTED_ENVIRONMENT);
+            {
+                let tx = db.conn.transaction().unwrap();
+                insert_live_client_key(&tx, 7, km_uuid, "wrap");
+                tx.execute(
+                    "INSERT INTO persistent.keyparameter (keyentryid, tag, data, security_level)
+                     VALUES (?, ?, ?, ?);",
+                    params![7, Tag::USAGE_COUNT_LIMIT.0, uses, SecurityLevel::KEYSTORE.0],
+                )
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            let destination = KeyDescriptor {
+                domain: Domain::APP,
+                nspace: TEST_NAMESPACE,
+                alias: Some(alias.into()),
+                blob: None,
+            };
+            db.conn
+                .execute_batch(
+                    "CREATE TRIGGER persistent.fail_new_blob BEFORE INSERT ON blobentry
+                     WHEN NEW.keyentryid != 7 BEGIN
+                         SELECT RAISE(ABORT, 'forced destination storage failure');
+                     END;",
+                )
+                .unwrap();
+            let save = |db: &mut KeystoreDB| {
+                db.store_new_key(
+                    &destination,
+                    KeyType::Client,
+                    &[],
+                    &BlobInfo::new(&[0xab], &BlobMetaData::new()),
+                    &CertificateInfo::new(None, None),
+                    &KeyMetaData::new(),
+                    &km_uuid,
+                    Some(7),
+                )
+            };
+            assert!(save(&mut db).is_err());
+            assert_eq!(db.key_usage_count(7).unwrap(), uses);
+            let source: (String, BlobState) = db
+                .conn
+                .query_row(
+                    "SELECT k.alias, b.state FROM persistent.keyentry k
+                     JOIN persistent.blobentry b ON b.keyentryid = k.id WHERE k.id = 7;",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(source, ("wrap".into(), BlobState::Current));
+            let entry_count: i64 = db
+                .conn
+                .query_row("SELECT count(*) FROM persistent.keyentry;", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(entry_count, 1);
+            db.conn
+                .execute_batch("DROP TRIGGER persistent.fail_new_blob;")
+                .unwrap();
+            let imported = save(&mut db).unwrap();
+            let live_id: i64 = db
+                .conn
+                .query_row(
+                    "SELECT id FROM persistent.keyentry WHERE alias = ? AND state = ?;",
+                    params![alias, KeyLifeCycle::Live],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(live_id, imported.id());
+            assert_ne!(live_id, 7);
+            drop(imported);
+            if uses == 2 && alias != "wrap" {
+                assert_eq!(db.key_usage_count(7).unwrap(), 1);
+            } else {
+                assert!(db.key_usage_count(7).is_err());
+            }
+        }
+    }
+
     fn insert_live_super_key(tx: &Transaction, id: i64, user: AndroidUserId) {
         tx.execute(
             "INSERT INTO persistent.keyentry
@@ -3773,6 +3952,25 @@ mod tests {
     fn add_user_secure_id(tx: &Transaction, key_id: i64) {
         let param = KeyParameter::new(
             KeyParameterValue::UserSecureID(0x1234),
+            SecurityLevel::TRUSTED_ENVIRONMENT,
+        );
+        tx.execute(
+            "INSERT INTO persistent.keyparameter
+                (keyentryid, tag, data, security_level)
+                VALUES (?, ?, ?, ?);",
+            params![
+                key_id,
+                param.get_tag().0,
+                param.key_parameter_value(),
+                param.security_level().0
+            ],
+        )
+        .unwrap();
+    }
+
+    fn add_key_purpose(tx: &Transaction, key_id: i64, purpose: KeyPurpose) {
+        let param = KeyParameter::new(
+            KeyParameterValue::KeyPurpose(purpose),
             SecurityLevel::TRUSTED_ENVIRONMENT,
         );
         tx.execute(
@@ -3915,7 +4113,7 @@ mod tests {
     }
 
     #[test]
-    fn retire_stale_keybox_bound_entries_keeps_current_and_keystore_entries() {
+    fn retire_stale_keybox_bound_entries_only_retires_stale_attest_keys() {
         let current_digest = [0x11; 32];
         let stale_digest = [0x22; 32];
         let current_uuid =
@@ -3932,9 +4130,17 @@ mod tests {
             insert_live_client_key(&tx, 3, current_uuid, "current-keybox");
             insert_live_client_key(&tx, 4, KEYSTORE_UUID, "keystore");
             insert_live_client_key(&tx, 5, stale_tee_uuid, "stale-without-metadata");
+            insert_live_client_key(&tx, 6, stale_tee_uuid, "stale-signing-key");
+            add_key_purpose(&tx, 1, KeyPurpose::ATTEST_KEY);
+            add_key_purpose(&tx, 2, KeyPurpose::ATTEST_KEY);
+            add_key_purpose(&tx, 3, KeyPurpose::ATTEST_KEY);
+            add_key_purpose(&tx, 4, KeyPurpose::ATTEST_KEY);
+            add_key_purpose(&tx, 5, KeyPurpose::ATTEST_KEY);
+            add_key_purpose(&tx, 6, KeyPurpose::SIGN);
             add_keybox_attestation_metadata(&tx, 1, stale_tee_uuid);
             add_keybox_attestation_metadata(&tx, 2, stale_strongbox_uuid);
             add_keybox_attestation_metadata(&tx, 3, current_uuid);
+            add_keybox_attestation_metadata(&tx, 6, stale_tee_uuid);
             tx.commit().unwrap();
         }
 
@@ -3949,11 +4155,13 @@ mod tests {
         assert_eq!(1, key_entry_count(&db, 3));
         assert_eq!(1, key_entry_count(&db, 4));
         assert_eq!(1, key_entry_count(&db, 5));
+        assert_eq!(1, key_entry_count(&db, 6));
         assert_eq!(BlobState::Orphaned, blob_state(&db, 1));
         assert_eq!(BlobState::Orphaned, blob_state(&db, 2));
         assert_eq!(BlobState::Current, blob_state(&db, 3));
         assert_eq!(BlobState::Current, blob_state(&db, 4));
         assert_eq!(BlobState::Current, blob_state(&db, 5));
+        assert_eq!(BlobState::Current, blob_state(&db, 6));
     }
 
     #[test]
@@ -3968,6 +4176,7 @@ mod tests {
         {
             let tx = db.conn.transaction().unwrap();
             insert_live_client_key(&tx, 1, stale_uuid, "shared-alias");
+            add_key_purpose(&tx, 1, KeyPurpose::ATTEST_KEY);
             add_keybox_attestation_metadata(&tx, 1, stale_uuid);
             tx.commit().unwrap();
         }
