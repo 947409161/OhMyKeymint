@@ -1,5 +1,6 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    fs::File,
+    io::{BufRead, BufReader, Read, Write},
     os::unix::{net::UnixStream, process::CommandExt},
     path::Path,
     process::Command,
@@ -7,6 +8,8 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use nix::{fcntl::OFlag, unistd::pipe2};
+use prost::Message;
 use rsbinder::{hub, Status, StatusCode};
 
 mod isolated_process;
@@ -19,6 +22,8 @@ pub(crate) fn runtime_isolated_caller_packages(uid: u32, pid: u32) -> Result<Vec
 }
 
 const ANDROID_PACKAGE: &str = "android";
+const ACTIVITY_SERVICE: &str = "activity";
+const ACTIVITY_DESCRIPTOR: &str = "android.app.IActivityManager";
 const PACKAGE_MANAGER_NATIVE_DESCRIPTOR: &str = "android.content.pm.IPackageManagerNative";
 const PACKAGE_MANAGER_NATIVE_SERVICE: &str = "package_native";
 const PHONE_DESCRIPTOR: &str = "com.android.internal.telephony.ITelephony";
@@ -38,6 +43,25 @@ pub(crate) const VENDOR_SECURITY_PATCH_PROPERTY: &str = "ro.vendor.build.securit
 pub(crate) struct SecurityPatchProperties {
     pub system: String,
     pub vendor: String,
+}
+
+// Preserve the Android 13-17 field numbers; other process state is not needed here.
+#[derive(Clone, PartialEq, Message)]
+struct ActivityManagerServiceDumpProcessesProto {
+    #[prost(message, repeated, tag = "2")]
+    isolated_procs: Vec<ProcessRecordProto>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ProcessRecordProto {
+    #[prost(int32, tag = "1")]
+    pid: i32,
+    #[prost(int32, tag = "3")]
+    uid: i32,
+    #[prost(int32, tag = "4")]
+    user_id: i32,
+    #[prost(int32, tag = "6")]
+    isolated_app_id: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,6 +190,13 @@ pub fn bootstrap_privileged_helper() -> Result<()> {
 
 pub fn runtime_write_and_verify_property(property: &str, value: &str) -> Result<()> {
     with_helper(|helper| helper.write_and_verify_property(property, value))
+}
+
+pub fn runtime_get_isolated_owner_uid(uid: u32, pid: i32) -> Result<Option<u32>> {
+    if pid <= 0 || !(90_000..=99_999).contains(&(uid % kmr_common::consts::AID_USER_OFFSET)) {
+        return Ok(None);
+    }
+    with_helper(|helper| helper.get_isolated_owner_uid(uid, pid))
 }
 
 pub fn runtime_get_device_id_for_phone(slot: i32) -> Result<Option<String>> {
@@ -453,6 +484,17 @@ impl ResetpropHelperClient {
         isolated_process::parse_helper_response(&response)
     }
 
+    fn get_isolated_owner_uid(&mut self, uid: u32, pid: i32) -> Result<Option<u32>> {
+        let response = self.request(&format!("GET_ISOLATED_OWNER_UID\t{uid}\t{pid}\n"))?;
+        if response == "NONE" {
+            return Ok(None);
+        }
+        if let Some(value) = response.strip_prefix("OK\t") {
+            return value.parse().context("invalid isolated owner UID from helper").map(Some);
+        }
+        bail!("unexpected isolated owner helper response")
+    }
+
     fn write_and_verify_property(&mut self, property: &str, value: &str) -> Result<()> {
         let response = self.request(&format!("SET\t{property}\t{value}\n"))?;
         if response == "OK" {
@@ -512,6 +554,60 @@ impl ResetpropHelperClient {
         }
         Ok(response.to_string())
     }
+}
+
+fn execute_isolated_owner_uid(uid: u32, pid: i32) -> Result<Option<u32>> {
+    if pid <= 0 || !(90_000..=99_999).contains(&(uid % kmr_common::consts::AID_USER_OFFSET)) {
+        bail!("invalid isolated caller");
+    }
+    rsbinder::ProcessState::init_default()
+        .map_err(|error| anyhow!("failed to initialize Binder in privileged helper: {error}"))?;
+    let binder = require_binder_service(ACTIVITY_SERVICE, hub::try_get_service(ACTIVITY_SERVICE))?;
+    if binder.descriptor() != ACTIVITY_DESCRIPTOR {
+        bail!("ActivityManager descriptor mismatch");
+    }
+    let proxy = binder.as_proxy().context("ActivityManager binder was unexpectedly local")?;
+    let data = capture_binder_dump(|fd| {
+        proxy
+            .dump(fd, &["--proto".to_string(), "processes".to_string()])
+            .context("ActivityManager process dump failed")
+    })?;
+    isolated_owner_from_proto(&data, uid, pid)
+}
+
+fn capture_binder_dump(dump: impl FnOnce(File) -> Result<()>) -> Result<Vec<u8>> {
+    // AOSP dumpsys passes a pipe; system_server cannot access a generic tmpfs memfd.
+    let (reader_fd, writer_fd) = pipe2(OFlag::O_CLOEXEC)?;
+    std::thread::scope(|scope| {
+        let reader = std::thread::Builder::new().spawn_scoped(scope, move || {
+            let mut data = Vec::new();
+            File::from(reader_fd).read_to_end(&mut data).context("failed to read Binder dump")?;
+            Ok(data)
+        })?;
+        let result = dump(File::from(writer_fd));
+        let data = reader.join().map_err(|_| anyhow!("Binder dump reader panicked"))?;
+        result?;
+        data
+    })
+}
+
+fn isolated_owner_from_proto(data: &[u8], uid: u32, pid: i32) -> Result<Option<u32>> {
+    let processes = ActivityManagerServiceDumpProcessesProto::decode(data)
+        .context("failed to decode ActivityManager process dump")?;
+    Ok(processes.isolated_procs.into_iter().find_map(|process| {
+        if pid <= 0 || process.pid != pid {
+            return None;
+        }
+        let owner = u32::try_from(process.uid).ok()?;
+        let user = u32::try_from(process.user_id).ok()?;
+        let app_id = u32::try_from(process.isolated_app_id).ok()?;
+        if !(90_000..=99_999).contains(&app_id) {
+            return None;
+        }
+        let actual_uid =
+            user.checked_mul(kmr_common::consts::AID_USER_OFFSET)?.checked_add(app_id)?;
+        (actual_uid == uid).then_some(owner)
+    }))
 }
 
 fn execute_phone_identifier(kind: PhoneIdentifierKind, slot: i32) -> Result<Option<String>> {
@@ -709,6 +805,18 @@ fn helper_loop(stream: UnixStream, command: Option<ResetpropCommand>) -> Result<
                     Err(error) => helper_error_response(&error),
                 },
                 _ => "ERR\tinvalid phone identifier helper request\n".to_string(),
+            }
+        } else if let Some(arguments) = trimmed.strip_prefix("GET_ISOLATED_OWNER_UID\t") {
+            match arguments
+                .split_once('\t')
+                .and_then(|(uid, pid)| Some((uid.parse::<u32>().ok()?, pid.parse::<i32>().ok()?)))
+            {
+                Some((uid, pid)) => match execute_isolated_owner_uid(uid, pid) {
+                    Ok(Some(owner)) => format!("OK\t{owner}\n"),
+                    Ok(None) => "NONE\n".to_string(),
+                    Err(error) => helper_error_response(&error),
+                },
+                None => "ERR\tinvalid isolated owner helper request\n".to_string(),
             }
         } else {
             match parse_request(&line) {
@@ -985,6 +1093,82 @@ mod tests {
             properties.borrow().get(SYSTEM_SECURITY_PATCH_PROPERTY).map(String::as_str),
             Some(previous.system.as_str())
         );
+    }
+
+    #[test]
+    fn binder_dump_pipe_drains_large_output_and_preserves_errors() {
+        let payload = vec![0x5a; 256 * 1024];
+        let data = capture_binder_dump(|mut writer| {
+            writer.write_all(&payload).context("failed to write test dump")
+        })
+        .unwrap();
+        assert_eq!(data, payload);
+        let error = capture_binder_dump(|_| bail!("dump rejected")).unwrap_err();
+        assert_eq!(error.to_string(), "dump rejected");
+    }
+
+    #[test]
+    fn isolated_owner_proto_matches_aosp_wire_and_caller_identity() {
+        // AOSP: isolated_procs { pid: 42 uid: 10123 isolated_app_id: 99001 }.
+        let mut wire = vec![0x12, 0x09, 0x08, 0x2a, 0x18, 0x8b, 0x4f, 0x30, 0xb9, 0x85, 0x06];
+        assert_eq!(isolated_owner_from_proto(&wire, 99_001, 42).unwrap(), Some(10_123));
+        assert_eq!(isolated_owner_from_proto(&wire, 99_002, 42).unwrap(), None);
+        assert_eq!(isolated_owner_from_proto(&wire, 99_001, 43).unwrap(), None);
+        assert_eq!(isolated_owner_from_proto(&wire, 99_001, 0).unwrap(), None);
+        wire.extend_from_slice(&[0x98, 0x06, 0x01]);
+        assert_eq!(isolated_owner_from_proto(&wire, 99_001, 42).unwrap(), Some(10_123));
+        assert!(isolated_owner_from_proto(&wire[..5], 99_001, 42).is_err());
+        assert!(isolated_owner_from_proto(b"Permission Denial", 99_001, 42).is_err());
+        assert_eq!(isolated_owner_from_proto(&[], 99_001, 42).unwrap(), None);
+    }
+
+    #[test]
+    fn isolated_owner_proto_checks_users_ranges_and_overflow() {
+        let record =
+            ProcessRecordProto { pid: 42, uid: 110_123, user_id: 1, isolated_app_id: 99_001 };
+        for (candidate, caller_uid, expected) in [
+            (record.clone(), 199_001, Some(110_123)),
+            (record.clone(), 99_001, None),
+            (ProcessRecordProto { uid: -1, ..record.clone() }, 199_001, None),
+            (ProcessRecordProto { user_id: -1, ..record.clone() }, 199_001, None),
+            (ProcessRecordProto { user_id: i32::MAX, ..record.clone() }, 199_001, None),
+            (ProcessRecordProto { isolated_app_id: -1, ..record.clone() }, 199_001, None),
+            (ProcessRecordProto { isolated_app_id: 89_999, ..record.clone() }, 189_999, None),
+            (ProcessRecordProto { isolated_app_id: 100_000, ..record.clone() }, 200_000, None),
+            (
+                ProcessRecordProto { isolated_app_id: 90_000, ..record.clone() },
+                190_000,
+                Some(110_123),
+            ),
+            (
+                ProcessRecordProto { isolated_app_id: 99_999, ..record.clone() },
+                199_999,
+                Some(110_123),
+            ),
+        ] {
+            let data = ActivityManagerServiceDumpProcessesProto {
+                isolated_procs: vec![ProcessRecordProto { pid: 43, ..record.clone() }, candidate],
+            }
+            .encode_to_vec();
+            assert_eq!(isolated_owner_from_proto(&data, caller_uid, 42).unwrap(), expected);
+        }
+        for (uid, pid) in [(10_123, 42), (99_001, 0), (99_001, -1)] {
+            assert_eq!(runtime_get_isolated_owner_uid(uid, pid).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn isolated_owner_helper_response_preserves_request_identity() {
+        for (response, expected) in [(b"OK\t10123\n".as_slice(), Some(10_123)), (b"NONE\n", None)] {
+            let (client_stream, mut helper_stream) = UnixStream::pair().unwrap();
+            helper_stream.set_read_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
+            helper_stream.write_all(response).unwrap();
+            let mut client = ResetpropHelperClient { stream: client_stream };
+            assert_eq!(client.get_isolated_owner_uid(99_001, 42).unwrap(), expected);
+            let mut request = String::new();
+            BufReader::new(helper_stream).read_line(&mut request).unwrap();
+            assert_eq!(request, "GET_ISOLATED_OWNER_UID\t99001\t42\n");
+        }
     }
 
     #[test]

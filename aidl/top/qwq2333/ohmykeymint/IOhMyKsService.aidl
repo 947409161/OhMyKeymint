@@ -51,4 +51,6 @@ interface IOhMyKsService {
     boolean isOmkGrant(in @nullable CallerInfo ctx, in KeyDescriptor grant);
 
     String[] resolveIsolatedCallerPackages(in @nullable CallerInfo ctx);
+
+    int getIsolatedOwnerUid(in @nullable CallerInfo ctx);
 }

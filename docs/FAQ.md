@@ -688,6 +688,13 @@ for a repeatable defect, and the
 [Feature request form](https://github.com/qwq233/OhMyKeymint/issues/new?template=feature_request.yml)
 for a proposed change. Read this FAQ and search existing reports first.
 
+All issues must use one of these forms, retain the title prefix, and include
+every required field and pre-submission confirmation. Non-template or
+incomplete issues are automatically closed. Write the issue yourself: do not
+use an LLM to create it or copy LLM-generated descriptions or phrasing. Read
+the [Issue rules](CONTRIBUTING.md#issues) and
+[AI policy](AI-Policy.md#issues-must-be-written-without-llms) before submitting.
+
 For community discussion, use the Telegram link in the [README](../README.md).
 Never share private keys, generated seeds, or personal identifiers in any
 support channel.

@@ -249,3 +249,51 @@ fn android_rejected_grant_readback_does_not_probe_omk() {
     )
     .expect("android-rejected grant lookup should succeed"));
 }
+
+#[test]
+fn application_owner_controls_scope_without_changing_caller() {
+    let caller = CallerInfo { uid: 99_001, pid: 2000, sid: "isolated".to_string() };
+    let cfg = config::InjectorConfig::default();
+    for (owner, packages, reason) in [
+        (1000, vec!["com.example.scooped"], FilterReason::RejectedAndroidPackage),
+        (10_123, vec!["android"], FilterReason::RejectedAndroidPackage),
+    ] {
+        let decision = evaluate_caller_with(&caller, &cfg, |actual| {
+            assert!(std::ptr::eq(actual, &caller));
+            assert_eq!((actual.uid, actual.pid, actual.sid.as_str()), (99_001, 2000, "isolated"));
+            (owner, PackageResolution::Known(packages.into_iter().map(str::to_string).collect()))
+        });
+        assert_eq!(decision.reason, reason);
+        assert!(!decision.allowed);
+    }
+}
+
+#[test]
+fn owner_resolution_preserves_preflight_and_unknown_policy() {
+    let mut cfg = config::InjectorConfig::default();
+    let mut caller = CallerInfo { uid: 1000, pid: 2000, sid: "system".to_string() };
+    let decision = evaluate_caller_with(&caller, &cfg, |_| {
+        panic!("core callers must not query application ownership")
+    });
+    assert_eq!(decision.reason, FilterReason::RejectedAndroidPackage);
+
+    caller.uid = 99_001;
+    cfg.filter.enabled = false;
+    let decision = evaluate_caller_with(&caller, &cfg, |_| {
+        panic!("a disabled filter must not query application ownership")
+    });
+    assert_eq!(decision.reason, FilterReason::Disabled);
+    assert!(decision.allowed);
+
+    cfg.filter.enabled = true;
+    for allowed in [false, true] {
+        cfg.filter.allow_unknown_package = allowed;
+        let decision =
+            evaluate_caller_with(&caller, &cfg, |_| (99_001, PackageResolution::Unknown));
+        assert_eq!(decision.allowed, allowed);
+        assert_eq!(
+            decision.reason,
+            if allowed { FilterReason::Allowed } else { FilterReason::RejectedUnknownPackage }
+        );
+    }
+}

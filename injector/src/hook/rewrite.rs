@@ -91,26 +91,28 @@ fn evaluate_caller(
     caller: &CallerInfo,
     cfg: &config::InjectorConfig,
 ) -> crate::filter::FilterDecision {
+    evaluate_caller_with(caller, cfg, |caller| {
+        let _guard = BypassGuard::enter();
+        ipc::resolve_packages_for_caller(caller)
+    })
+}
+
+fn evaluate_caller_with(
+    caller: &CallerInfo,
+    cfg: &config::InjectorConfig,
+    resolve: impl FnOnce(&CallerInfo) -> (u32, PackageResolution),
+) -> crate::filter::FilterDecision {
     let uid = caller.uid as u32;
     // The scope snapshot is shared by the preflight and the final decision so
     // one request cannot observe two different discovery generations.
     let scope = crate::app_scope::get();
     let preflight = filter::evaluate(&scope, &cfg.filter, uid, PackageResolution::Unknown);
-    if preflight.reason == FilterReason::RejectedAndroidPackage {
+    if matches!(preflight.reason, FilterReason::RejectedAndroidPackage | FilterReason::Disabled) {
         return preflight;
     }
 
-    let package_resolution = {
-        let _guard = BypassGuard::enter();
-        ipc::resolve_packages_for_caller(caller)
-    };
-    let decision = filter::evaluate(&scope, &cfg.filter, uid, package_resolution);
-    if decision.reason == FilterReason::Disabled {
-        debug!(
-            "event=decision package filter disabled; routing still follows per-method intercept settings"
-        );
-    }
-    decision
+    let (package_uid, package_resolution) = resolve(caller);
+    filter::evaluate(&scope, &cfg.filter, package_uid, package_resolution)
 }
 
 fn service_request_key(request: &ParsedServiceRequest) -> Option<&KeyDescriptor> {

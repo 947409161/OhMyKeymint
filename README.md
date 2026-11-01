@@ -174,6 +174,15 @@ touch /data/adb/omk/restart.all
 See the [Configuration Guide](docs/CONFIGURATION.md#how-changes-are-loaded) for
 which changes need a component restart or a full device reboot.
 
+## How do i submit issue report?
+
+Use an [Issue form](https://github.com/qwq233/OhMyKeymint/issues/new/choose) and
+complete every required field and checkbox. Non-template issues are
+automatically closed. Write issues yourself; do not use an LLM to create them
+or copy LLM-generated descriptions or phrasing. Read the
+[Issue rules](docs/CONTRIBUTING.md#issues) and
+[AI policy](docs/AI-Policy.md#issues-must-be-written-without-llms) first.
+
 ## License
 
 **YOU MUST AGREE TO BOTH OF THE LICENSE BEFORE USING THIS SOFTWARE.**
