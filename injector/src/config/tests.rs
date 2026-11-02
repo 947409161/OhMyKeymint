@@ -37,9 +37,6 @@ fn config_defaults_and_log_levels_match_contract() {
     assert_eq!(config.main.attestation_generation_delay_ms, [20, 30]);
     assert_eq!(config.main.operation_start_delay_ms, 0);
     assert_eq!(config.main.log_level_filter(), LevelFilter::Debug);
-    assert!(config.filter.enabled);
-    assert!(config.filter.block_android_package);
-    assert!(!config.filter.allow_unknown_package);
     assert!(config.intercept.get_security_level);
     assert!(config.intercept.get_key_entry);
     assert!(config.intercept.update_subcomponent);
@@ -120,27 +117,47 @@ fn invalid_operation_start_delay_reload_is_rejected_without_rewriting() {
 }
 
 #[test]
-fn removed_routing_lists_are_rejected() {
+fn removed_routing_settings_are_rejected() {
     for contents in [
         "version = 1\nscoop = [\"com.example.app\"]\n",
         "version = 1\nscoop_details = {}\n",
         "version = 1\n[scoop.com.example.app]\nmode = \"strict\"\n",
-        "version = 1\n[filter]\ndeny_packages = [\"com.example.app\"]\n",
+        "version = 1\n[filter]\nenabled = true\n",
+        "version = 1\n[filter.sub]\nenabled = true\n",
     ] {
-        let error = parse_config(contents).expect_err("removed routing lists must be rejected");
+        let error = parse_config(contents).expect_err("removed routing settings must be rejected");
         assert!(error.contains("unknown field"), "{error}");
     }
 }
 
 #[test]
-fn startup_with_removed_routing_lists_disables_without_rewriting() {
-    let path = temp_config_path("removed-routing-lists");
-    let contents = "version = 1\nscoop = [\"com.example.app\"]\n";
-    fs::write(&*path, contents).unwrap();
+fn removed_routing_hint_recognizes_filters_and_legacy_lists() {
+    for contents in [
+        "[filter]\nenabled = true\n",
+        "[filter.sub]\nenabled = true\n",
+        "scoop = []\n",
+        "deny_packages = []\n",
+    ] {
+        assert!(has_removed_routing_settings(contents), "{contents:?}");
+    }
+    for contents in [
+        "# [filter] is not accepted\n[main]\nenabled = true\n",
+        "[intercept]\nget_key_entry = true\n",
+    ] {
+        assert!(!has_removed_routing_settings(contents), "{contents:?}");
+    }
+}
 
-    let loaded = load_or_seed(&path, LoadContext::Startup).unwrap();
-    assert!(!loaded.main.enabled);
-    assert_eq!(fs::read_to_string(&*path).unwrap(), contents);
+#[test]
+fn startup_with_removed_routing_settings_disables_without_rewriting() {
+    for contents in ["version = 1\nscoop = [\"com.example.app\"]\n", "version = 1\n[filter]\n"] {
+        let path = temp_config_path("removed-routing-settings");
+        fs::write(&*path, contents).unwrap();
+
+        let loaded = load_or_seed(&path, LoadContext::Startup).unwrap();
+        assert!(!loaded.main.enabled);
+        assert_eq!(fs::read_to_string(&*path).unwrap(), contents);
+    }
 }
 
 #[test]
@@ -148,6 +165,7 @@ fn rendered_config_contains_no_routing_list() {
     let config = InjectorConfig::default();
     let rendered = render_config(&config).expect("config should render");
     assert!(!rendered.contains("scoop"));
+    assert!(!rendered.contains("[filter]"));
     assert!(rendered.contains(&format!("version = {CURRENT_CONFIG_VERSION}")));
 
     let reparsed = parse_config(&rendered).expect("rendered config should parse");
@@ -156,8 +174,7 @@ fn rendered_config_contains_no_routing_list() {
         reparsed.main.attestation_generation_delay_ms,
         config.main.attestation_generation_delay_ms
     );
-    assert_eq!(reparsed.filter.block_android_package, config.filter.block_android_package);
-    assert_eq!(reparsed.filter.allow_unknown_package, config.filter.allow_unknown_package);
+    assert_eq!(reparsed.intercept.get_key_entry, config.intercept.get_key_entry);
 }
 
 #[test]
@@ -171,7 +188,7 @@ fn missing_config_is_seeded_but_invalid_startup_config_is_untouched() {
     let on_disk = fs::read_to_string(&*path).expect("written config should be readable");
     let reparsed = parse_config(&on_disk).expect("written config should parse");
     assert_eq!(reparsed.main.enabled, loaded.main.enabled);
-    assert_eq!(reparsed.filter.block_android_package, loaded.filter.block_android_package);
+    assert_eq!(reparsed.intercept.get_key_entry, loaded.intercept.get_key_entry);
 
     let path = temp_config_path("invalid");
     let invalid = "[main\nbroken";
@@ -248,6 +265,7 @@ fn unsupported_versions_are_rejected_without_rewriting() {
 fn template_matches_defaults_and_contains_no_routing_list() {
     let template = include_str!("../../../template/injector.toml");
     assert!(!template.contains("scoop"));
+    assert!(!template.contains("[filter]"));
     let parsed = parse_config(template).expect("template injector config should parse");
     let defaults = InjectorConfig::default();
     assert_eq!(parsed.version, defaults.version);
@@ -258,9 +276,7 @@ fn template_matches_defaults_and_contains_no_routing_list() {
         defaults.main.attestation_generation_delay_ms
     );
     assert_eq!(parsed.main.operation_start_delay_ms, defaults.main.operation_start_delay_ms);
-    assert_eq!(parsed.filter.enabled, defaults.filter.enabled);
-    assert_eq!(parsed.filter.block_android_package, defaults.filter.block_android_package);
-    assert_eq!(parsed.filter.allow_unknown_package, defaults.filter.allow_unknown_package);
+    assert_eq!(parsed.intercept.get_key_entry, defaults.intercept.get_key_entry);
 }
 
 #[test]

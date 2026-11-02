@@ -57,11 +57,11 @@ from becoming a fixed value of its own; `operation_start_delay_ms` defaults to
 waiting. They do not provide hardware security or guarantee a detector result.
 See the Configuration Guide before changing them.
 
-App routing is automatic. Keymint's privileged helper discovers installed
-third-party apps per Android user and adds Google Play services, Google Services Framework,
-and Google Play Store for every user. No package list is configured in
-`injector.toml`; the removed `scoop`, `scoop_details`, `[scoop.*]`, and
-`deny_packages` fields are rejected by this build.
+Request routing covers app callers. System identities, including
+`system_server`, root, and the keystore UID, stay on System. Each service method
+follows its per-method `[intercept]` setting in `injector.toml`; there is no
+package or app routing list. The removed `[filter]`, `scoop`, `scoop_details`,
+`[scoop.*]`, and `deny_packages` settings are rejected by this build.
 
 ## Embedded WebUI
 

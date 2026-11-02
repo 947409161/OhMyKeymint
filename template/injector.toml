@@ -1,6 +1,6 @@
-# With `[filter].enabled = true`, OMK routes installed third-party apps and the
-# three Google packages discovered by the module helper. The routing scope is
-# refreshed automatically and is not configured in this file.
+# Every app caller is routed according to the per-method `[intercept]` settings
+# below. System identities stay on System; there is no package or UID routing
+# list.
 
 version = 1
 
@@ -13,11 +13,6 @@ log_level = "debug"
 attestation_generation_delay_ms = [20, 30]
 # Optional delay before two-way OMK createOperation calls, 0..250 ms; 0 disables it.
 operation_start_delay_ms = 0
-
-[filter]
-enabled = true
-block_android_package = true
-allow_unknown_package = false
 
 [intercept]
 get_security_level = true

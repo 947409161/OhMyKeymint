@@ -69,7 +69,6 @@ fn pending_reply_queue_consumes_nested_requests_from_the_top() {
                 security_level: SecurityLevel::TRUSTED_ENVIRONMENT,
             },
             caller: CallerInfo { uid: 1000, sid: String::new(), pid: 2000 },
-            packages: vec!["com.example".to_string()],
             route: RouteTarget::Omk,
         }),
     );
@@ -80,7 +79,6 @@ fn pending_reply_queue_consumes_nested_requests_from_the_top() {
         PendingCall::Service(PendingServiceCall {
             request: ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
             caller: CallerInfo { uid: 1000, sid: String::new(), pid: 2000 },
-            packages: vec!["com.example".to_string()],
             route: RouteTarget::Omk,
         }),
     );

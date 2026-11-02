@@ -7,6 +7,16 @@ impl Buffer {
     fn align(&mut self) {
         self.0.resize((self.0.len() + 3) & !3, 0);
     }
+
+    /// Append a Java `writeString` value while building a request fixture.
+    fn string(&mut self, value: &str) -> Result<(), i32> {
+        self.int32(value.encode_utf16().count() as i32)?;
+        for unit in value.encode_utf16().chain([0]) {
+            self.0.extend_from_slice(&unit.to_le_bytes());
+        }
+        self.align();
+        Ok(())
+    }
 }
 
 impl Writer for Buffer {
@@ -23,15 +33,6 @@ impl Writer for Buffer {
     fn bytes(&mut self, value: &[u8]) -> Result<(), i32> {
         self.int32(value.len() as i32)?;
         self.0.extend_from_slice(value);
-        self.align();
-        Ok(())
-    }
-
-    fn string(&mut self, value: &str) -> Result<(), i32> {
-        self.int32(value.encode_utf16().count() as i32)?;
-        for unit in value.encode_utf16().chain([0]) {
-            self.0.extend_from_slice(&unit.to_le_bytes());
-        }
         self.align();
         Ok(())
     }
@@ -258,17 +259,38 @@ fn int32(bytes: &[u8], position: usize) -> i32 {
 }
 
 #[test]
-fn encodes_non_key_reply_shapes_without_session_queues() {
+fn encodes_non_key_reply_shapes() {
     const UID: u32 = 10123;
     for code in [5, 7, 10, 11, 12, 9, 13] {
         let mut output = Buffer::default();
-        wire::write_reply(code, UID, &[], &mut output).unwrap();
+        let mut arguments = wire::Arguments::default();
+        if code == 10 {
+            // `finishSign` always carries a session; zero is one no `initSigh` opened.
+            arguments.session = Some(0);
+        }
+        wire::write_reply(code, UID, &arguments, &mut output).unwrap();
         let bytes = output.0;
         assert_eq!(int32(&bytes, 0), 0);
         match code {
-            5 | 7 => assert_eq!(bytes, [0; 8]),
+            5 => assert_eq!(int32(&bytes, 4), -6),
+            7 => assert_eq!(bytes, [0; 8]),
             12 => assert_eq!(bytes, [0, 0, 0, 0, 1, 0, 0, 0]),
-            10 | 11 => {
+            13 => assert_eq!(bytes, [0; 8]),
+            9 => {
+                // No AuthKey exists yet: a zero session and the vendor's missing-key code.
+                assert_eq!(bytes.len(), 20);
+                assert_eq!(i64::from_le_bytes(bytes[8..16].try_into().unwrap()), 0);
+                assert_eq!(int32(&bytes, 16), -6);
+            }
+            10 => {
+                // No session was opened: the vendor's unknown-session code, empty result.
+                assert_eq!(int32(&bytes, 4), 1);
+                assert_eq!(int32(&bytes, 8), -1000);
+                assert_eq!(int32(&bytes, 12), 0);
+                assert_eq!(int32(&bytes, 16), 0);
+                assert_eq!(bytes.len(), 20);
+            }
+            11 => {
                 assert_eq!(int32(&bytes, 4), 1);
                 assert_eq!(int32(&bytes, 8), 0);
                 let length = int32(&bytes, 12) as usize;
@@ -276,28 +298,8 @@ fn encodes_non_key_reply_shapes_without_session_queues() {
                 assert_eq!(int32(&bytes, 16 + padded), length as i32);
                 assert_eq!(bytes.len(), 20 + padded);
                 let payload = &bytes[16..16 + length];
-                match code {
-                    10 => assert_eq!(payload, [0; 256]),
-                    11 => {
-                        assert_eq!(payload.len(), 16);
-                        assert_ne!(payload, b"TEESIM-SOTER-0001");
-                    }
-                    _ => unreachable!(),
-                }
-            }
-            9 => {
-                assert_eq!(bytes.len(), 20);
-                assert_eq!(int32(&bytes, 4), 1);
-                assert_eq!(i64::from_le_bytes(bytes[8..16].try_into().unwrap()), 1);
-                assert_eq!(int32(&bytes, 16), 0);
-            }
-            13 => {
-                let mut expected = Buffer::default();
-                for value in [0, 1, 0] {
-                    expected.int32(value).unwrap();
-                }
-                expected.string("optical").unwrap();
-                assert_eq!(bytes, expected.0);
+                assert_eq!(payload.len(), 16);
+                assert_ne!(payload, b"TEESIM-SOTER-0001");
             }
             _ => unreachable!(),
         }
@@ -317,17 +319,20 @@ fn stops_on_native_write_errors_and_rejects_unknown_codes_without_output() {
         fn bytes(&mut self, _: &[u8]) -> Result<(), i32> {
             panic!("write after failure")
         }
-        fn string(&mut self, _: &str) -> Result<(), i32> {
-            panic!("write after failure")
-        }
     }
     const UID: u32 = 10123;
     for code in 1..=13 {
-        assert_eq!(wire::write_reply(code, UID, &[], &mut Reject), Err(-12));
+        assert_eq!(
+            wire::write_reply(code, UID, &wire::Arguments::default(), &mut Reject),
+            Err(-12)
+        );
     }
     for code in [0, 14, u32::MAX] {
         let mut output = Buffer::default();
-        assert_eq!(wire::write_reply(code, UID, &[], &mut output), Err(UNKNOWN_TRANSACTION));
+        assert_eq!(
+            wire::write_reply(code, UID, &wire::Arguments::default(), &mut output),
+            Err(UNKNOWN_TRANSACTION)
+        );
         assert!(output.0.is_empty());
     }
 }
@@ -344,28 +349,72 @@ fn parses_arguments_after_the_platform_header_and_preserves_utf16_aliases() {
         }
         bytes.align();
         let end = bytes.0.len();
-        for code in [4, 5, 6, 8, 9] {
-            assert_eq!(wire::request_alias(code, &bytes.0, prefix).unwrap(), alias);
+        for code in [4, 5, 6, 8] {
+            let parsed = wire::request_arguments(code, &bytes.0, prefix).unwrap();
+            assert_eq!(parsed.alias, alias);
+            assert_eq!(parsed.challenge, None);
             for length in prefix..end {
-                assert_eq!(wire::request_alias(code, &bytes.0[..length], prefix), Err(BAD_VALUE));
+                assert_eq!(
+                    wire::request_arguments(code, &bytes.0[..length], prefix),
+                    Err(BAD_VALUE)
+                );
             }
         }
+        // `initSigh` carries the challenge after the alias.
+        bytes.string("challenge").unwrap();
+        let parsed = wire::request_arguments(9, &bytes.0, prefix).unwrap();
+        assert_eq!(parsed.alias, alias);
+        assert_eq!(parsed.challenge.as_deref(), Some("challenge"));
+        let end = bytes.0.len();
+        for length in prefix..end {
+            assert_eq!(wire::request_arguments(9, &bytes.0[..length], prefix), Err(BAD_VALUE));
+        }
         bytes.0.extend_from_slice(&[0xff; 17]);
-        assert_eq!(wire::request_alias(4, &bytes.0, prefix).unwrap(), alias);
+        let trailing = wire::request_arguments(9, &bytes.0, prefix).unwrap();
+        assert_eq!(trailing.alias, alias);
+        assert_eq!(trailing.challenge.as_deref(), Some("challenge"));
     }
     for length in [-1, 0, i32::MAX] {
         let mut bytes = Buffer::default();
         bytes.int32(1).unwrap();
         bytes.int32(length).unwrap();
-        assert_eq!(wire::request_alias(4, &bytes.0, 0), Err(BAD_VALUE));
+        assert_eq!(wire::request_arguments(4, &bytes.0, 0), Err(BAD_VALUE));
     }
     let mut bytes = Buffer::default();
     bytes.int32(1).unwrap();
     bytes.string("a").unwrap();
     bytes.0[10] = 1; // Missing UTF-16 terminator.
-    assert_eq!(wire::request_alias(4, &bytes.0, 0), Err(BAD_VALUE));
-    assert_eq!(wire::request_alias(1, &[0; 3], 0), Err(BAD_VALUE));
-    assert_eq!(wire::request_alias(1, &[0; 4], 0), Ok(vec![]));
-    assert_eq!(wire::request_alias(4, &bytes.0, 1), Err(BAD_VALUE));
-    assert_eq!(wire::request_alias(12, &[], 0), Ok(vec![]));
+    assert_eq!(wire::request_arguments(4, &bytes.0, 0), Err(BAD_VALUE));
+    assert_eq!(wire::request_arguments(1, &[0; 3], 0), Err(BAD_VALUE));
+    assert_eq!(wire::request_arguments(1, &[0; 4], 0).unwrap(), wire::Arguments::default());
+    assert_eq!(wire::request_arguments(4, &bytes.0, 1), Err(BAD_VALUE));
+    assert_eq!(wire::request_arguments(12, &[], 0).unwrap(), wire::Arguments::default());
+}
+
+#[test]
+fn parses_signing_sessions_and_extra_parameter_keys() {
+    let mut session = Buffer::default();
+    session.int64(-7).unwrap();
+    let parsed = wire::request_arguments(10, &session.0, 0).unwrap();
+    assert_eq!(parsed.session, Some(-7));
+    assert_eq!(parsed.alias, Vec::<u16>::new());
+    assert_eq!(wire::request_arguments(10, &session.0[..7], 0), Err(BAD_VALUE));
+
+    for key in ["fingerprint_type", "sotercheck_unknown_param", ""] {
+        let mut bytes = Buffer::default();
+        bytes.string(key).unwrap();
+        let parsed = wire::request_arguments(13, &bytes.0, 0).unwrap();
+        assert_eq!(parsed.key.as_deref(), Some(key));
+    }
+    let mut null_key = Buffer::default();
+    null_key.int32(-1).unwrap();
+    assert_eq!(wire::request_arguments(13, &null_key.0, 0).unwrap().key, None);
+    // A null challenge is the Java `writeString(null)` spelling.
+    let mut null_challenge = Buffer::default();
+    null_challenge.int32(1).unwrap();
+    null_challenge.string("k").unwrap();
+    null_challenge.int32(-1).unwrap();
+    let parsed = wire::request_arguments(9, &null_challenge.0, 0).unwrap();
+    assert_eq!(parsed.alias, vec![0x6b]);
+    assert_eq!(parsed.challenge.as_deref(), Some(""));
 }

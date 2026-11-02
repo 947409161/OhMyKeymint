@@ -17,14 +17,12 @@ pub(super) struct PendingMaintenanceCall {
 pub(super) struct PendingServiceCall {
     pub(super) request: ParsedServiceRequest,
     pub(super) caller: CallerInfo,
-    pub(super) packages: Vec<String>,
     pub(super) route: RouteTarget,
 }
 
 pub(super) struct PendingSecurityLevelCall {
     pub(super) request: ParsedSecurityLevelRequest,
     pub(super) caller: CallerInfo,
-    pub(super) packages: Vec<String>,
     pub(super) route: RouteTarget,
     pub(super) security_level:
         crate::android::hardware::security::keymint::SecurityLevel::SecurityLevel,
@@ -180,33 +178,35 @@ pub(in crate::hook) unsafe fn handle_bc_reply(
         }
         PendingCall::Service(call) => {
             debug!(
-                "event=reply handling service {:?} route={:?} uid={} pid={} packages={:?}",
+                "event=reply handling service {:?} route={:?} uid={} pid={}",
                 call.request.method(),
                 call.route,
                 call.caller.uid,
-                call.caller.pid,
-                call.packages
+                call.caller.pid
             );
             build_service_reply_rewrite(tr, call)
         }
         PendingCall::PrecomputedService(call, precomputed) => {
             debug!(
-                "event=reply handling precomputed service {:?} route={:?} uid={} pid={} packages={:?}",
-                call.request.method(), call.route, call.caller.uid, call.caller.pid, call.packages
+                "event=reply handling precomputed service {:?} route={:?} uid={} pid={}",
+                call.request.method(),
+                call.route,
+                call.caller.uid,
+                call.caller.pid
             );
             build_precomputed_service_reply(precomputed).map(Some)
         }
         PendingCall::SecurityLevel(call) => {
             debug!(
-                "event=reply handling security-level {:?} route={:?} uid={} pid={} packages={:?} security_level={:?}",
-                call.request.method(), call.route, call.caller.uid, call.caller.pid, call.packages, call.security_level
+                "event=reply handling security-level {:?} route={:?} uid={} pid={} security_level={:?}",
+                call.request.method(), call.route, call.caller.uid, call.caller.pid, call.security_level
             );
             build_security_level_reply_rewrite(tr, call)
         }
         PendingCall::PrecomputedSecurityLevel(call, reply) => {
             debug!(
-                "event=reply handling precomputed security-level {:?} route={:?} uid={} pid={} packages={:?} security_level={:?}",
-                call.request.method(), call.route, call.caller.uid, call.caller.pid, call.packages, call.security_level
+                "event=reply handling precomputed security-level {:?} route={:?} uid={} pid={} security_level={:?}",
+                call.request.method(), call.route, call.caller.uid, call.caller.pid, call.security_level
             );
             reply
                 .take()

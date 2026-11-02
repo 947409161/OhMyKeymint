@@ -1,10 +1,14 @@
 //! Optional D-Soter-compatible experiment, not hardware or payment-key recovery.
 //!
-//! Reply values follow the D-Soter reference implementation (Apache-2.0),
+//! Key material follows the D-Soter reference implementation (Apache-2.0),
 //! <https://github.com/947409161/D-soter>, `module/jni/dsoter.cpp` and
 //! `module/jni/soter_attk.h`: exports carry independent RSA-2048 public keys with
 //! ATTK -> ASK -> AuthKey RSASSA-PSS/SHA-256 parent signatures. The `cpu_id` and device
 //! identifier are derived from the unit serial, and the exported `uid` is the Binder caller.
+//!
+//! Transaction replies mirror a live vendor TA rather than the reference's fixed buffers:
+//! missing keys answer `-6`, unknown signing sessions `-1000`, `initSigh` opens a
+//! challenge-bound session, and `finishSign` returns a result signed by that session's AuthKey.
 
 use std::{
     ffi::{CStr, c_char, c_void},
@@ -82,7 +86,6 @@ type PlatformSize = unsafe extern "C" fn(*const c_void) -> usize;
 type WriteInt32 = unsafe extern "C" fn(*mut c_void, i32) -> i32;
 type WriteInt64 = unsafe extern "C" fn(*mut c_void, i64) -> i32;
 type WriteBytes = unsafe extern "C" fn(*mut c_void, *const i8, i32) -> i32;
-type WriteString = unsafe extern "C" fn(*mut c_void, *const c_char, i32) -> i32;
 
 // Exact Android 12/13 NDK parcel_internal.h layout, matching OMK's injector.
 // Android 14+ must provide the platform accessor instead of using this layout.
@@ -105,7 +108,6 @@ struct NativeApi {
     write_i32: WriteInt32,
     write_i64: WriteInt64,
     write_bytes: WriteBytes,
-    write_string: WriteString,
 }
 
 struct NativeStub {
@@ -213,15 +215,30 @@ pub(crate) fn activate(env: &jni::JNIEnv<'_>) {
     }
 }
 
+/// The thread's errno. Android exposes `__errno()`; POSIX hosts used for unit tests expose
+/// `__errno_location()`.
+fn errno_location() -> *mut libc::c_int {
+    #[cfg(target_os = "android")]
+    // SAFETY: bionic returns the current thread's errno slot.
+    unsafe {
+        libc::__errno()
+    }
+    #[cfg(not(target_os = "android"))]
+    // SAFETY: the host libc returns the current thread's errno slot.
+    unsafe {
+        libc::__errno_location()
+    }
+}
+
 unsafe extern "C" fn ioctl_hook(fd: i32, request: i32, argument: *mut c_void) -> i32 {
     let original = ORIGINAL_IOCTL.load(Ordering::Acquire);
     if original.is_null() {
-        unsafe { *libc::__errno() = libc::ENOSYS };
+        unsafe { *errno_location() = libc::ENOSYS };
         return -1;
     }
     let original: Ioctl = unsafe { std::mem::transmute(original) };
     let result = unsafe { original(fd, request, argument) };
-    let saved_errno = unsafe { *libc::__errno() };
+    let saved_errno = unsafe { *errno_location() };
     if result >= 0
         && request == BINDER_WRITE_READ
         && !argument.is_null()
@@ -231,7 +248,7 @@ unsafe extern "C" fn ioctl_hook(fd: i32, request: i32, argument: *mut c_void) ->
             inspect_read(argument.cast());
         }));
     }
-    unsafe { *libc::__errno() = saved_errno };
+    unsafe { *errno_location() = saved_errno };
     result
 }
 
@@ -379,7 +396,6 @@ fn load_native(ndk: usize, binder: usize) -> Result<NativeStub, String> {
         write_i32: symbol(ndk, c"AParcel_writeInt32")?,
         write_i64: symbol(ndk, c"AParcel_writeInt64")?,
         write_bytes: symbol(ndk, c"AParcel_writeByteArray")?,
-        write_string: symbol(ndk, c"AParcel_writeString")?,
     };
     let define: ClassDefine = symbol(ndk, c"AIBinder_Class_define")?;
     let new: BinderNew = symbol(ndk, c"AIBinder_new")?;
@@ -503,7 +519,7 @@ unsafe extern "C" fn on_transact(
         let Ok(position) = usize::try_from(position) else {
             return BAD_VALUE;
         };
-        let Ok(alias) = wire::request_alias(code, bytes, position) else {
+        let Ok(arguments) = wire::request_arguments(code, bytes, position) else {
             return BAD_VALUE;
         };
         // A one-way call has no reply to deliver. The upstream stub accepts it
@@ -520,7 +536,7 @@ unsafe extern "C" fn on_transact(
         wire::write_reply(
             code,
             unsafe { (native.api.calling_uid)() },
-            &alias,
+            &arguments,
             &mut NativeWriter { api: &native.api, output },
         )
         .map_or_else(|status| status, |()| 0)
@@ -549,11 +565,6 @@ impl wire::Writer for NativeWriter<'_> {
     fn bytes(&mut self, value: &[u8]) -> Result<(), i32> {
         status(unsafe {
             (self.api.write_bytes)(self.output, value.as_ptr().cast(), value.len() as i32)
-        })
-    }
-    fn string(&mut self, value: &str) -> Result<(), i32> {
-        status(unsafe {
-            (self.api.write_string)(self.output, value.as_ptr().cast(), value.len() as i32)
         })
     }
 }

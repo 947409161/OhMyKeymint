@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, Once};
@@ -9,25 +8,14 @@ use anyhow::{Context, Result};
 use kmr_common::rpc;
 use log::{debug, warn};
 use rsbinder::rpc::RpcSession;
-use rsbinder::{
-    hub, DeathRecipient, ExceptionCode, FromIBinder, SIBinder, Status, StatusCode, Strong, WIBinder,
-};
+use rsbinder::{ExceptionCode, FromIBinder, SIBinder, Status, StatusCode, Strong};
 
-use crate::android::security::keystore::IKeyAttestationApplicationIdProvider::IKeyAttestationApplicationIdProvider;
-use crate::filter::PackageResolution;
-use crate::top::qwq2333::ohmykeymint::CallerInfo::CallerInfo;
 use crate::top::qwq2333::ohmykeymint::IOhMyAuthorizationService::IOhMyAuthorizationService;
 use crate::top::qwq2333::ohmykeymint::IOhMyKsService::IOhMyKsService;
 use crate::top::qwq2333::ohmykeymint::IOhMyMaintenanceService::IOhMyMaintenanceService;
 
 const RPC_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_READY_RETRY_DELAY: Duration = Duration::from_millis(200);
-const PM_SERVICE: &str = "sec_key_att_app_id_provider";
-
-thread_local! {
-    static PM: RefCell<Option<Strong<dyn IKeyAttestationApplicationIdProvider>>> = const { RefCell::new(None) };
-    static PM_DEATH: RefCell<Option<Arc<dyn DeathRecipient>>> = const { RefCell::new(None) };
-}
 
 static PROCESS_STATE_INIT: Once = Once::new();
 static RPC_CACHE: Mutex<RpcCacheState> = Mutex::new(RpcCacheState {
@@ -75,15 +63,6 @@ impl std::error::Error for SharedRpcConnectError {
 
 fn shared_rpc_connect_error(error: &Arc<anyhow::Error>) -> anyhow::Error {
     anyhow::Error::new(SharedRpcConnectError(Arc::clone(error)))
-}
-
-struct PmDeathRecipient;
-
-impl DeathRecipient for PmDeathRecipient {
-    fn binder_died(&self, _who: &WIBinder) {
-        clear_pm_cache();
-        warn!("{} binder died; cache cleared", PM_SERVICE);
-    }
 }
 
 pub fn ensure_process_state() {
@@ -392,113 +371,6 @@ where
     )
 }
 
-pub fn resolve_packages_for_caller(caller: &CallerInfo) -> (u32, PackageResolution) {
-    ensure_process_state();
-    let uid = caller.uid as u32;
-    let package_uid =
-        match non_isolated_package_uid(uid, kmr_common::android_version::android_major_version()) {
-            Some(uid) => Some(uid),
-            None => match with_omk_once(|omk| {
-                Ok(u32::try_from(omk.r#getIsolatedOwnerUid(Some(caller))?).ok())
-            }) {
-                Ok(owner) => owner,
-                Err(error) => {
-                    warn!(
-                        "failed to resolve isolated caller uid={} pid={}: {error:#}",
-                        uid, caller.pid
-                    );
-                    None
-                }
-            },
-        };
-    let Some(package_uid) = package_uid else {
-        return (uid, PackageResolution::Unknown);
-    };
-    let resolution = match resolve_package_names_for_uid(package_uid) {
-        Ok(packages) if packages.is_empty() => PackageResolution::Unknown,
-        Ok(packages) => PackageResolution::Known(packages),
-        Err(error) => {
-            warn!("failed to resolve packages for uid {}: {:#}", package_uid, error);
-            PackageResolution::Unknown
-        }
-    };
-    (package_uid, resolution)
-}
-
-fn non_isolated_package_uid(uid: u32, android_major: Option<i32>) -> Option<u32> {
-    // AOSP Process.getAppUidForSdkSandboxUid/getAppUidForPrivateComputeCoreUid.
-    match uid % kmr_common::consts::AID_USER_OFFSET {
-        90_000..=99_999 => None,
-        20_000..=29_999 if android_major.is_some_and(|version| version >= 13) => Some(uid - 10_000),
-        30_000..=39_999 if android_major.is_some_and(|version| version >= 17) => Some(uid - 20_000),
-        _ => Some(uid),
-    }
-}
-
-fn resolve_package_names_for_uid(uid: u32) -> Result<Vec<String>> {
-    if crate::legacy::should_use_aaid_provider() {
-        crate::legacy::resolve_package_names_for_uid(uid)
-    } else {
-        resolve_package_names_for_uid_once(uid)
-    }
-}
-
-fn resolve_package_names_for_uid_once(uid: u32) -> Result<Vec<String>> {
-    let app_id = with_pm_retry(|pm| {
-        pm.getKeyAttestationApplicationId(uid as i32)
-            .context("getKeyAttestationApplicationId failed")
-    })?;
-    Ok(app_id
-        .packageInfos
-        .into_iter()
-        .map(|pkg| pkg.packageName)
-        .filter(|pkg| !pkg.is_empty())
-        .collect())
-}
-
-fn get_pm() -> Result<Strong<dyn IKeyAttestationApplicationIdProvider>> {
-    ensure_process_state();
-    PM.with(|slot| {
-        if let Some(client) = slot.borrow().as_ref() {
-            return Ok(client.clone());
-        }
-
-        let client: Strong<dyn IKeyAttestationApplicationIdProvider> =
-            hub::check_interface(PM_SERVICE)
-                .context("failed to connect to sec_key_att_app_id_provider")?;
-        let recipient: Arc<dyn DeathRecipient> = Arc::new(PmDeathRecipient);
-        client
-            .as_binder()
-            .link_to_death(Arc::downgrade(&recipient))
-            .context("failed to watch sec_key_att_app_id_provider death")?;
-        PM_DEATH.with(|death| *death.borrow_mut() = Some(recipient));
-        *slot.borrow_mut() = Some(client.clone());
-        Ok(client)
-    })
-}
-
-fn with_pm_retry<T, F>(mut f: F) -> Result<T>
-where
-    F: FnMut(&Strong<dyn IKeyAttestationApplicationIdProvider>) -> Result<T>,
-{
-    with_binder_retry(
-        "sec_key_att_app_id_provider",
-        get_pm,
-        |_| clear_pm_cache(),
-        is_dead_object_error,
-        &mut f,
-    )
-}
-
-pub(crate) fn is_dead_object_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause.downcast_ref::<Status>().is_some_and(is_dead_object_status)
-            || cause
-                .downcast_ref::<StatusCode>()
-                .is_some_and(|status| *status == StatusCode::DeadObject)
-    })
-}
-
 pub(crate) fn is_stale_rpc_status_code(status: StatusCode) -> bool {
     matches!(status, StatusCode::DeadObject | StatusCode::RpcError | StatusCode::NotEnoughData)
 }
@@ -522,16 +394,6 @@ fn is_rpc_cache_invalidating_error(error: &anyhow::Error) -> bool {
             .downcast_ref::<StatusCode>()
             .is_some_and(|status| is_rpc_cache_invalidating_status_code(*status))
     })
-}
-
-fn is_dead_object_status(status: &Status) -> bool {
-    status.exception_code() == ExceptionCode::TransactionFailed
-        && status.transaction_error() == StatusCode::DeadObject
-}
-
-fn clear_pm_cache() {
-    PM.with(|slot| *slot.borrow_mut() = None);
-    PM_DEATH.with(|slot| *slot.borrow_mut() = None);
 }
 
 fn clear_rpc_cache_if(service_name: &'static str, failed: &SIBinder) {

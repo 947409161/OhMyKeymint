@@ -30,8 +30,8 @@ at commit
 That source is licensed under the
 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
-This build does not include the upstream package-selection UI; app routing is
-discovered automatically and is not edited in the WebUI. Attribution is
+This build does not include the upstream package-selection UI; request routing
+follows the per-method `[intercept]` settings and is not edited in the WebUI. Attribution is
 retained for any remaining adapted WebUI source. That adapted source does not
 provide network access, module self-update, property modification, trust
 editing, or automatic WebUI-host installation. Oh My Keymint separately provides a keybox action that validates

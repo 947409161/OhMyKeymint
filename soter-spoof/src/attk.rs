@@ -113,10 +113,6 @@ pub(crate) fn attk_private_der() -> Option<Vec<u8>> {
     BASE64.decode(ATTK_PRIVATE_B64).ok()
 }
 
-/// Real installs persist a monotonically increasing key counter, and the Soter client rejects a
-/// key whose counter is not positive, so a freshly minted ASK always reports at least one.
-pub(crate) const KEY_COUNTER: i64 = 1;
-
 const MODULUS_BYTES: usize = 256;
 const HASH_BYTES: usize = 32;
 const SALT_BYTES: usize = 20;

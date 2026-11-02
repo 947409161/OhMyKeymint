@@ -763,11 +763,6 @@ fn helper_error_response(error: &anyhow::Error) -> String {
 }
 
 fn helper_loop(stream: UnixStream, command: Option<ResetpropCommand>) -> Result<()> {
-    // The root helper owns package discovery so neither the KeyMint request
-    // path nor the keystore2 injection thread has to run PackageManager. Start
-    // it while the helper thread still has root; the discovery thread keeps
-    // that identity after the helper thread switches to the system UID.
-    crate::plat::app_scope::start();
     // Keep real/saved root UID so resetprop children can regain root.
     if unsafe { libc::seteuid(kmr_common::consts::AID_SYSTEM) } != 0 {
         return Err(std::io::Error::last_os_error()).context("failed to enter system Binder UID");

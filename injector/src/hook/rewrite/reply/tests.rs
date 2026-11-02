@@ -4,6 +4,7 @@ use std::mem::size_of;
 use rsbinder::{ExceptionCode, Status, StatusCode};
 
 use super::*;
+use crate::android::system::keystore2::Domain::Domain;
 use crate::hook::rewrite::tests::*;
 
 #[test]

@@ -23,7 +23,6 @@ const REPLACE_SAVE_RETRY_LIMIT: usize = 10;
 pub struct InjectorConfig {
     pub version: u32,
     pub main: MainConfig,
-    pub filter: FilterConfig,
     pub intercept: InterceptConfig,
 }
 
@@ -59,15 +58,6 @@ where
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 #[serde(deny_unknown_fields)]
-pub struct FilterConfig {
-    pub enabled: bool,
-    pub block_android_package: bool,
-    pub allow_unknown_package: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-#[serde(deny_unknown_fields)]
 pub struct InterceptConfig {
     pub get_security_level: bool,
     pub get_key_entry: bool,
@@ -86,7 +76,6 @@ impl Default for InjectorConfig {
         Self {
             version: CURRENT_CONFIG_VERSION,
             main: MainConfig::default(),
-            filter: FilterConfig::default(),
             intercept: InterceptConfig::default(),
         }
     }
@@ -100,12 +89,6 @@ impl Default for MainConfig {
             attestation_generation_delay_ms: [20, 30],
             operation_start_delay_ms: 0,
         }
-    }
-}
-
-impl Default for FilterConfig {
-    fn default() -> Self {
-        Self { enabled: true, block_android_package: true, allow_unknown_package: false }
     }
 }
 
@@ -156,7 +139,6 @@ struct ConfigVersion {
 #[derive(Serialize)]
 struct WritableConfig<'a> {
     main: &'a MainConfig,
-    filter: &'a FilterConfig,
     intercept: &'a InterceptConfig,
 }
 
@@ -331,19 +313,33 @@ fn load_or_seed(path: &Path, context: LoadContext) -> Option<InjectorConfig> {
     }
 }
 
-/// Routing lists were removed from the schema. Point at the concrete
+/// Routing lists and filters are not part of the schema. Point at the concrete
 /// remediation instead of leaving startup disabled with only a parse error.
 fn log_removed_field_hint(path: &Path) {
     let Ok(contents) = fs::read_to_string(path) else {
         return;
     };
-    if ["scoop", "deny_packages"].iter().any(|marker| contents.contains(marker)) {
+    if has_removed_routing_settings(&contents) {
         log::error!(
-            "{} contains routing-list settings that this build no longer supports; \
-             remove scoop, scoop_details, [scoop.*], and deny_packages, or delete the file and restart OMK",
+            "{} contains routing settings that this build no longer supports; \
+             remove [filter], [filter.*], scoop, scoop_details, [scoop.*], and deny_packages, \
+             or delete the file and restart OMK",
             path.display()
         );
     }
+}
+
+fn has_removed_routing_settings(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let section = trimmed
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once(']'))
+            .map(|(name, _)| name.trim());
+        let filter_section =
+            section.is_some_and(|name| name == "filter" || name.starts_with("filter."));
+        filter_section || trimmed.contains("scoop") || trimmed.contains("deny_packages")
+    })
 }
 
 fn current_config_snapshot() -> InjectorConfig {
@@ -385,15 +381,14 @@ fn default_owner(path: &Path) -> (u32, u32) {
 
 fn render_config(config: &InjectorConfig) -> io::Result<String> {
     let mut contents = String::from(
-        "# With `[filter].enabled = true`, OMK routes installed third-party apps\n\
-         # and the three Google packages discovered by the module helper.\n\
-         # The routing scope is refreshed automatically; it is not configured here.\n\n",
+        "# Every app caller is routed according to the per-method `[intercept]`\n\
+         # settings below. System identities stay on System; there is no package\n\
+         # or UID routing list.\n\n",
     );
     contents.push_str(&format!("version = {}\n\n", config.version));
 
     let base = toml::to_string_pretty(&WritableConfig {
         main: &config.main,
-        filter: &config.filter,
         intercept: &config.intercept,
     })
     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;

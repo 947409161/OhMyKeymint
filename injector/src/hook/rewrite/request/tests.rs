@@ -84,6 +84,9 @@ fn grant_precompute_returns_reachable_omk_business_error() {
     assert_eq!(status.service_specific_error(), 7);
 }
 
+const APP_UID: u32 = 10_123;
+const SYSTEM_UID: u32 = 1000;
+
 #[test]
 fn service_route_respects_intercept_configuration() {
     let _guard = route_state_test_guard();
@@ -91,9 +94,15 @@ fn service_route_respects_intercept_configuration() {
 
     for request in sample_service_requests() {
         assert_eq!(
-            route_for_service_request(&request, &intercept),
+            route_for_service_request(&request, &intercept, APP_UID),
             RouteTarget::Omk,
             "{:?} should use the OMK backend when the method is enabled",
+            request.method()
+        );
+        assert_eq!(
+            route_for_service_request(&request, &intercept, SYSTEM_UID),
+            RouteTarget::System,
+            "{:?} must stay on System for a system identity",
             request.method()
         );
     }
@@ -102,7 +111,7 @@ fn service_route_respects_intercept_configuration() {
 
     for request in sample_service_requests() {
         assert_eq!(
-            route_for_service_request(&request, &intercept),
+            route_for_service_request(&request, &intercept, APP_UID),
             RouteTarget::System,
             "{:?} should use the system backend when the method is disabled",
             request.method()
@@ -127,173 +136,44 @@ fn service_route_uses_omk_for_key_id() {
         route_for_service_request(
             &ParsedServiceRequest::GetKeyEntry { key },
             &config::InterceptConfig::default(),
+            APP_UID,
         ),
         RouteTarget::Omk
     );
 }
 
 #[test]
-fn unconfirmed_grant_readback_stays_rejected() {
-    let _guard = route_state_test_guard();
-    let decision = crate::filter::FilterDecision {
-        allowed: false,
-        reason: crate::filter::FilterReason::RejectedNotInScope,
-        packages: vec!["com.grantee".to_string()],
-    };
-    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
-    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
+fn security_level_route_is_omk_only_for_app_callers_with_intercept_enabled() {
+    let mut intercept = config::InterceptConfig::default();
+    assert_eq!(route_for_security_level(&intercept, APP_UID), RouteTarget::Omk);
+    assert_eq!(route_for_security_level(&intercept, SYSTEM_UID), RouteTarget::System);
 
-    assert!(!should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry { key: grant },
-        &decision,
-        &caller,
-        |_, _| Ok(false),
-    )
-    .expect("unconfirmed grant lookup should succeed"));
-    assert!(!should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
-        &decision,
-        &caller,
-        |_, _| -> anyhow::Result<bool> { panic!("non-GRANT descriptors must not be probed") },
-    )
-    .expect("non-GRANT lookup should succeed"));
+    intercept.get_security_level = false;
+    intercept.get_key_entry = false;
+    assert_eq!(route_for_security_level(&intercept, APP_UID), RouteTarget::System);
+    assert_eq!(route_for_security_level(&intercept, SYSTEM_UID), RouteTarget::System);
+
+    intercept.get_security_level = true;
+    assert_eq!(route_for_security_level(&intercept, APP_UID), RouteTarget::Omk);
+
+    intercept.get_security_level = false;
+    intercept.get_key_entry = true;
+    assert_eq!(route_for_security_level(&intercept, APP_UID), RouteTarget::Omk);
 }
 
 #[test]
-fn soft_rejected_grant_probe_error_is_fail_closed() {
-    let _guard = route_state_test_guard();
-    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
-    let decision = crate::filter::FilterDecision {
-        allowed: false,
-        reason: crate::filter::FilterReason::RejectedUnknownPackage,
-        packages: vec![],
+fn migrate_key_namespace_is_omk_only_for_app_callers() {
+    let request = ParsedMaintenanceRequest::MigrateKeyNamespace {
+        source: sample_key_descriptor(),
+        destination: sample_key_descriptor(),
     };
-    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
-
-    let error = should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry { key: grant },
-        &decision,
-        &caller,
-        |_, _| Err(anyhow::anyhow!("reachable probe failure")),
-    )
-    .expect_err("non-unavailable probe errors must block System fallback");
-
-    assert!(error.to_string().contains("reachable probe failure"));
+    assert_eq!(route_for_maintenance_request(&request, APP_UID), RouteTarget::Omk);
+    assert_eq!(route_for_maintenance_request(&request, SYSTEM_UID), RouteTarget::System);
 }
 
 #[test]
-fn soft_rejected_grant_positive_probe_works_for_service_and_security_level() {
-    let _guard = route_state_test_guard();
-    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
-    let decision = crate::filter::FilterDecision {
-        allowed: false,
-        reason: crate::filter::FilterReason::RejectedUnknownPackage,
-        packages: vec![],
-    };
-    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
-
-    assert!(should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry { key: grant.clone() },
-        &decision,
-        &caller,
-        |probe_caller, probe_grant| {
-            assert_eq!(probe_caller.uid, caller.uid);
-            assert_eq!(probe_grant, &grant);
-            Ok(true)
-        },
-    )
-    .expect("positive grant probe should succeed"));
-
-    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 321, alias: None, blob: None };
-    let decision = crate::filter::FilterDecision {
-        allowed: false,
-        reason: crate::filter::FilterReason::RejectedNotInScope,
-        packages: vec!["com.grantee".to_string()],
-    };
-
-    assert!(should_allow_omk_grant_security_level_request_with_probe(
-        &ParsedSecurityLevelRequest::CreateOperation {
-            key: grant.clone(),
-            operation_parameters: vec![],
-            forced: false,
-        },
-        &decision,
-        &caller,
-        |probe_caller, probe_grant| {
-            assert_eq!(probe_caller.uid, caller.uid);
-            assert_eq!(probe_grant, &grant);
-            Ok(true)
-        },
-    )
-    .expect("positive grant probe should succeed"));
-}
-
-#[test]
-fn android_rejected_grant_readback_does_not_probe_omk() {
-    let _guard = route_state_test_guard();
-    let grant = KeyDescriptor { domain: Domain::GRANT, nspace: 123, alias: None, blob: None };
-    let decision = crate::filter::FilterDecision {
-        allowed: false,
-        reason: crate::filter::FilterReason::RejectedAndroidPackage,
-        packages: vec!["android".to_string()],
-    };
-    let caller = CallerInfo { uid: 10002, sid: String::new(), pid: 2000 };
-
-    assert!(!should_allow_omk_grant_service_request_with_probe(
-        &ParsedServiceRequest::GetKeyEntry { key: grant },
-        &decision,
-        &caller,
-        |_, _| -> anyhow::Result<bool> {
-            panic!("android-rejected callers must not probe OMK grants")
-        },
-    )
-    .expect("android-rejected grant lookup should succeed"));
-}
-
-#[test]
-fn application_owner_controls_scope_without_changing_caller() {
-    let caller = CallerInfo { uid: 99_001, pid: 2000, sid: "isolated".to_string() };
-    let cfg = config::InjectorConfig::default();
-    for (owner, packages, reason) in [
-        (1000, vec!["com.example.scooped"], FilterReason::RejectedAndroidPackage),
-        (10_123, vec!["android"], FilterReason::RejectedAndroidPackage),
-    ] {
-        let decision = evaluate_caller_with(&caller, &cfg, |actual| {
-            assert!(std::ptr::eq(actual, &caller));
-            assert_eq!((actual.uid, actual.pid, actual.sid.as_str()), (99_001, 2000, "isolated"));
-            (owner, PackageResolution::Known(packages.into_iter().map(str::to_string).collect()))
-        });
-        assert_eq!(decision.reason, reason);
-        assert!(!decision.allowed);
-    }
-}
-
-#[test]
-fn owner_resolution_preserves_preflight_and_unknown_policy() {
-    let mut cfg = config::InjectorConfig::default();
-    let mut caller = CallerInfo { uid: 1000, pid: 2000, sid: "system".to_string() };
-    let decision = evaluate_caller_with(&caller, &cfg, |_| {
-        panic!("core callers must not query application ownership")
-    });
-    assert_eq!(decision.reason, FilterReason::RejectedAndroidPackage);
-
-    caller.uid = 99_001;
-    cfg.filter.enabled = false;
-    let decision = evaluate_caller_with(&caller, &cfg, |_| {
-        panic!("a disabled filter must not query application ownership")
-    });
-    assert_eq!(decision.reason, FilterReason::Disabled);
-    assert!(decision.allowed);
-
-    cfg.filter.enabled = true;
-    for allowed in [false, true] {
-        cfg.filter.allow_unknown_package = allowed;
-        let decision =
-            evaluate_caller_with(&caller, &cfg, |_| (99_001, PackageResolution::Unknown));
-        assert_eq!(decision.allowed, allowed);
-        assert_eq!(
-            decision.reason,
-            if allowed { FilterReason::Allowed } else { FilterReason::RejectedUnknownPackage }
-        );
-    }
+fn other_maintenance_is_system_authoritative() {
+    let request = ParsedMaintenanceRequest::EarlyBootEnded;
+    assert_eq!(route_for_maintenance_request(&request, APP_UID), RouteTarget::System);
+    assert_eq!(route_for_maintenance_request(&request, SYSTEM_UID), RouteTarget::System);
 }

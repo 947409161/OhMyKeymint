@@ -37,14 +37,18 @@
 
 ### OMK Routing
 
-- For every request allowed by the automatic routing scope with `FilterDecision::allowed == true`,
-  OMK is the only backend during normal reachable operation. Per-method intercept settings still
-  determine whether an allowed request is routed to OMK.
-- Choose the backend only from the current caller, filter decision, method, and configuration. Do
-  not read or infer which backend created a key, `KeyDescriptor`, `KEY_ID`, `GRANT`, alias,
-  wrapping key, or attestation key.
+- App callers (`uid % AID_USER_OFFSET >= AID_APP_START`) are subject to routing. System identities
+  (root, `system_server`, the keystore UID, and every other app-id below `AID_APP_START`) always
+  stay on System. There is no package or app routing scope.
+- For every app caller whose per-method `[intercept]` setting is enabled, OMK is the only backend
+  during normal reachable operation. Choose the backend only from the caller UID range, interface,
+  method, and configuration. Do not read or infer which backend created a key, `KeyDescriptor`,
+  `KEY_ID`, `GRANT`, alias, wrapping key, or attestation key.
 - Per-method intercept settings are authoritative. When interception for a method is disabled, pass
-  the request to System unchanged even for a caller allowed by the routing scope.
+  the request to System unchanged for every app caller.
+- `IKeystoreAuthorization` and non-`migrateKeyNamespace` `IKeystoreMaintenance` calls stay
+  System-authoritative and are mirrored to OMK after System success. `migrateKeyNamespace` is
+  OMK-authoritative for app callers and System for system identities.
 - Do not support key or descriptor continuity between System and OMK. Pass old, externally
   supplied, and System-created descriptors to the selected backend unchanged; an OMK business
   error for such a descriptor is authoritative.
@@ -79,7 +83,7 @@
   because IMEI2, MEID, or all telephony fields are absent after one-shot discovery.
 - Preserve every valid candidate returned by any slot or API. A failure or unsupported result from
   another probe must not discard successful values or turn the resolved snapshot into an error.
-  Individual probe failures are internal discovery failures, not scope-routed OMK business errors.
+  Individual probe failures are internal discovery failures, not OMK business errors.
 - Return `CANNOT_ATTEST_IDS` only when an explicitly requested ID is absent or mismatched. Missing
   unrequested IMEI2 or MEID must not block ordinary attestation or requests for other IDs.
 - Use the existing privileged fork helper and direct Binder calls. Do not add shell commands or
@@ -109,7 +113,7 @@
   compiled Rust path and the relevant Android release. Edit it only when the task includes reference
   documentation, probes, or reports.
 - For injector or detector investigations, start from injector-visible routing, state, and fresh
-  in-scope/plain runtime evidence. Use `refs/keymint` and `refs/keystore2` as final contract checks,
+  routed/plain runtime evidence. Use `refs/keymint` and `refs/keystore2` as final contract checks,
   not as a reason for speculative production rewrites.
 - For every substantial change, check whether any documentation under `docs/` describes the
   affected behavior and update it when needed.

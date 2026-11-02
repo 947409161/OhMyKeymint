@@ -1,4 +1,5 @@
 use super::*;
+use kmr_common::consts::{AID_APP_START, AID_USER_OFFSET};
 
 pub(super) fn target_from_transaction(tr: &binder_transaction_data) -> Option<LocalBinderTarget> {
     let ptr = unsafe { tr.target.ptr };
@@ -8,10 +9,20 @@ pub(super) fn target_from_transaction(tr: &binder_transaction_data) -> Option<Lo
     Some(LocalBinderTarget { ptr, cookie: tr.cookie })
 }
 
+/// System identities keep using AOSP keystore2: the pre-unlock credential path
+/// runs in system_server and cannot use OMK's separate key store.
+fn is_app_caller(uid: u32) -> bool {
+    uid % AID_USER_OFFSET >= AID_APP_START
+}
+
 fn route_for_service_request(
     request: &ParsedServiceRequest,
     intercept: &config::InterceptConfig,
+    uid: u32,
 ) -> RouteTarget {
+    if !is_app_caller(uid) {
+        return RouteTarget::System;
+    }
     if identify::is_omk_service_route_enabled(request.method(), intercept) {
         RouteTarget::Omk
     } else {
@@ -19,18 +30,37 @@ fn route_for_service_request(
     }
 }
 
+fn route_for_maintenance_request(request: &ParsedMaintenanceRequest, uid: u32) -> RouteTarget {
+    if !is_app_caller(uid) {
+        return RouteTarget::System;
+    }
+    match request {
+        ParsedMaintenanceRequest::MigrateKeyNamespace { .. } => RouteTarget::Omk,
+        _ => RouteTarget::System,
+    }
+}
+
 fn service_request_needs_identity(
     request: &ParsedServiceRequest,
-    decision: &filter::FilterDecision,
     intercept: &config::InterceptConfig,
+    uid: u32,
 ) -> bool {
-    (decision.allowed && route_for_service_request(request, intercept) == RouteTarget::Omk)
-        || service_request_key(request)
-            .is_some_and(|key| omk_grant_descriptor_needs_probe(key, decision))
+    route_for_service_request(request, intercept, uid) == RouteTarget::Omk
 }
 
 pub(super) fn security_level_intercept_enabled(intercept: &config::InterceptConfig) -> bool {
     intercept.get_security_level || intercept.get_key_entry
+}
+
+fn route_for_security_level(intercept: &config::InterceptConfig, uid: u32) -> RouteTarget {
+    if !is_app_caller(uid) {
+        return RouteTarget::System;
+    }
+    if security_level_intercept_enabled(intercept) {
+        RouteTarget::Omk
+    } else {
+        RouteTarget::System
+    }
 }
 
 fn is_known_keystore_interface(interface: &str) -> bool {
@@ -177,7 +207,7 @@ unsafe fn handle_keystore_transaction(
     let caller_uid = caller.uid;
     // Authorization events are emitted by system auth components, not by the
     // app that later uses an auth-bound key. Mirror this global keystore state
-    // after the system service accepts it; the routing scope still gates app key traffic.
+    // after the system service accepts it.
     if request_interface == identify::KEYSTORE_AUTHORIZATION_INTERFACE {
         let request = match parcel::parse_authorization_request(
             data,
@@ -267,8 +297,8 @@ unsafe fn handle_keystore_transaction(
     }
 
     // Maintenance calls mostly carry global keystore state, so mirror them after
-    // system success. migrateKeyNamespace moves app keys, so in-scope callers
-    // use OMK as the authoritative business path.
+    // system success. migrateKeyNamespace moves app keys, which now live in OMK,
+    // so it always uses OMK as the authoritative business path.
     if request_interface == identify::KEYSTORE_MAINTENANCE_INTERFACE {
         let request = match parcel::parse_maintenance_request(
             data,
@@ -288,17 +318,7 @@ unsafe fn handle_keystore_transaction(
         };
 
         let method = request.method();
-        let (route, packages, reason) = match &request {
-            ParsedMaintenanceRequest::MigrateKeyNamespace { .. } => {
-                let decision = evaluate_caller(&caller, cfg);
-                (
-                    if decision.allowed { RouteTarget::Omk } else { RouteTarget::System },
-                    decision.packages,
-                    Some(decision.reason),
-                )
-            }
-            _ => (RouteTarget::System, Vec::new(), None),
-        };
+        let route = route_for_maintenance_request(&request, caller.uid as u32);
         if !interface_ready {
             return if route == RouteTarget::Omk || maintenance_requires_mirror(&request) {
                 block_unverified_interface(connection, tr, caller)
@@ -324,23 +344,24 @@ unsafe fn handle_keystore_transaction(
             None
         };
         let mut request_rewritten = precomputed.is_some();
-        let route_note =
-            if matches!(&pending.request, ParsedMaintenanceRequest::MigrateKeyNamespace { .. }) {
-                "using caller routing-scope decision as authoritative business path"
-            } else {
-                "mirroring maintenance state to OMK after system success"
-            };
+        let route_note = match (&pending.request, pending.route) {
+            (ParsedMaintenanceRequest::MigrateKeyNamespace { .. }, RouteTarget::Omk) => {
+                "using OMK as the authoritative business path"
+            }
+            (ParsedMaintenanceRequest::MigrateKeyNamespace { .. }, RouteTarget::System) => {
+                "system identity keeps migrateKeyNamespace on System"
+            }
+            _ => "mirroring maintenance state to OMK after system success",
+        };
         info!(
-            "event=decision command={} maintenance_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} route={:?} reason={:?}; {}",
+            "event=decision command={} maintenance_method={:?} code=0x{:x} uid={} pid={} sid='{}' route={:?}; {}",
             command_name,
             method,
             tr.code,
             caller_uid,
             pending.caller.pid,
             pending.caller.sid,
-            packages,
             pending.route,
-            reason,
             route_note,
         );
 
@@ -385,7 +406,6 @@ unsafe fn handle_keystore_transaction(
     }
 
     if request_interface == identify::KEYSTORE_SERVICE_INTERFACE {
-        let decision = evaluate_caller(&caller, cfg);
         let request =
             match parcel::parse_service_request(data, data_size, offsets, offsets_size, tr.code) {
                 Ok(request) => request,
@@ -401,79 +421,13 @@ unsafe fn handle_keystore_transaction(
         let method = request.method();
         let original_code = tr.code;
         if !interface_ready {
-            let requires_omk = service_request_needs_identity(&request, &decision, &cfg.intercept);
-            return if requires_omk {
+            return if service_request_needs_identity(&request, &cfg.intercept, caller.uid as u32) {
                 block_unverified_interface(connection, tr, caller)
             } else {
                 false
             };
         }
-        let allow_omk_grant = match should_allow_omk_grant_service_request_with_probe(
-            &request,
-            &decision,
-            &caller,
-            probe_omk_grant,
-        ) {
-            Ok(allow) => allow,
-            Err(error) => {
-                warn!(
-                    "event=decision OMK grant ownership probe failed for uid={} pid={}: {:#}; returning SYSTEM_ERROR without executing System",
-                    caller.uid, caller.pid, error
-                );
-                block_system_request(tr);
-                if expects_reply {
-                    let pending = PendingServiceCall {
-                        request,
-                        caller,
-                        packages: decision.packages,
-                        route: RouteTarget::Omk,
-                    };
-                    replace_top_pending(
-                        connection,
-                        PendingCall::PrecomputedService(
-                            pending,
-                            PrecomputedServiceReply::Error(Status::new_service_specific_error(
-                                ResponseCode::SYSTEM_ERROR.0,
-                                None,
-                            )),
-                        ),
-                    );
-                }
-                return true;
-            }
-        };
-        let mut route = if allow_omk_grant {
-            RouteTarget::Omk
-        } else {
-            route_for_service_request(&request, &cfg.intercept)
-        };
-        if !decision.allowed && !allow_omk_grant {
-            info!(
-                "event=decision command={} service_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} allowed=false reason={:?}; routing request to System",
-                command_name,
-                method,
-                original_code,
-                caller.uid,
-                caller.pid,
-                caller.sid,
-                decision.packages,
-                decision.reason,
-            );
-            route = RouteTarget::System;
-        }
-        if allow_omk_grant {
-            info!(
-                "event=decision command={} service_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} allowed=true reason={:?} omk_grant=true",
-                command_name,
-                method,
-                original_code,
-                caller.uid,
-                caller.pid,
-                caller.sid,
-                decision.packages,
-                decision.reason,
-            );
-        }
+        let mut route = route_for_service_request(&request, &cfg.intercept, caller.uid as u32);
 
         let precomputed_service_reply = if route == RouteTarget::Omk
             && matches!(
@@ -503,23 +457,15 @@ unsafe fn handle_keystore_transaction(
         let request_rewritten = precomputed_service_reply.is_some();
 
         info!(
-            "event=decision command={} service_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} allowed={} reason={:?}",
-            command_name,
-            method,
-            original_code,
-            caller.uid,
-            caller.pid,
-            caller.sid,
-            decision.packages,
-            decision.allowed,
-            decision.reason,
+            "event=decision command={} service_method={:?} code=0x{:x} uid={} pid={} sid='{}'",
+            command_name, method, original_code, caller.uid, caller.pid, caller.sid,
         );
         info!(
             "event=route method={:?} uid={} pid={} route={:?}",
             method, caller.uid, caller.pid, route
         );
 
-        let pending = PendingServiceCall { request, caller, packages: decision.packages, route };
+        let pending = PendingServiceCall { request, caller, route };
         if !expects_reply {
             if let Some(reply) = precomputed_service_reply.as_ref() {
                 if let Err(error) = build_precomputed_service_reply(reply) {
@@ -542,7 +488,6 @@ unsafe fn handle_keystore_transaction(
     }
 
     if request_interface == identify::KEYSTORE_SECURITY_LEVEL_INTERFACE {
-        let decision = evaluate_caller(&caller, cfg);
         let Some(target_info) = tracker::lookup_security_level_target(target) else {
             debug!(
                 "event=decision skipping IKeystoreSecurityLevel request for unmapped target ptr=0x{:x} cookie=0x{:x}",
@@ -569,78 +514,22 @@ unsafe fn handle_keystore_transaction(
         };
 
         let method = request.method();
-        let allow_unknown_omk_route = match should_allow_omk_grant_security_level_request_with_probe(
-            &request,
-            &decision,
-            &caller,
-            probe_omk_grant,
-        ) {
-            Ok(allow) => allow,
-            Err(error) => {
-                warn!(
-                    "event=decision OMK grant ownership probe failed for uid={} pid={}: {:#}; returning SYSTEM_ERROR without executing System",
-                    caller.uid, caller.pid, error
-                );
-                block_system_request(tr);
-                if expects_reply {
-                    let pending = PendingSecurityLevelCall {
-                        request,
-                        caller,
-                        packages: decision.packages,
-                        route: RouteTarget::Omk,
-                        security_level: target_info.security_level,
-                    };
-                    replace_top_pending(
-                        connection,
-                        PendingCall::PrecomputedSecurityLevel(
-                            pending,
-                            Box::new(Some(synthetic_fallback_reply())),
-                        ),
-                    );
-                }
-                return true;
-            }
-        };
         // Keystore2 shares each security-level Binder between getSecurityLevel and getKeyEntry.
         let intercept_enabled = security_level_intercept_enabled(&cfg.intercept);
-        let route = if allow_unknown_omk_route || decision.allowed && intercept_enabled {
-            RouteTarget::Omk
-        } else {
-            RouteTarget::System
-        };
-        if !decision.allowed && !allow_unknown_omk_route {
-            info!(
-                "event=decision command={} security_level_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} allowed=false reason={:?} target=ptr:0x{:x}/cookie:0x{:x} security_level={:?}; routing request to System",
-                command_name,
-                method,
-                tr.code,
-                caller.uid,
-                caller.pid,
-                caller.sid,
-                decision.packages,
-                decision.reason,
-                target.ptr,
-                target.cookie,
-                target_info.security_level,
-            );
-        }
+        let route = route_for_security_level(&cfg.intercept, caller.uid as u32);
 
         info!(
-            "event=decision command={} security_level_method={:?} code=0x{:x} uid={} pid={} sid='{}' packages={:?} allowed={} reason={:?} target=ptr:0x{:x}/cookie:0x{:x} security_level={:?} intercept_enabled={} omk_derived_route={}",
+            "event=decision command={} security_level_method={:?} code=0x{:x} uid={} pid={} sid='{}' target=ptr:0x{:x}/cookie:0x{:x} security_level={:?} intercept_enabled={}",
             command_name,
             method,
             tr.code,
             caller.uid,
             caller.pid,
             caller.sid,
-            decision.packages,
-            decision.allowed,
-            decision.reason,
             target.ptr,
             target.cookie,
             target_info.security_level,
             intercept_enabled,
-            allow_unknown_omk_route,
         );
         info!(
             "event=route security_level_method={:?} uid={} pid={} route={:?} security_level={:?}",
@@ -650,7 +539,6 @@ unsafe fn handle_keystore_transaction(
         let mut pending = PendingSecurityLevelCall {
             request,
             caller,
-            packages: decision.packages,
             route,
             security_level: target_info.security_level,
         };

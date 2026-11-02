@@ -7,15 +7,12 @@ use nix::unistd::Pid;
 
 use crate::android::hardware::security::keymint::SecurityLevel::SecurityLevel;
 
-pub mod app_scope;
 pub mod config;
-pub mod filter;
 pub mod forward;
 pub mod hook;
 pub mod identify;
 pub mod inject;
 pub mod ipc;
-pub mod legacy;
 pub mod logging;
 pub mod parcel;
 pub mod sys;
@@ -95,9 +92,8 @@ fn handle_webui_tee_status_command() -> Option<Result<&'static str, String>> {
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--app-scope-watch") {
-        // Older keymint builds delegated discovery to the injector. Discovery
-        // now runs in keymint's privileged helper; never fall through to
-        // injection for this legacy argument.
+        // Legacy argument from the removed discovery design; never fall
+        // through to injection for it.
         eprintln!("--app-scope-watch is no longer handled by the injector");
         std::process::exit(2);
     }
@@ -190,9 +186,6 @@ pub extern "C" fn entry(handle: *const c_void) -> bool {
         );
     }
     log::set_max_level(config.main.log_level_filter());
-    // Start the scope watcher before requests arrive so the first decision
-    // already sees the persisted discovery snapshot.
-    let _ = app_scope::get();
     log_runtime_identity("Payload");
     log::info!(
         "Injected library entry called! Handle: {:?}, build_id={}, build_target={}, runtime_arch={}, current_exe={}",

@@ -1,5 +1,4 @@
 pub mod aaid;
-pub mod app_scope;
 pub mod attestation;
 pub mod device_ids;
 pub mod keymint_profile;

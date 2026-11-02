@@ -7,7 +7,6 @@ fn service_rewrite_failure_preserves_only_system_route() {
         PendingCall::Service(PendingServiceCall {
             request: ParsedServiceRequest::GetKeyEntry { key: sample_key_descriptor() },
             caller: caller.clone(),
-            packages: vec!["com.example".to_string()],
             route,
         })
     };
@@ -27,7 +26,6 @@ fn security_level_rewrite_failure_preserves_only_system_route() {
                 forced: false,
             },
             caller: caller.clone(),
-            packages: vec!["com.example".to_string()],
             route,
             security_level: SecurityLevel::TRUSTED_ENVIRONMENT,
         })

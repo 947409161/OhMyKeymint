@@ -388,7 +388,6 @@ unsafe fn build_synthetic_br_transaction_reply_inner(
     };
     let caller = synthetic_transaction_caller(fallback, tr, caller_sid);
     if kind == SyntheticTargetKind::SecurityLevel {
-        let decision = evaluate_caller(&caller, &cfg);
         let request = match parcel::parse_security_level_request(
             data,
             data_size,
@@ -407,36 +406,13 @@ unsafe fn build_synthetic_br_transaction_reply_inner(
             }
         };
         let method = request.method();
-        if decision.allowed && !security_level_intercept_enabled(&cfg.intercept) {
+        if !security_level_intercept_enabled(&cfg.intercept) {
             warn!(
                 "event=synthetic security-level interception disabled while target ptr=0x{:x} cookie=0x{:x} is still live; returning SYSTEM_ERROR",
                 target.ptr, target.cookie
             );
             return Ok(synthetic_parcel_reply(build_service_specific_reply(
                 ResponseCode::SYSTEM_ERROR.0,
-            )?));
-        }
-        let allow_omk_grant = should_allow_omk_grant_security_level_request_with_probe(
-            &request,
-            &decision,
-            &caller,
-            probe_omk_grant,
-        )?;
-        if !decision.allowed && !allow_omk_grant {
-            info!(
-                "event=synthetic rejected {} security-level {:?} uid={} pid={} sid='{}' target=ptr:0x{:x}/cookie:0x{:x} packages={:?} reason={:?}",
-                command_name,
-                method,
-                caller.uid,
-                caller.pid,
-                caller.sid,
-                target.ptr,
-                target.cookie,
-                decision.packages,
-                decision.reason,
-            );
-            return Ok(synthetic_parcel_reply(build_service_specific_reply(
-                ResponseCode::PERMISSION_DENIED.0,
             )?));
         }
         let target_info = tracker::lookup_security_level_target(target).ok_or_else(|| {
@@ -448,21 +424,19 @@ unsafe fn build_synthetic_br_transaction_reply_inner(
         })?;
 
         info!(
-            "event=synthetic handling {} security-level {:?} uid={} pid={} target=ptr:0x{:x}/cookie=0x{:x} packages={:?} security_level={:?}",
+            "event=synthetic handling {} security-level {:?} uid={} pid={} target=ptr:0x{:x}/cookie=0x{:x} security_level={:?}",
             command_name,
             method,
             caller.uid,
             caller.pid,
             target.ptr,
             target.cookie,
-            decision.packages,
             target_info.security_level,
         );
 
         let pending = PendingSecurityLevelCall {
             request,
             caller,
-            packages: decision.packages,
             route: RouteTarget::Omk,
             security_level: target_info.security_level,
         };

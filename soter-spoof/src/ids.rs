@@ -1,9 +1,10 @@
 //! Device-derived identifiers for the forged Soter replies.
 //!
-//! A real Soter TA mints `cpu_id` and the device identifier inside the vendor firmware. The host
-//! has nothing to read them from, so both are reconstructed from the unit serial under separate
-//! domain separators: a fixed value would be one fingerprint shared by every install that reaches
-//! it.
+//! A real Soter TA mints the device identifier inside the vendor firmware and exports its
+//! hexadecimal spelling as `cpu_id`. The host has nothing to read it from, so both are
+//! reconstructed from the unit serial: a fixed value would be one fingerprint shared by every
+//! install that reaches it. `cpu_id` and `getDeviceId` must always describe the same 16 bytes —
+//! a live TA reports the same unit identity through both channels.
 
 use std::ffi::{CString, c_char, c_void};
 use std::io::Read;
@@ -110,20 +111,11 @@ fn identifier_material(label: &str) -> Vec<u8> {
     material
 }
 
-/// The `cpu_id` a real TA would mint for this unit, cached for the process lifetime.
-pub(crate) fn cpu_id() -> &'static str {
-    static CPU_ID: OnceLock<String> = OnceLock::new();
-    CPU_ID.get_or_init(|| hex_fingerprint32(&identifier_material("cpu_id")))
-}
-
-/// The 16-byte device identifier `getDeviceId` reports. The domain separator keeps it from ever
-/// carrying the same bytes as `cpu_id` for the same unit.
+/// The 16-byte device identifier `getDeviceId` reports, cached for the process lifetime.
 pub(crate) fn device_blob() -> &'static [u8] {
     static BLOB: OnceLock<Vec<u8>> = OnceLock::new();
     BLOB.get_or_init(|| {
-        let mut material = b"d-soter.device-id:".to_vec();
-        material.extend_from_slice(&identifier_material("device id"));
-        hex_fingerprint32(&material)
+        hex_fingerprint32(&identifier_material("device id"))
             .as_bytes()
             .as_chunks::<2>()
             .0
@@ -131,6 +123,13 @@ pub(crate) fn device_blob() -> &'static [u8] {
             .map(|pair| (nibble(pair[0]) << 4) | nibble(pair[1]))
             .collect()
     })
+}
+
+/// The `cpu_id` a real TA would export for this unit: the hexadecimal spelling of the same 16
+/// bytes `getDeviceId` reports, cached for the process lifetime.
+pub(crate) fn cpu_id() -> &'static str {
+    static CPU_ID: OnceLock<String> = OnceLock::new();
+    CPU_ID.get_or_init(|| device_blob().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// One hexadecimal digit; the fingerprint is always lowercase.
@@ -153,12 +152,12 @@ mod tests {
     }
 
     #[test]
-    fn identifiers_are_stable_sized_and_distinct() {
+    fn identifiers_are_stable_sized_and_describe_the_same_unit() {
         let cpu = cpu_id();
         let blob = device_blob();
         assert_eq!(cpu.len(), 32);
         assert_eq!(blob.len(), 16);
-        assert_ne!(blob, cpu.as_bytes());
+        assert_eq!(cpu, blob.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
         assert!(std::ptr::eq(cpu, cpu_id()), "cpu_id must be cached");
         assert!(std::ptr::eq(blob, device_blob()), "device blob must be cached");
     }

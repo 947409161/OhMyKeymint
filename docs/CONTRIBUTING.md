@@ -62,16 +62,22 @@ State in the pull request what behavior remains unchanged.
 
 ### OMK routing
 
-- For every request allowed by the automatic routing scope with
-  `FilterDecision::allowed == true`, OMK is the only backend during normal
-  reachable operation. Per-method intercept settings still determine whether an
-  allowed request is routed to OMK.
-- Choose the backend only from the current caller, filter decision, method, and
-  configuration. Do not inspect or infer which backend created a key,
-  `KeyDescriptor`, `KEY_ID`, `GRANT`, alias, wrapping key, or attestation key.
+- App callers (`uid % AID_USER_OFFSET >= AID_APP_START`) are subject to routing.
+  System identities (root, `system_server`, the keystore UID, and every other
+  app-id below `AID_APP_START`) always stay on System. There is no package or
+  app routing scope.
+- For every app caller whose per-method `[intercept]` setting is enabled, OMK is
+  the only backend during normal reachable operation. Choose the backend only
+  from the caller UID range, interface, method, and configuration. Do not
+  inspect or infer which backend created a key, `KeyDescriptor`, `KEY_ID`,
+  `GRANT`, alias, wrapping key, or attestation key.
 - Per-method intercept settings are authoritative. When interception for a
-  method is disabled, pass the request to System unchanged even when the
-  routing scope allows the caller.
+  method is disabled, pass the request to System unchanged for every app
+  caller.
+- `IKeystoreAuthorization` and non-`migrateKeyNamespace` `IKeystoreMaintenance`
+  calls stay System-authoritative and are mirrored to OMK after System success.
+  `migrateKeyNamespace` is OMK-authoritative for app callers and System for
+  system identities.
 - Do not provide key or descriptor continuity between System and OMK. Pass old,
   externally supplied, and System-created descriptors to the selected backend
   unchanged. An OMK business error for such a descriptor is authoritative.

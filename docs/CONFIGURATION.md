@@ -4,9 +4,9 @@ OhMyKeymint (OMK) uses two core configuration files:
 
 - `/data/misc/keystore/omk/config.toml` controls the KeyMint service, the
   identity it reports, and the secrets used for OMK-created keys.
-- `/data/misc/keystore/omk/injector.toml` controls the request filter and which
-  KeyStore operations are routed to OMK. Which apps are in scope is discovered
-  automatically and is not configured in this file.
+- `/data/misc/keystore/omk/injector.toml` controls which KeyStore methods are
+  routed to OMK. Routing applies to app callers; system identities stay on
+  System. There is no app or package list.
 
 This guide describes the active configuration used by the current build. The
 examples are followed by a separate field-by-field reference so that the short
@@ -16,18 +16,17 @@ comments in the examples are not the only explanation.
 
 ## Before editing
 
-For ordinary use, no app list needs maintaining. Routing covers installed
-third-party apps per Android user plus the three Google packages described
-below. Keep the safety filters, all `[intercept]` switches, and the generated
-`[crypto]` values unchanged.
+For ordinary use, keep all `[intercept]` switches and the generated `[crypto]`
+values unchanged. Routing applies to app callers. System identities, including
+`system_server`, root, and the keystore UID, stay on System.
 
 Before making a change:
 
 1. Make a private backup of both active files.
 2. Edit the files under `/data/misc/keystore/omk/`, not copies in the module ZIP.
 3. Keep ordinary strings inside quotes and booleans as `true` or `false`. Do not
-   add `scoop`, `scoop_details`, `[scoop.*]`, or `deny_packages`; this build
-   rejects those removed fields.
+   add `[filter]`, `[filter.*]`, `scoop`, `scoop_details`, `[scoop.*]`, or
+   `deny_packages`; this build rejects those removed settings.
 4. Change one thing at a time, save the complete file, and check the matching
    log after the change.
 
@@ -56,10 +55,9 @@ not identical:
   regenerated secrets do not restore keys protected by the previous secrets.
 The restart commands are documented in
 [Restarting keymint and injector](../README.md#restarting-keymint-and-injector).
-The routing scope itself is refreshed from Android's package manager and needs
-no manual edit. After changing `[filter]` or `[intercept]`, close and reopen the
-affected app to avoid mixing an already-open operation with the new route. If a
-process restart is needed for a clean boundary, restart the injector only. An
+After changing `[main].enabled` or `[intercept]`, close and reopen the affected
+app to avoid mixing an already-open operation with the new route. If a process
+restart is needed for a clean boundary, restart the injector only. An
 injector-only setting change does not require a keymint restart.
 
 ## Limited-use keys
@@ -89,7 +87,7 @@ original operation error.
 ## App patch-level profiles
 
 Optional `config.toml` profiles set the patch levels reported and bound into
-keys generated or imported by in-scope applications:
+keys generated or imported by applications:
 
 ```toml
 [app_patch_levels."com.example.app@0"]
@@ -125,8 +123,8 @@ Android security patch levels, applying a Pixel PIF fingerprint through OMK's
 own Zygisk payload, and independently enabling Tencent Soter compatibility
 (Beta). Open it from the Oh My Keymint module page in KernelSU. With Magisk,
 open an installed KSUWebUIStandalone or WebUI X host and select Oh My Keymint;
-the module does not install either host. App routing is automatic; the WebUI
-does not manage an app list.
+the module does not install either host. Request routing follows `[intercept]`;
+the WebUI does not manage an app list.
 
 The home page loads its status and diagnostics without enumerating installed
 applications. Dialogs present their loading state before querying the device.
@@ -435,21 +433,27 @@ independent RSA-2048 public keys for each caller's ASK and each exact UTF-16 Aut
 alias. Android's RSA provider generates the key pairs in memory. The reference ATTK
 signs ASK exports, and the caller's ASK signs its AuthKey exports with RSASSA-PSS
 (SHA-256, MGF1-SHA256, salt length 20). The exported JSON contains the subject public
-key, counter `1`, a `cpu_id` derived from the unit serial, and the actual Binder caller
-UID; the UID supplied as an AIDL argument does not select another caller's keys.
-A unit without a readable serial mints a per-process identifier.
+key, a per-caller counter that advances with each ASK, AuthKey and signature,
+a `cpu_id`, and the actual Binder caller UID; the UID supplied as an AIDL argument does
+not select another caller's keys. `cpu_id` is the hexadecimal spelling of the same 16
+bytes `getDeviceId` reports, and both are derived from the unit serial. A unit without a
+readable serial mints a per-process identifier.
 
 Keys and their signed export blobs live only in the SoterServer process. Queries
-and exports report missing keys until creation succeeds. Removing an AuthKey affects
-only that caller's exact alias. Recreating an ASK clears that caller's AuthKeys, and
-`removeAllAuthKey` removes both ASK and AuthKeys for the caller. Generation or signing
-failure reports failure and preserves existing keys. Exports remain stable until a
-key is replaced or removed; a process restart discards all simulated keys.
+and exports report the vendor's missing-key code `-6` until creation succeeds. Removing
+an AuthKey affects only that caller's exact alias, and removing an unknown alias reports
+`-6`. Recreating an ASK clears that caller's AuthKeys, and `removeAllAuthKey` removes both
+ASK and AuthKeys for the caller. Generation or signing failure reports failure and
+preserves existing keys. Exports remain stable until a key is replaced or removed; a
+process restart discards all simulated keys.
 
 The 13 upstream reply contracts are implemented: ASK and auth-key creation, export, existence
 and removal; signing sessions and signature results; device ID, version, and extra parameters.
-`finishSign` keeps the reference shape and answers with a fixed zero buffer, because no session
-state is kept between `initSigh` and `finishSign`.
+`initSigh` opens a one-shot session bound to the caller UID, AuthKey alias and challenge.
+`finishSign` consumes that session and returns a result blob signed by the AuthKey with the
+stock key order `raw`, `fid`, `counter`, `tee_n`, `tee_v`, `fp_n`, `fp_v`, `cpu_id`, `uid`, where
+`raw` carries the challenge verbatim. An unknown, already-used or foreign session reports
+`-1000`. `getExtraParam` reports `fingerprint_type` as the integer `2` and null for other keys.
 
 Android 12-17 retain the platform's standard AIDL interface-header check. The handler
 reads UID and AuthKey alias arguments at the cursor left by that check, without
@@ -474,18 +478,10 @@ All other WebUI assets are bundled and no network request is made for normal
 local operations. None of the WebUI network paths requires a device-provided
 `curl` or `wget`.
 
-The WebUI does not parse or rewrite `injector.toml` itself. It sends caller
-targets to the native `inject` helper. The helper first parses the current complete
-file, normalizes duplicates, surrounding whitespace, and decimal identifiers,
-rejects invalid targets and TrickyStore-style `!` or `?` suffixes, then renders and atomically
-replaces the complete file while preserving its ownership and mode. A read,
-parse, validation, or write failure is returned to the WebUI and leaves the
-existing file unchanged. Saving remains disabled when the current list could
-not be loaded.
-
-A successful save triggers the same injector hot-reload path as a valid manual
-edit. It applies to new requests without restarting keymint. Close and reopen
-the affected app when a clean routing boundary is required.
+The WebUI does not parse or rewrite `injector.toml`. Change routing settings by
+editing the active file. A valid save is applied by the injector hot-reload path
+to new requests without restarting keymint. Close and reopen the affected app
+when a clean routing boundary is required.
 
 For a keybox installation, the native `keymint` helper enforces the input size
 limit, decodes the selected file as UTF-8, and runs the complete in-memory
@@ -1045,21 +1041,13 @@ version = 1
 enabled = true
 # Injector log detail: off, error, warn, info, debug, or trace.
 log_level = "debug"
-# Optional delay before challenged OMK generation, 0..250 ms.
-attestation_generation_delay_ms = 0
+# Optional delay range before challenged OMK generation, each 0..250 ms.
+attestation_generation_delay_ms = [20, 30]
 # Optional delay before two-way OMK createOperation calls, 0..250 ms.
 operation_start_delay_ms = 0
 
-[filter]
-# Enforce the discovered routing scope and the safety rules below.
-enabled = true
-# Block core Android and system identities. Keep true.
-block_android_package = true
-# Reject callers whose package name cannot be found. Keep false.
-allow_unknown_package = false
-
 [intercept]
-# Route each named KeyStore operation to OMK for an allowed caller.
+# Route each named KeyStore operation to OMK for every app caller.
 get_security_level = true
 get_key_entry = true
 update_subcomponent = true
@@ -1089,62 +1077,40 @@ If a documented injector field is omitted, its default value is used. Unknown
 fields in the documented top-level and named sections are rejected, so do not
 add names that are not described in this guide.
 
-### Automatic routing scope
+### Routing scope
 
-OMK does not read an app list from configuration. Keymint's privileged helper
-queries Android's package manager and publishes the current routing scope:
+Routing applies to app callers (`uid % 100000 >= 10000`). System identities
+(root, `system_server`, the keystore UID, and every other app-id below `10000`)
+always stay on System, because the pre-unlock credential path runs in
+`system_server` and cannot use OMK's separate key store. There is no discovered
+app list, UID allowlist, or per-app exclusion setting. Each app caller uses the
+method's `[intercept]` switch; a disabled switch passes that request to System.
+`IKeystoreAuthorization` and lifecycle maintenance events stay
+System-authoritative and are mirrored to OMK; `migrateKeyNamespace` is
+OMK-authoritative for app callers and System for system identities.
 
-- every installed third-party application, per Android user, and
-- `com.google.android.gms`, `com.google.android.gsf`, and `com.android.vending`
-  for every user.
+System and OMK keep separate key stores. Keys created through one backend are
+not visible to the other, and OMK does not read or infer which backend created
+an existing key or descriptor. When OMK is unavailable, a request can be
+preserved on System; keys created by OMK remain unavailable to System.
 
-The helper writes the scope to
-`/data/misc/keystore/omk/data/app_scope.json` (mode `0600`, owner
-`1017:1017`). The injector payload reads that snapshot and watches it for
-changes. The helper records the baseline at startup and refreshes it when the
-installed-package list changes. New requests use the latest valid snapshot without a
-restart; close and reopen an already-open app for a clean boundary.
-
-If the filter is enabled and no valid snapshot is available, resolved app
-callers stay on System until discovery succeeds. An unreadable Android profile
-keeps its previous package set. A failed package-manager query never replaces a
-good snapshot.
-
-Android can assign several packages the same identity. In that case, any one
-in-scope package allows the shared identity. There is no per-app exclusion
-list. Adding or removing an app does not move or convert keys between System
-and OMK; an app may lose access to keys it created through the other route.
-
-There is one narrow granted-key exception. An app outside the discovered scope,
-or one whose package name cannot be resolved, can still use a key-access grant
-that OMK confirms belongs to an OMK key. This keeps a key deliberately shared by
-another app usable without giving the receiving app general OMK access.
-Android-blocked callers do not receive this exception.
-
-The `scoop`, `scoop_details`, `[scoop.*]`, and `deny_packages` settings from
-older builds are not supported. An `injector.toml` that still contains them is
-rejected, which leaves request routing disabled until those settings are
-removed or the file is deleted and the injector is restarted.
-
-Isolated and app-zygote processes use their host application's package identity
-for scoop and deny-list decisions. The host is resolved from ActivityManager's
-process records and checked against the caller's PID and isolated UID for each
-request. SDK sandbox processes, and PCC processes on Android 17, use Android's
-host-UID mapping for the same filtering decision.
+The `[filter]`, `[filter.*]`, `scoop`, `scoop_details`, `[scoop.*]`, and
+`deny_packages` settings are not part of this build's schema. An
+`injector.toml` that contains them is rejected, which leaves request routing
+disabled until those settings are removed or the file is deleted and the
+injector is restarted.
 
 The original caller UID, PID, and SID are preserved for key access checks.
-An isolated process still needs a grant to use its host's keys; host membership
-does not confer key ownership. If the host cannot be resolved, the existing
-`allow_unknown_package` policy applies. Holding a grant does not put the caller
-in scope; it only enables the narrow key-access exception described above.
+Isolated processes remain separate key owners and need an explicit grant to use
+their host's keys.
 
 ### `[main]`
 
 #### `enabled`
 
-This is the injector's master routing switch. `true` lets the filter and
-`[intercept]` settings decide each new request. `false` stops new OMK routing so
-normal requests continue to System. Keep it `true` for normal OMK use.
+This is the injector's master routing switch. `true` lets the `[intercept]`
+settings decide each new request. `false` stops new OMK routing so normal
+requests continue to System. Keep it `true` for normal OMK use.
 
 Avoid changing this switch while an app has a key operation open. Save the
 change, restart the injector, and reopen the app when deliberately switching
@@ -1166,26 +1132,27 @@ file output. Changing the log level does not reset the current burst counters.
 
 #### `attestation_generation_delay_ms`
 
-Optional timing workaround, an integer from `0` to `250` milliseconds. The
-default `0` disables it. A nonzero value delays OMK `generateKey` requests
-containing `ATTESTATION_CHALLENGE` before the generation RPC starts. Both
+Optional timing workaround, an ordered `[minimum, maximum]` range with each
+value from `0` to `250` milliseconds. The default `[20, 30]` delays OMK
+`generateKey` requests containing `ATTESTATION_CHALLENGE` before the generation
+RPC starts, sampling a fresh wait for each request. `[0, 0]` disables it. Both
 two-way and one-way requests receive this delay, including calls that return
 OMK business errors. Plain generation, imports, operations, System requests,
 and failures before generation dispatch do not receive this delay.
 
 This can mitigate clients that classify software KeyMint by generation
 timing. It does not provide hardware security or guarantee a detector result.
-For example, `25` adds at least 25 ms before each affected generation;
+For example, `[20, 30]` adds at least 20 ms before each affected generation;
 scheduling can add more. The wait occurs before creating or storing the new
 key, without holding the RPC connection or KeyMint/database locks. The Binder
 worker stays occupied, so concurrent requests can delay unrelated callers.
 Key storage and reply delivery remain separate steps; this setting does not
 promise that a concurrent reader cannot observe a key before the generation
-reply arrives. Leave it at `0` unless needed.
+reply arrives. Use `[0, 0]` only when the timing difference is not wanted.
 This fixed wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
 
-Valid changes apply without a restart. Out-of-range or non-integer values
-reject the configuration; on reload, the previous valid settings remain active.
+Valid changes apply without a restart. Out-of-range, unordered, or non-integer
+values reject the configuration; on reload, the previous valid settings remain active.
 
 #### `operation_start_delay_ms`
 
@@ -1210,57 +1177,13 @@ Out-of-range or non-integer values reject the configuration; on reload, the
 previous valid settings remain active.
 This fixed wait adds to any applicable [`config.toml` TA waits](#ta-delay-ranges).
 
-### `[filter]`
-
-With the filter enabled, OMK evaluates a caller in this order:
-
-1. Reject a core Android or system identity when
-   `block_android_package = true`.
-2. If its package names cannot be resolved, follow `allow_unknown_package`.
-3. Reject it if no resolved package is in the automatic routing scope for its
-   current Android user.
-4. Otherwise allow it to use the enabled `[intercept]` routes.
-
-After this normal filter decision, the narrow OMK-owned grant exception
-described under [Automatic routing scope](#automatic-routing-scope) can preserve
-access for an unknown or out-of-scope app. It does not override the
-Android-package block.
-
-#### `enabled`
-
-`true` enforces the routing scope, the Android-package block, and the
-unknown-package policy. `false` bypasses all three checks and allows every
-caller to reach any operation enabled under `[intercept]`.
-
-Disabling the filter can route Android services and unrelated apps to OMK and
-can break unlocking, app storage, or the user interface. Keep it `true`.
-
-#### `block_android_package`
-
-`true` rejects core Android and system identities before the routing scope is
-considered. It also rejects resolved package names equal to `android` or
-beginning with `android.`. It does not mean that every ordinary app whose name
-begins with `com.android.` is automatically blocked.
-
-Keep this setting `true`. Setting it to `false` only removes this safety check;
-the remaining filter rules still apply.
-
-#### `allow_unknown_package`
-
-This controls a caller whose Android package name cannot be resolved. `false`
-rejects that caller, which is the safe default. `true` allows an unresolved app
-identity without requiring a match in the routing scope; core Android identities
-are still rejected when `block_android_package = true`.
-
-This setting is not an "all apps" switch. Keep it `false` unless a maintainer
-has confirmed that a supported app cannot be resolved normally.
-
 ### `[intercept]`
 
-Each switch controls one Android KeyStore service operation. For a caller
-allowed by the filter, `true` routes that operation to OMK and `false` leaves
-that operation on System. These switches do not migrate existing keys or make
-System-created key references usable by OMK.
+Each switch controls one Android KeyStore service operation. For every app
+caller, `true` routes that operation to OMK and `false` leaves that operation on
+System. System identities always stay on System.
+These switches do not migrate existing keys or make System-created key
+references usable by OMK.
 
 Service, maintenance, and authorization requests must match the actual Binder
 object registered for their interface before OMK dispatch or state mirroring.
@@ -1273,25 +1196,8 @@ on System. Best-effort authentication-token updates also stay on System while
 their service identity is unavailable. Missing service identities are retried
 automatically.
 
-Isolated Android service callers use the system ActivityManager process record
-for package attribution when ordinary UID package lookup has no result. The
-privileged helper matches the Binder caller PID and checks its kernel UID and
-process start time before and after the lookup. Only the process package list
-affects the existing package filter; dependency packages are excluded. Null
-package-list entries are ignored; present package names must pass validation. The
-original isolated UID, PID, and SELinux identity remain authoritative for key
-permissions. Failed or unsupported lookups retain unknown-package behavior.
-The ActivityManager transaction number is read from the installed system
-framework's AIDL Stub constant, allowing vendor method-number changes without
-probing unknown transactions. The constant is cached only in memory; process
-ownership is queried and checked for each unresolved isolated caller request.
-This attribution has no key-descriptor or backend-origin dependency and does
-not override the routing scope or per-method interception settings.
-
-The OMK-owned grant exception is separate from ordinary package routing. A
-request carrying a confirmed OMK grant may return to OMK even when the
-receiving app is outside the discovered routing scope, so the granted key
-remains usable.
+An isolated process remains its own key owner; host membership does not confer
+key ownership. A grant explicitly issues access to another identity.
 
 Keep all switches `true` for normal use. Mixing System and OMK operations for
 the same app can cause missing-key errors, inconsistent lists, or failed
@@ -1358,13 +1264,13 @@ requests.
 ### `injector.toml` apply summary
 
 Every valid documented field change is loaded for new requests without a
-device reboot. For `[main].enabled`, `[filter]`, or `[intercept]` changes,
-restart the injector and reopen the affected app when you need a clean boundary
-after a route change. A syntax error, an unknown field, or an unsupported
-future `version` leaves the last valid runtime configuration active; if present
-at injector startup, it leaves OMK request routing disabled until the file is
-corrected. The removed `scoop`, `scoop_details`, `[scoop.*]`, and
-`deny_packages` fields are unknown fields in this build.
+device reboot. For `[main].enabled` or `[intercept]` changes, restart the
+injector and reopen the affected app when you need a clean boundary after a
+route change. A syntax error, an unknown field, or an unsupported future
+`version` leaves the last valid runtime configuration active; if present at
+injector startup, it leaves OMK request routing disabled until the file is
+corrected. The removed `[filter]`, `[filter.*]`, `scoop`, `scoop_details`,
+`[scoop.*]`, and `deny_packages` settings are unknown fields in this build.
 
 The embedded WebUI can install a locally selected keybox,
 synchronize the four `[trust]` patch-level fields from the official Android
@@ -1421,7 +1327,7 @@ confirmation, revalidates the stored chain, and uses the existing local
 Keybox installation path. Its replacement/hot-reload and existing-key
 semantics are the same as ordinary local import. Expired results can still be
 listed, but cannot be imported. Importing a local result does not change SOTER
-or ordinary OMK package-routing settings.
+or ordinary OMK per-method routing settings.
 
 Root-only helper commands:
 

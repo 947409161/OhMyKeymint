@@ -27,12 +27,11 @@ fn request_for(interface: &str) -> (u32, Parcel) {
             service_tx::r#getKeyEntry
         }
         identify::KEYSTORE_MAINTENANCE_INTERFACE => {
-            request.write(&sample_key_descriptor()).unwrap();
-            request.write(&sample_key_descriptor()).unwrap();
+            request.write(&10i32).unwrap();
             (1..=32)
                 .find(|code| {
                     identify::maintenance_method_from_code(*code)
-                        == Some(MaintenanceMethod::MigrateKeyNamespace)
+                        == Some(MaintenanceMethod::OnUserAdded)
                 })
                 .unwrap()
         }
@@ -91,7 +90,7 @@ fn matching_service_maintenance_and_authorization_requests_keep_their_routes() {
     for requested in INTERFACES {
         let (code, mut request) = request_for(requested);
         let mut tr = transaction_for_parcel(target_for(requested).unwrap(), code, &mut request);
-        tr.sender_euid = 1000; // The default Android-identity filter selects System.
+        tr.sender_euid = 1000;
         push_pending_frame(102);
         assert!(!unsafe {
             handle_keystore_transaction(
@@ -114,10 +113,7 @@ fn matching_service_maintenance_and_authorization_requests_keep_their_routes() {
             PendingCall::Maintenance(call) => {
                 assert_eq!(requested, identify::KEYSTORE_MAINTENANCE_INTERFACE);
                 assert_eq!(call.route, RouteTarget::System);
-                assert!(matches!(
-                    call.request,
-                    ParsedMaintenanceRequest::MigrateKeyNamespace { .. }
-                ));
+                assert!(matches!(call.request, ParsedMaintenanceRequest::OnUserAdded { .. }));
             }
             PendingCall::Authorization(call) => {
                 assert_eq!(requested, identify::KEYSTORE_AUTHORIZATION_INTERFACE);
@@ -242,7 +238,7 @@ fn unverified_maintenance_mutation_is_blocked_and_returns_system_error() {
 }
 
 #[test]
-fn unverified_system_only_service_requests_are_unchanged() {
+fn unverified_system_routed_service_requests_are_unchanged() {
     let _guard = route_state_test_guard();
     let (code, mut request) = request_for(identify::KEYSTORE_SERVICE_INTERFACE);
     let mut tr = transaction_for_parcel(
@@ -308,35 +304,50 @@ fn unverified_best_effort_auth_tokens_preserve_system_authentication() {
 }
 
 #[test]
-fn service_identity_requirement_preserves_intercept_and_filter_decisions() {
+fn service_identity_requirement_follows_intercept_configuration() {
     let request = ParsedServiceRequest::DeleteKey { key: sample_key_descriptor() };
-    let mut decision =
-        filter::FilterDecision { allowed: true, reason: FilterReason::Allowed, packages: vec![] };
-    assert!(service_request_needs_identity(
-        &request,
-        &decision,
-        &config::InterceptConfig::default()
-    ));
-    assert!(!service_request_needs_identity(&request, &decision, &disabled_intercept_config()));
-    decision.allowed = false;
-    decision.reason = FilterReason::RejectedAndroidPackage;
-    assert!(!service_request_needs_identity(
-        &request,
-        &decision,
-        &config::InterceptConfig::default()
-    ));
-    let request = ParsedServiceRequest::GetKeyEntry {
-        key: KeyDescriptor { domain: Domain::GRANT, ..sample_key_descriptor() },
-    };
-    assert!(!service_request_needs_identity(
-        &request,
-        &decision,
-        &config::InterceptConfig::default()
-    ));
-    decision.reason = FilterReason::RejectedNotInScope;
-    assert!(service_request_needs_identity(
-        &request,
-        &decision,
-        &config::InterceptConfig::default()
-    ));
+    let enabled = config::InterceptConfig::default();
+    let disabled = disabled_intercept_config();
+    assert!(service_request_needs_identity(&request, &enabled, 10_123));
+    assert!(!service_request_needs_identity(&request, &disabled, 10_123));
+    assert!(!service_request_needs_identity(&request, &enabled, 1000));
+}
+
+#[test]
+fn app_callers_route_to_omk_and_system_identities_stay_on_system() {
+    let _guard = route_state_test_guard();
+
+    let enabled = config::InjectorConfig::default();
+    let disabled =
+        config::InjectorConfig { intercept: disabled_intercept_config(), ..Default::default() };
+
+    for uid in [0, 1000, 1017, 2000] {
+        for cfg in [&enabled, &disabled] {
+            assert_service_route(uid, cfg, RouteTarget::System);
+        }
+    }
+    for uid in [10_000, 10_123, 20_123, 99_001] {
+        assert_service_route(uid, &enabled, RouteTarget::Omk);
+        assert_service_route(uid, &disabled, RouteTarget::System);
+    }
+}
+
+fn assert_service_route(uid: i32, cfg: &config::InjectorConfig, expected: RouteTarget) {
+    let (code, mut request) = request_for(identify::KEYSTORE_SERVICE_INTERFACE);
+    let mut tr = transaction_for_parcel(
+        target_for(identify::KEYSTORE_SERVICE_INTERFACE).unwrap(),
+        code,
+        &mut request,
+    );
+    tr.sender_euid = uid;
+    push_pending_frame(107);
+    assert!(!unsafe {
+        handle_keystore_transaction(107, &mut tr, None, "BR_TRANSACTION", cfg, target_for)
+    });
+    let pending =
+        take_top_pending(107).flatten().expect("every caller should reach service dispatch");
+    match pending {
+        PendingCall::Service(call) => assert_eq!(call.route, expected, "uid {uid}"),
+        _ => panic!("expected service dispatch for uid {uid}"),
+    }
 }

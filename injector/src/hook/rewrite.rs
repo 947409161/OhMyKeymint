@@ -12,13 +12,11 @@ use super::binder::{
     LocalBinderTarget, NativeBinder, NativeBinderRetirement,
 };
 use super::{BinderFdToken, BinderStateKey};
-use crate::android::system::keystore2::Domain::Domain;
 use crate::android::system::keystore2::IKeystoreOperation::IKeystoreOperation as AospKeystoreOperation;
 use crate::android::system::keystore2::KeyDescriptor::KeyDescriptor;
 use crate::android::system::keystore2::KeyEntryResponse::KeyEntryResponse;
 use crate::android::system::keystore2::ResponseCode::ResponseCode;
 use crate::config;
-use crate::filter::{self, FilterReason, PackageResolution};
 use crate::forward::{self, BypassGuard};
 use crate::identify::{
     self, AidlMetadataMethod, AuthorizationMethod, OperationMethod, SecurityLevelMethod,
@@ -86,129 +84,6 @@ enum RouteTarget {
 }
 
 type AospOperationBinder = Strong<dyn AospKeystoreOperation>;
-
-fn evaluate_caller(
-    caller: &CallerInfo,
-    cfg: &config::InjectorConfig,
-) -> crate::filter::FilterDecision {
-    evaluate_caller_with(caller, cfg, |caller| {
-        let _guard = BypassGuard::enter();
-        ipc::resolve_packages_for_caller(caller)
-    })
-}
-
-fn evaluate_caller_with(
-    caller: &CallerInfo,
-    cfg: &config::InjectorConfig,
-    resolve: impl FnOnce(&CallerInfo) -> (u32, PackageResolution),
-) -> crate::filter::FilterDecision {
-    let uid = caller.uid as u32;
-    // The scope snapshot is shared by the preflight and the final decision so
-    // one request cannot observe two different discovery generations.
-    let scope = crate::app_scope::get();
-    let preflight = filter::evaluate(&scope, &cfg.filter, uid, PackageResolution::Unknown);
-    if matches!(preflight.reason, FilterReason::RejectedAndroidPackage | FilterReason::Disabled) {
-        return preflight;
-    }
-
-    let (package_uid, package_resolution) = resolve(caller);
-    filter::evaluate(&scope, &cfg.filter, package_uid, package_resolution)
-}
-
-fn service_request_key(request: &ParsedServiceRequest) -> Option<&KeyDescriptor> {
-    match request {
-        ParsedServiceRequest::GetKeyEntry { key }
-        | ParsedServiceRequest::UpdateSubcomponent { key, .. }
-        | ParsedServiceRequest::DeleteKey { key }
-        | ParsedServiceRequest::Grant { key, .. }
-        | ParsedServiceRequest::Ungrant { key, .. } => Some(key),
-        _ => None,
-    }
-}
-
-fn security_level_request_key(request: &ParsedSecurityLevelRequest) -> Option<&KeyDescriptor> {
-    match request {
-        ParsedSecurityLevelRequest::GenerateKey {
-            key,
-            attestation_key: Some(attestation_key),
-            ..
-        } if key.domain != Domain::BLOB => Some(attestation_key),
-        ParsedSecurityLevelRequest::ImportWrappedKey { wrapping_key, .. } => Some(wrapping_key),
-        ParsedSecurityLevelRequest::CreateOperation { key, .. }
-        | ParsedSecurityLevelRequest::DeleteKey { key }
-        | ParsedSecurityLevelRequest::ConvertStorageKeyToEphemeral { storage_key: key } => {
-            Some(key)
-        }
-        _ => None,
-    }
-}
-
-fn should_allow_omk_grant_descriptor_with_probe(
-    grant: &KeyDescriptor,
-    decision: &filter::FilterDecision,
-    caller: &CallerInfo,
-    mut probe: impl FnMut(&CallerInfo, &KeyDescriptor) -> anyhow::Result<bool>,
-) -> anyhow::Result<bool> {
-    if !omk_grant_descriptor_needs_probe(grant, decision) {
-        return Ok(false);
-    }
-
-    ensure_mirror_state_recovered()?;
-    probe(caller, grant)
-}
-
-fn omk_grant_descriptor_needs_probe(
-    grant: &KeyDescriptor,
-    decision: &filter::FilterDecision,
-) -> bool {
-    !decision.allowed
-        && matches!(
-            decision.reason,
-            FilterReason::RejectedUnknownPackage | FilterReason::RejectedNotInScope
-        )
-        && grant.domain == Domain::GRANT
-}
-
-fn probe_omk_grant(caller: &CallerInfo, grant: &KeyDescriptor) -> anyhow::Result<bool> {
-    let _guard = BypassGuard::enter();
-    match ipc::with_omk_retry(|omk| Ok(omk.r#isOmkGrant(Some(caller), grant)?)) {
-        Ok(owned) => Ok(owned),
-        Err(error) if omk_unavailable_error(&error) => {
-            debug!(
-                "event=decision OMK grant probe unavailable for uid={} pid={} grant_nspace={}: {:#}",
-                caller.uid, caller.pid, grant.nspace, error
-            );
-            Ok(false)
-        }
-        Err(error) => Err(error),
-    }
-}
-
-fn should_allow_omk_grant_service_request_with_probe(
-    request: &ParsedServiceRequest,
-    decision: &filter::FilterDecision,
-    caller: &CallerInfo,
-    mut probe: impl FnMut(&CallerInfo, &KeyDescriptor) -> anyhow::Result<bool>,
-) -> anyhow::Result<bool> {
-    let Some(grant) = service_request_key(request) else {
-        return Ok(false);
-    };
-
-    should_allow_omk_grant_descriptor_with_probe(grant, decision, caller, &mut probe)
-}
-
-fn should_allow_omk_grant_security_level_request_with_probe(
-    request: &ParsedSecurityLevelRequest,
-    decision: &filter::FilterDecision,
-    caller: &CallerInfo,
-    mut probe: impl FnMut(&CallerInfo, &KeyDescriptor) -> anyhow::Result<bool>,
-) -> anyhow::Result<bool> {
-    let Some(grant) = security_level_request_key(request) else {
-        return Ok(false);
-    };
-
-    should_allow_omk_grant_descriptor_with_probe(grant, decision, caller, &mut probe)
-}
 
 fn precompute_omk_service_mutator_reply(
     request: &ParsedServiceRequest,

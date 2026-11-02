@@ -11,8 +11,8 @@ separate explanation of every field.
 ### What is OhMyKeymint?
 
 Android has a secure key service that apps use to create keys and check device
-information. OMK provides an alternative version of that service for the apps
-you select.
+information. OMK provides an alternative version of that service. Routing
+applies to app callers; system identities stay on System.
 
 OMK only covers this part of Android. It is not a general root-hiding tool, a
 Play Integrity module, or a repair tool for damaged security hardware.
@@ -163,8 +163,8 @@ storage app such as MT Manager and requests all MIME types because providers
 may label XML as `text/plain` or `application/octet-stream`; the WebUI still
 requires an `.xml` filename. If the system picker cannot be opened, the WebUI
 falls back to its shared-storage browser. It does not change `[crypto]`, device
-identity, or unrelated configuration settings. App routing is automatic and is
-not edited in the WebUI.
+identity, or unrelated configuration settings. Request routing is not edited in
+the WebUI.
 
 The Home page checks every certificate serial number in the active Keybox
 against Google's attestation status list. The validated local cache is used for
@@ -182,20 +182,17 @@ The **Security Level** row is read from the active Keybox certificate and shows
 either level.
 Continue to manage those settings through the documented active files.
 
-### How does OMK decide which apps use it?
+### How does OMK decide which callers use it?
 
-OMK discovers the routing scope itself. Keymint's privileged helper lists the
-installed third-party applications for each Android user through Android's
-package manager and adds Google Play services, Google Services Framework, and
-Google Play Store for every user. It publishes the result to
-`/data/misc/keystore/omk/data/app_scope.json`, and the injector reads that
-snapshot and watches it for changes.
+Every app caller is routed according to the per-method `[intercept]` settings
+in `injector.toml`. There is no app list or per-app exclusion setting. If a
+switch is `true`, that operation uses OMK for every app caller; if it is
+`false`, the operation stays on System. System identities, including
+`system_server`, root, and the keystore UID, always stay on System.
 
-There is no app list to edit and no per-app exclusion setting. The helper
-takes the baseline at startup and refreshes it when installed packages change. If
-no valid snapshot exists yet, apps stay on System until discovery succeeds.
-Close and reopen an affected app after routing changes when you need a clean
-boundary.
+System and OMK use separate key stores. A key created through one is not
+visible to the other. Close and reopen an affected app after routing changes
+when you need a clean boundary.
 
 ### Where are the active settings?
 
@@ -214,33 +211,31 @@ not expose the other settings.
 
 ### Why is an app affected even though I never configured it?
 
-Routing is automatic. Every installed third-party app is in scope for its
-Android user, so an app can use OMK without any manual selection. The three
-Google packages are in scope for every user. A few related apps also share one
-Android identity, so handling one package can affect another app in the same
-group.
+Routing is not per app. Every method enabled under `[intercept]` is handled by
+OMK for every app caller, so an app uses OMK without any manual selection. A
+few related apps can share one Android identity, and a method-level change
+affects all of them.
 
-`injector.toml` must not contain `scoop`, `scoop_details`, `[scoop.*]`, or
-`deny_packages`; those removed fields are rejected by this build.
+`injector.toml` must not contain `[filter]`, `[filter.*]`, `scoop`,
+`scoop_details`, `[scoop.*]`, or `deny_packages`; those removed settings are
+rejected by this build.
 
 ### Can I exclude a single app?
 
-This build has no exclusion list and no app picker. Every installed third-party
-app, plus the three Google packages, is in scope. Keep the filter and
-Android-package block enabled; they still reject core Android and system
-identities. Intercepting Android or system services can break unlocking, app
-storage, or the user interface.
+No. There is no app list or per-app exclusion setting. Turn off the relevant
+`[intercept]` switch instead, but that affects every app caller for that
+method.
+Mixing System and OMK methods for the same app can cause missing-key errors,
+inconsistent lists, or failed follow-up operations.
 
-Problems caused by deliberately disabling the safety filters are outside the
-project's support scope.
+Problems caused by deliberately disabling switches are outside the project's
+support scope.
 
 ### Which settings should ordinary users leave alone?
 
 Keep these defaults unless a maintainer gives you a specific reason to change
 them:
 
-- keep the filter enabled;
-- keep Android packages blocked and unknown callers rejected;
 - leave every switch under `[intercept]` enabled;
 - keep `os_version`, all four patch-level fields, `vb_key`, and `vb_hash` on
   their documented automatic settings; and
@@ -261,8 +256,8 @@ identity fields, or the keymint log level require a keymint restart. The
 [Configuration Guide](CONFIGURATION.md#how-changes-are-loaded) has the complete
 list.
 
-After changing app routing, close and reopen the affected app to avoid mixing
-an already-open operation with the new route. If a process restart is still
+After changing `[main].enabled` or `[intercept]`, close and reopen the affected
+app to avoid mixing an already-open operation with the new route. If a process restart is still
 needed for a clean boundary, restart the injector only; an injector-only
 setting change does not require a keymint restart. After installing or updating
 the whole module, reboot the device.
@@ -467,10 +462,11 @@ Normal System keys and OMK keys are kept separately. Moving an app between the
 two services does not copy its existing keys. The app may then report a missing key,
 fail to decrypt data, or ask to register again.
 
-Routing is automatic, so this can happen when the discovered scope changes,
-such as after an update that adds or removes an app from the scope. If a key
-was already lost, use the app's own sign-out, reset, or re-registration process.
-Be aware that clearing app data can remove local information.
+Routing changes do not copy existing keys. This can happen when
+`[main].enabled` or an `[intercept]` switch changes, after an update, or when
+OMK is unavailable and a request is preserved on System. If a key was already
+lost, use the app's own sign-out, reset, or re-registration process. Be aware
+that clearing app data can remove local information.
 
 ## Troubleshooting
 
@@ -481,22 +477,24 @@ Check these in order:
 1. Use a current official release or an identifiable build requested for
    testing.
 2. Confirm that the device is in the supported Android and architecture range.
-3. Keep the default safety filters and do not run another KeyStore replacement.
-4. Confirm that the app is a third-party app, or one of the three Google
-   packages, and that the routing scope snapshot exists.
+3. Keep the default `injector.toml` settings and do not run another KeyStore
+   replacement.
+4. Confirm that the injector is running, `[main].enabled` is true, and the
+   relevant `[intercept]` switch is enabled.
 5. Reboot after installation or a module update.
 6. Reproduce the problem once, then inspect the fresh injector and keymint
    logs from that same time.
 
 Changing several settings at once makes the cause harder to find. Keep your
 existing `config.toml` and every generated `[crypto]` value. Restore the
-documented filter and intercept defaults in `injector.toml`.
+documented `[intercept]` defaults in `injector.toml`.
 
 ### Why does a test app still show "Bootloader unlocked" after installation?
 
-Usually the test app is still using the normal System service because its
-package was not selected, the injector did not start, or the active filter
-rejected it. The test app's screen alone cannot tell which service answered.
+Usually the test app is still using the normal System service because the
+relevant `[intercept]` switch is disabled, `[main].enabled` is false, or the
+injector did not start. The test app's screen alone cannot tell which service
+answered.
 
 After following the checklist above, look in the fresh injector log for the
 test app and an OMK routing result.
@@ -583,10 +581,10 @@ forwards it to OMK once before returning the System reply. Auth tokens use a
 separate RPC session from key operations and lifecycle updates. Business RPC
 sessions use up to four connections; auth-token and lifecycle sessions each use
 one. Failed updates are discarded without retries or a global recovery gate.
-A mirror failure returns an OMK error for a caller allowed by the filter and
-preserves the System reply for other callers. A stalled synchronous RPC can still
-wait without a separate timeout. Authentication and lock-state checks apply when
-the operation runs.
+A fail-closed mirror failure makes OMK-routed requests return `SYSTEM_ERROR`;
+System-routed requests and best-effort auth-token updates are unaffected. A
+stalled synchronous RPC can still wait without a separate timeout.
+Authentication and lock-state checks apply when the operation runs.
 
 Authenticate in the way the app requests and retry promptly. Keep
 `force_skip_system_biometric_hat_verification` at `false` unless a maintainer
@@ -614,9 +612,9 @@ same time, not just an isolated word such as `ERROR`.
 
 ### What should I do if Android cannot unlock or the user interface does not start?
 
-Restore the default `injector.toml`, especially the safety filter, then reboot.
-If you disabled the Android-package block or allowed unknown callers, undo that
-change first.
+Set `[main].enabled = false`, or disable the relevant `[intercept]` switches, to
+return requests to System, then reboot. Restore the documented defaults after
+the device starts normally.
 
 If Android cannot start normally, use the root manager's documented safe mode
 or module-disable method to disable OMK. Do not keep testing a broad
